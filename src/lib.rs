@@ -71,14 +71,14 @@ impl SegmentType {
     }
 }
 
-#[warn(unused_macros)]
-macro_rules! collection {
-    // map-like
-    ($($k:expr => $v:expr),* $(,)?) => {{
-        use std::iter::{Iterator, IntoIterator};
-        Iterator::collect(IntoIterator::into_iter([$(($k, $v),)*]))
-    }};
-}
+// #[warn(unused_macros)]
+// macro_rules! collection {
+//     // map-like
+//     ($($k:expr => $v:expr),* $(,)?) => {{
+//         use std::iter::{Iterator, IntoIterator};
+//         Iterator::collect(IntoIterator::into_iter([$(($k, $v),)*]))
+//     }};
+// }
 
 macro_rules! range {
     ($from: expr, $to: expr) => {
@@ -89,11 +89,176 @@ macro_rules! range {
     };
 }
 
+fn process_composite_segment(
+    pipeline: Box<dyn Reads>,
+    variable_segment: Option<Segment>,
+    fixed_segment: Segment,
+    label: &str,
+) -> Box<dyn Reads> {
+    let mut starting_label = format!("{}", label);
+
+    if !label.contains('_') {
+        starting_label = format!("{}*", label);
+    }
+
+    // TODO: implement this
+    if let Some(segment) = variable_segment {
+        // align fixed to the right
+        // variable at the left
+        match fixed_segment {
+            Segment::FixedSequence(_, s) => pipeline,
+            _ => panic!(
+                "Expected a fixed sequence segment, found: {:?}",
+                fixed_segment
+            ),
+        }
+    } else {
+        // align fixed to the left
+        // rest on the right
+        match fixed_segment {
+            Segment::FixedLength(_, d) => {
+                if let SegmentData::Num(n) = d {
+                    let cut_expression = TransformExpr::new(
+                        format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes(),
+                    )
+                    .unwrap();
+                    let length_expression = TransformExpr::new(
+                        format!("{0}_l -> {0}_l.v_len", label).as_bytes(),
+                    )
+                    .unwrap();
+                    let selector_expression =
+                        SelectorExpr::new(format!("{}_l.v_len", label).as_bytes())
+                            .unwrap();
+
+                    cut_validate_length(
+                        pipeline,
+                        cut_expression,
+                        length_expression,
+                        selector_expression,
+                        LeftEnd(n),
+                        n..n + 1,
+                    )
+                } else {
+                    panic!("Expected a number, found: {:?}", d)
+                }
+            }
+            Segment::FixedSequence(_, d) => {
+                if let SegmentData::Sequence(s) = d {
+                    let pattern =
+                        format!("\n    name: _anchor\n    patterns:\n        - pattern: \"{s}\"\n");
+                    let transform_expression = TransformExpr::new(
+                        format!("{0} -> {1}_anchor, {1}_r", starting_label, label).as_bytes(),
+                    )
+                    .unwrap();
+                    let selector_expression =
+                        SelectorExpr::new(format!("{label}_anchor").as_bytes())
+                            .unwrap();
+
+                    match_pattern(
+                        pipeline,
+                        transform_expression,
+                        selector_expression,
+                        pattern,
+                        PrefixAln {
+                            identity: 0.83,
+                            overlap: 1.0,
+                        },
+                    )
+                } else {
+                    panic!("Expected a number, found: {:?}", d)
+                }
+            }
+            _ => panic!("Expected a fixed segment, found: {:?}", fixed_segment),
+        }
+    }
+}
+
+fn process_variable_segment(
+    pipeline: Box<dyn Reads>,
+    segment: Segment,
+    label: &str,
+) -> Box<dyn Reads> {
+    let mut starting_label = format!("{}", label);
+
+    if !label.contains('_') {
+        starting_label = format!("{}*", label);
+    }
+
+    match segment {
+        Segment::Ranged(_, r) => {
+            let Range { from, to } = r;
+
+            let cut_expression = TransformExpr::new(
+                format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes(),
+            )
+            .unwrap();
+            let length_expression =
+                TransformExpr::new(format!("{0}_l -> {0}_l.v_len", label).as_bytes())
+                    .unwrap();
+            let selector_expression =
+                SelectorExpr::new(format!("{}_l.v_len", label).as_bytes()).unwrap();
+
+            cut_validate_length(
+                pipeline,
+                cut_expression,
+                length_expression,
+                selector_expression,
+                LeftEnd(to),
+                from..to + 1,
+            )
+        }
+        Segment::Unbounded(_) => pipeline,
+        _ => panic!("Expected a variable segment, recieved: {:?}", segment),
+    }
+}
+
 // this method will create the antisequence pipeline
 impl SegmentComposite {
-    fn build_pipeline(self, fastq_read: Box<dyn Reads>, outfile: String) {
+    fn build_pipeline<'a>(self, fastq_read: Box<dyn Reads>, outfile: String) {
         #[warn(unused_mut)]
         let mut pipeline = fastq_read;
+
+        // need to keep this for the first call then remove the * for the next
+        let mut label = vec!["seq1."];
+
+        match self {
+            Self::BoundedToMaybeRangedOrUnbounded(bounded_segments, variable_segment) => {
+                for bounded_segment in bounded_segments {
+                    match bounded_segment {
+                        BoundedSegment::Fixed(fixed_segment) => {
+                            pipeline = process_composite_segment(
+                                pipeline,
+                                None,
+                                fixed_segment,
+                                label.join("_").as_str(),
+                            );
+                            label.push("r");
+                        }
+                        BoundedSegment::VariableLenToSequence(
+                            variable_segment,
+                            sequence_segment,
+                        ) => {
+                            pipeline = process_composite_segment(
+                                pipeline,
+                                Some(variable_segment),
+                                sequence_segment,
+                                label.join("_").as_str(),
+                            );
+                            label.push("l");
+                        }
+                    }
+                }
+                if let Some(segment) = variable_segment {
+                    pipeline =
+                        process_variable_segment(pipeline, segment, label.join("_").as_str());
+                    label.push("l")
+                }
+            }
+            Self::VariableLen(segment) => {
+                pipeline = process_variable_segment(pipeline, segment, label.join("_").as_str());
+                label.push("l")
+            }
+        }
 
         // TODO: recusively read segments from segment composite (self) to
         // convert segments into ANTISEQUENCE primitives
@@ -232,30 +397,47 @@ pub fn interpret(infile: String, outfile: String, read_descriptions: Vec<ReadDes
     }
 }
 
-fn validate_size<B>(
+fn cut_validate_length<B>(
     read: Box<dyn Reads>,
-    transform_expression: TransformExpr,
+    cut_transform_expression: TransformExpr,
+    length_transform_expression: TransformExpr,
+    selector_expression: SelectorExpr,
+    cut_index: EndIdx,
     bound: B,
 ) -> Box<dyn Reads>
 where
     B: RangeBounds<usize> + Send + Sync + 'static,
 {
-    read.length_in_bounds(sel!(), transform_expression, bound)
+    read.cut(sel!(), cut_transform_expression, cut_index)
+        .length_in_bounds(sel!(), length_transform_expression, bound)
+        .retain(selector_expression)
         .boxed()
 }
 
 fn match_pattern(
     read: Box<dyn Reads>,
     transform_expression: TransformExpr,
+    selector_expression: SelectorExpr,
     pattern: String,
     match_type: MatchType,
 ) -> Box<dyn Reads> {
     read.match_any(sel!(), transform_expression, pattern, match_type)
+        .retain(selector_expression)
         .boxed()
 }
 
-fn cut(read: Box<dyn Reads>, transform_expression: TransformExpr, index: EndIdx) -> Box<dyn Reads> {
-    read.cut(sel!(), transform_expression, index).boxed()
+fn validate_length<B>(
+    read: Box<dyn Reads>,
+    length_transform_expression: TransformExpr,
+    selector_expression: SelectorExpr,
+    bound: B,
+) -> Box<dyn Reads>
+where
+    B: RangeBounds<usize> + Send + Sync + 'static,
+{
+    read.length_in_bounds(sel!(), length_transform_expression, bound)
+        .retain(selector_expression)
+        .boxed()
 }
 
 fn retain_reads(read: Box<dyn Reads>, selector_expression: SelectorExpr) -> Box<dyn Reads> {
