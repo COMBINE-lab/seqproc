@@ -71,15 +71,6 @@ impl SegmentType {
     }
 }
 
-// #[warn(unused_macros)]
-// macro_rules! collection {
-//     // map-like
-//     ($($k:expr => $v:expr),* $(,)?) => {{
-//         use std::iter::{Iterator, IntoIterator};
-//         Iterator::collect(IntoIterator::into_iter([$(($k, $v),)*]))
-//     }};
-// }
-
 macro_rules! range {
     ($from: expr, $to: expr) => {
         Range {
@@ -90,23 +81,72 @@ macro_rules! range {
 }
 
 fn process_composite_segment(
-    pipeline: Box<dyn Reads>,
+    pipeline: Box<dyn antisequence::Reads>,
     variable_segment: Option<Segment>,
     fixed_segment: Segment,
     label: &str,
-) -> Box<dyn Reads> {
-    let mut starting_label = format!("{}", label);
+) -> Box<dyn antisequence::Reads> {
+    let mut starting_label = label.to_string();
 
     if !label.contains('_') {
         starting_label = format!("{}*", label);
     }
 
-    // TODO: implement this
     if let Some(segment) = variable_segment {
         // align fixed to the right
         // variable at the left
         match fixed_segment {
-            Segment::FixedSequence(_, s) => pipeline,
+            Segment::FixedSequence(_, sequence) => {
+                if let SegmentData::Sequence(s) = sequence {
+                    let pattern =
+                        format!("\n    name: _anchor\n    patterns:\n        - pattern: \"{s}\"\n");
+
+                    let match_transform_expression = TransformExpr::new(
+                        format!("{0} -> {1}_l, {1}_anchor, {1}_r", starting_label, label)
+                            .as_bytes(),
+                    )
+                    .unwrap();
+                    let match_selector_expression =
+                        SelectorExpr::new(format!("{label}_anchor").as_bytes()).unwrap();
+                    let pipeline = match_pattern(
+                        pipeline,
+                        match_transform_expression,
+                        match_selector_expression,
+                        pattern,
+                        LocalAln {
+                            identity: 0.83,
+                            overlap: 1.0,
+                        },
+                    );
+
+                    match segment {
+                        Segment::Ranged(_, r) => {
+                            let Range { from, to } = r;
+                            let length_transform_expression = TransformExpr::new(
+                                format!("{0}_l -> {0}_l.v_len", label).as_bytes(),
+                            )
+                            .unwrap();
+
+                            let length_selected_expression =
+                                SelectorExpr::new(format!("{label}_l.v_len").as_bytes()).unwrap();
+
+                            validate_length(
+                                pipeline,
+                                length_transform_expression,
+                                length_selected_expression,
+                                from..to + 1,
+                            )
+                        }
+                        Segment::Unbounded(_) => pipeline,
+                        _ => panic!(
+                            "Expected a ranged or unbounded segment, found: {:?}",
+                            segment
+                        ),
+                    }
+                } else {
+                    panic!("Expected a sequence to match, found: {:?}", sequence)
+                }
+            }
             _ => panic!(
                 "Expected a fixed sequence segment, found: {:?}",
                 fixed_segment
@@ -122,13 +162,11 @@ fn process_composite_segment(
                         format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes(),
                     )
                     .unwrap();
-                    let length_expression = TransformExpr::new(
-                        format!("{0}_l -> {0}_l.v_len", label).as_bytes(),
-                    )
-                    .unwrap();
-                    let selector_expression =
-                        SelectorExpr::new(format!("{}_l.v_len", label).as_bytes())
+                    let length_expression =
+                        TransformExpr::new(format!("{0}_l -> {0}_l.v_len", label).as_bytes())
                             .unwrap();
+                    let selector_expression =
+                        SelectorExpr::new(format!("{}_l.v_len", label).as_bytes()).unwrap();
 
                     cut_validate_length(
                         pipeline,
@@ -151,8 +189,7 @@ fn process_composite_segment(
                     )
                     .unwrap();
                     let selector_expression =
-                        SelectorExpr::new(format!("{label}_anchor").as_bytes())
-                            .unwrap();
+                        SelectorExpr::new(format!("{label}_anchor").as_bytes()).unwrap();
 
                     match_pattern(
                         pipeline,
@@ -174,11 +211,11 @@ fn process_composite_segment(
 }
 
 fn process_variable_segment(
-    pipeline: Box<dyn Reads>,
+    pipeline: Box<dyn antisequence::Reads>,
     segment: Segment,
     label: &str,
-) -> Box<dyn Reads> {
-    let mut starting_label = format!("{}", label);
+) -> Box<dyn antisequence::Reads> {
+    let mut starting_label = label.to_string();
 
     if !label.contains('_') {
         starting_label = format!("{}*", label);
@@ -193,8 +230,7 @@ fn process_variable_segment(
             )
             .unwrap();
             let length_expression =
-                TransformExpr::new(format!("{0}_l -> {0}_l.v_len", label).as_bytes())
-                    .unwrap();
+                TransformExpr::new(format!("{0}_l -> {0}_l.v_len", label).as_bytes()).unwrap();
             let selector_expression =
                 SelectorExpr::new(format!("{}_l.v_len", label).as_bytes()).unwrap();
 
@@ -214,9 +250,8 @@ fn process_variable_segment(
 
 // this method will create the antisequence pipeline
 impl SegmentComposite {
-    fn build_pipeline<'a>(self, fastq_read: Box<dyn Reads>, outfile: String) {
-        #[warn(unused_mut)]
-        let mut pipeline = fastq_read;
+    fn build_pipeline(self, fastq_read: Box<dyn antisequence::Reads>, outfile: String) {
+        let mut pipeline: Box<dyn Reads> = fastq_read;
 
         // need to keep this for the first call then remove the * for the next
         let mut label = vec!["seq1."];
@@ -244,24 +279,21 @@ impl SegmentComposite {
                                 sequence_segment,
                                 label.join("_").as_str(),
                             );
-                            label.push("l");
+                            label.push("r");
                         }
                     }
                 }
                 if let Some(segment) = variable_segment {
                     pipeline =
                         process_variable_segment(pipeline, segment, label.join("_").as_str());
-                    label.push("l")
+                    label.push("l");
                 }
             }
             Self::VariableLen(segment) => {
                 pipeline = process_variable_segment(pipeline, segment, label.join("_").as_str());
-                label.push("l")
+                label.push("l");
             }
-        }
-
-        // TODO: recusively read segments from segment composite (self) to
-        // convert segments into ANTISEQUENCE primitives
+        };
 
         pipeline
             .collect_fastq1(sel!(), outfile)
@@ -381,7 +413,6 @@ pub fn parser() -> impl Parser<char, Vec<ReadDescription>, Error = Simple<char>>
     read_description.then_ignore(end())
 }
 
-// this is not working yet, still need to stitch together with primitive
 pub fn interpret(infile: String, outfile: String, read_descriptions: Vec<ReadDescription>) {
     for read_description in read_descriptions {
         let ReadDescription {
@@ -389,7 +420,7 @@ pub fn interpret(infile: String, outfile: String, read_descriptions: Vec<ReadDes
             description,
         } = read_description;
 
-        let iter_read = iter_fastq1(infile.clone(), 256)
+        let iter_read: Box<dyn Reads> = iter_fastq1(infile.clone(), 256)
             .unwrap_or_else(|e| panic!("{e}"))
             .boxed();
 
@@ -398,13 +429,13 @@ pub fn interpret(infile: String, outfile: String, read_descriptions: Vec<ReadDes
 }
 
 fn cut_validate_length<B>(
-    read: Box<dyn Reads>,
+    read: Box<dyn antisequence::Reads>,
     cut_transform_expression: TransformExpr,
     length_transform_expression: TransformExpr,
     selector_expression: SelectorExpr,
     cut_index: EndIdx,
     bound: B,
-) -> Box<dyn Reads>
+) -> Box<dyn antisequence::Reads>
 where
     B: RangeBounds<usize> + Send + Sync + 'static,
 {
@@ -415,51 +446,27 @@ where
 }
 
 fn match_pattern(
-    read: Box<dyn Reads>,
+    read: Box<dyn antisequence::Reads>,
     transform_expression: TransformExpr,
     selector_expression: SelectorExpr,
     pattern: String,
     match_type: MatchType,
-) -> Box<dyn Reads> {
+) -> Box<dyn antisequence::Reads> {
     read.match_any(sel!(), transform_expression, pattern, match_type)
         .retain(selector_expression)
         .boxed()
 }
 
 fn validate_length<B>(
-    read: Box<dyn Reads>,
+    read: Box<dyn antisequence::Reads>,
     length_transform_expression: TransformExpr,
     selector_expression: SelectorExpr,
     bound: B,
-) -> Box<dyn Reads>
+) -> Box<dyn antisequence::Reads>
 where
     B: RangeBounds<usize> + Send + Sync + 'static,
 {
     read.length_in_bounds(sel!(), length_transform_expression, bound)
         .retain(selector_expression)
         .boxed()
-}
-
-fn retain_reads(read: Box<dyn Reads>, selector_expression: SelectorExpr) -> Box<dyn Reads> {
-    read.retain(selector_expression).boxed()
-}
-
-// create new labels, creating a pipeline requires
-// tracking labels cut transformations
-pub fn new_label(label: &str) -> String {
-    let s: Vec<_> = label.split('_').collect();
-
-    if label.contains('*') {
-        let s: Vec<_> = label.split('.').collect();
-
-        return format!("{}.rest_1", s.first().unwrap());
-    }
-
-    if s.len() == 1 {
-        return format!("{}_1", s.first().unwrap());
-    }
-
-    let num: usize = s.get(1).unwrap().parse().unwrap();
-
-    format!("{}_{}", s.first().unwrap(), num + 1)
 }

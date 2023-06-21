@@ -7,7 +7,10 @@ fn main() {
     let outfile = env::args().nth(3).unwrap();
 
     match seqproc::parser().parse(src) {
-        Ok(read_description) => seqproc::interpret(infile, outfile, read_description),
+        Ok(read_description) => {
+            println!("{:?}", read_description);
+            seqproc::interpret(infile, outfile, read_description)
+        }
         Err(errs) => println!("Error: {:?}", errs),
     }
 }
