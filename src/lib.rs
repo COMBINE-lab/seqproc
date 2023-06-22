@@ -1,11 +1,35 @@
+use antisequence::{
+    expr::{Label, SelectorExpr, TransformExpr},
+    *,
+};
+use argh::FromArgs;
 use chumsky::prelude::*;
 use core::panic;
 use std::ops::RangeBounds;
 
-use antisequence::{
-    expr::{SelectorExpr, TransformExpr},
-    *,
-};
+#[derive(FromArgs, Debug)]
+/// Reach new heights.
+pub struct Args {
+    /// FGDL string
+    #[argh(option, short = 'g')]
+    pub geom: String,
+
+    /// r1 file
+    #[argh(option, short = '1')]
+    pub file1: String,
+
+    /// r2 file
+    #[argh(option, short = '2')]
+    pub file2: String,
+
+    /// write r1 transforms to
+    #[argh(option, short = 'o')]
+    pub out2: String,
+
+    /// write r2 transforms to    
+    #[argh(option, short = 'w')]
+    pub out1: String,
+}
 
 #[derive(Debug, Clone)]
 pub enum SegmentData {
@@ -98,46 +122,26 @@ fn process_composite_segment(
         match fixed_segment {
             Segment::FixedSequence(_, sequence) => {
                 if let SegmentData::Sequence(s) = sequence {
-                    let pattern =
-                        format!("\n    name: _anchor\n    patterns:\n        - pattern: \"{s}\"\n");
-
-                    let match_transform_expression = TransformExpr::new(
-                        format!("{0} -> {1}_l, {1}_anchor, {1}_r", starting_label, label)
-                            .as_bytes(),
-                    )
-                    .unwrap();
-                    let match_selector_expression =
-                        SelectorExpr::new(format!("{label}_anchor").as_bytes()).unwrap();
-                    let pipeline = match_pattern(
-                        pipeline,
-                        match_transform_expression,
-                        match_selector_expression,
-                        pattern,
-                        LocalAln {
-                            identity: 0.83,
-                            overlap: 1.0,
-                        },
-                    );
+                    let pipeline = process_sequence(pipeline, s, starting_label, label);
 
                     match segment {
-                        Segment::Ranged(_, r) => {
+                        Segment::Ranged(segment_type, r) => {
                             let Range { from, to } = r;
-                            let length_transform_expression = TransformExpr::new(
-                                format!("{0}_l -> {0}_l.v_len", label).as_bytes(),
-                            )
-                            .unwrap();
 
-                            let length_selected_expression =
-                                SelectorExpr::new(format!("{label}_l.v_len").as_bytes()).unwrap();
+                            let pipeline = validate_sequence_length(pipeline, label, from..to + 1);
 
-                            validate_length(
-                                pipeline,
-                                length_transform_expression,
-                                length_selected_expression,
-                                from..to + 1,
-                            )
+                            let labels = vec![make_label(label, "l")];
+
+                            match segment_type {
+                                SegmentType::Discard => trim(pipeline, labels),
+                                _ => pad(pipeline, labels, to + 1),
+                            }
                         }
-                        Segment::Unbounded(_) => pipeline,
+                        // trim the unbounded segment in this case, otherwise not
+                        Segment::Unbounded(segment_type) => match segment_type {
+                            SegmentType::Discard => trim(pipeline, vec![make_label(label, "l")]),
+                            _ => pipeline,
+                        },
                         _ => panic!(
                             "Expected a ranged or unbounded segment, found: {:?}",
                             segment
@@ -156,51 +160,25 @@ fn process_composite_segment(
         // align fixed to the left
         // rest on the right
         match fixed_segment {
-            Segment::FixedLength(_, d) => {
+            Segment::FixedLength(segment_type, d) => {
                 if let SegmentData::Num(n) = d {
-                    let cut_expression = TransformExpr::new(
-                        format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes(),
-                    )
-                    .unwrap();
-                    let length_expression =
-                        TransformExpr::new(format!("{0}_l -> {0}_l.v_len", label).as_bytes())
-                            .unwrap();
-                    let selector_expression =
-                        SelectorExpr::new(format!("{}_l.v_len", label).as_bytes()).unwrap();
+                    let pipeline = validate_sequence_length(
+                        cut_sequence(pipeline, starting_label, label, LeftEnd(n)),
+                        label,
+                        n..=n,
+                    );
 
-                    cut_validate_length(
-                        pipeline,
-                        cut_expression,
-                        length_expression,
-                        selector_expression,
-                        LeftEnd(n),
-                        n..n + 1,
-                    )
+                    match segment_type {
+                        SegmentType::Discard => trim(pipeline, vec![make_label(label, "l")]),
+                        _ => pipeline,
+                    }
                 } else {
                     panic!("Expected a number, found: {:?}", d)
                 }
             }
             Segment::FixedSequence(_, d) => {
                 if let SegmentData::Sequence(s) = d {
-                    let pattern =
-                        format!("\n    name: _anchor\n    patterns:\n        - pattern: \"{s}\"\n");
-                    let transform_expression = TransformExpr::new(
-                        format!("{0} -> {1}_anchor, {1}_r", starting_label, label).as_bytes(),
-                    )
-                    .unwrap();
-                    let selector_expression =
-                        SelectorExpr::new(format!("{label}_anchor").as_bytes()).unwrap();
-
-                    match_pattern(
-                        pipeline,
-                        transform_expression,
-                        selector_expression,
-                        pattern,
-                        PrefixAln {
-                            identity: 0.83,
-                            overlap: 1.0,
-                        },
-                    )
+                    process_sequence(pipeline, s, starting_label, label)
                 } else {
                     panic!("Expected a number, found: {:?}", d)
                 }
@@ -222,84 +200,99 @@ fn process_variable_segment(
     }
 
     match segment {
-        Segment::Ranged(_, r) => {
+        Segment::Ranged(segment_type, r) => {
             let Range { from, to } = r;
 
-            let cut_expression = TransformExpr::new(
+            let pipeline = validate_sequence_length(
+                cut_sequence(pipeline, starting_label, label, LeftEnd(to)),
+                label,
+                from..to + 1,
+            );
+
+            match segment_type {
+                SegmentType::Discard => trim(pipeline, vec![make_label(label, "l")]),
+                _ => trim(
+                    pad(pipeline, vec![make_label(label, "l")], to + 1),
+                    vec![make_label(label, "r")],
+                ),
+            }
+        }
+        Segment::Unbounded(segment_type) => {
+            let transform_expression = TransformExpr::new(
                 format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes(),
             )
             .unwrap();
-            let length_expression =
-                TransformExpr::new(format!("{0}_l -> {0}_l.v_len", label).as_bytes()).unwrap();
-            let selector_expression =
-                SelectorExpr::new(format!("{}_l.v_len", label).as_bytes()).unwrap();
 
-            cut_validate_length(
-                pipeline,
-                cut_expression,
-                length_expression,
-                selector_expression,
-                LeftEnd(to),
-                from..to + 1,
-            )
+            let pipeline = cut(pipeline, transform_expression, LeftEnd(0));
+
+            match segment_type {
+                SegmentType::Discard => trim(pipeline, vec![make_label(label, "r")]),
+                _ => pipeline,
+            }
         }
-        Segment::Unbounded(_) => pipeline,
         _ => panic!("Expected a variable segment, recieved: {:?}", segment),
     }
 }
 
 // this method will create the antisequence pipeline
-impl SegmentComposite {
-    fn build_pipeline(self, fastq_read: Box<dyn antisequence::Reads>, outfile: String) {
+impl ReadDescription {
+    fn build_pipeline(self, fastq_read: Box<dyn antisequence::Reads>) -> Box<dyn Reads> {
         let mut pipeline: Box<dyn Reads> = fastq_read;
 
-        // need to keep this for the first call then remove the * for the next
-        let mut label = vec!["seq1."];
+        let mut seq_identifier = String::new();
+        if let SegmentData::Num(num) = self.num {
+            seq_identifier.push_str(format!("seq{}", num).as_str());
+        } else {
+            panic!("Expected a number, found: {:?}", self.num)
+        }
 
-        match self {
-            Self::BoundedToMaybeRangedOrUnbounded(bounded_segments, variable_segment) => {
+        let mut label: Vec<&str> = vec![seq_identifier.as_str()];
+
+        match self.description {
+            SegmentComposite::BoundedToMaybeRangedOrUnbounded(
+                bounded_segments,
+                variable_segment,
+            ) => {
                 for bounded_segment in bounded_segments {
+                    let fixed_segment: Segment;
+                    let mut variable_segment: Option<Segment> = None;
                     match bounded_segment {
-                        BoundedSegment::Fixed(fixed_segment) => {
-                            pipeline = process_composite_segment(
-                                pipeline,
-                                None,
-                                fixed_segment,
-                                label.join("_").as_str(),
-                            );
-                            label.push("r");
+                        BoundedSegment::Fixed(fixed_seg) => {
+                            fixed_segment = fixed_seg;
                         }
-                        BoundedSegment::VariableLenToSequence(
-                            variable_segment,
-                            sequence_segment,
-                        ) => {
-                            pipeline = process_composite_segment(
-                                pipeline,
-                                Some(variable_segment),
-                                sequence_segment,
-                                label.join("_").as_str(),
-                            );
-                            label.push("r");
+                        BoundedSegment::VariableLenToSequence(variable_seg, sequence_seg) => {
+                            fixed_segment = sequence_seg;
+                            variable_segment = Some(variable_seg);
                         }
                     }
+                    pipeline = process_composite_segment(
+                        pipeline,
+                        variable_segment,
+                        fixed_segment,
+                        label.join("_").as_str(),
+                    );
+                    label.push("r");
                 }
+                // the rest are only a singe variable length segment
+                // if unbounded, alignLeft to zero, right is matched no trim
+                // if variable length alignLeft to size, pad, and trim
+                // do not update the label. Trim to last label from the bounded segment
                 if let Some(segment) = variable_segment {
                     pipeline =
                         process_variable_segment(pipeline, segment, label.join("_").as_str());
-                    label.push("l");
+                } else {
+                    pipeline = trim(
+                        pipeline,
+                        vec![Label::new(label.join("_").as_bytes()).unwrap()],
+                    )
                 }
             }
-            Self::VariableLen(segment) => {
+            SegmentComposite::VariableLen(segment) => {
                 pipeline = process_variable_segment(pipeline, segment, label.join("_").as_str());
-                label.push("l");
             }
         };
 
-        pipeline
-            .collect_fastq1(sel!(), outfile)
-            .dbg(sel!())
-            .run()
-            .unwrap_or_else(|e| panic!("{e}"));
+        pipeline.boxed()
     }
 }
 
@@ -408,40 +401,40 @@ pub fn parser() -> impl Parser<char, Vec<ReadDescription>, Error = Simple<char>>
             num,
             description: segments,
         })
-        .repeated();
+        .repeated()
+        .exactly(2);
 
     read_description.then_ignore(end())
 }
 
-pub fn interpret(infile: String, outfile: String, read_descriptions: Vec<ReadDescription>) {
-    for read_description in read_descriptions {
-        let ReadDescription {
-            num: _num,
-            description,
-        } = read_description;
+pub fn interpret(
+    file1: String,
+    file2: String,
+    out1: String,
+    out2: String,
+    read_descriptions: Vec<ReadDescription>,
+) {
+    let read_descrption_one = read_descriptions.first().unwrap().to_owned();
+    let read_descrption_two = read_descriptions.last().unwrap().to_owned();
 
-        let iter_read: Box<dyn Reads> = iter_fastq1(infile.clone(), 256)
-            .unwrap_or_else(|e| panic!("{e}"))
-            .boxed();
+    let mut pipeline: Box<dyn Reads> = iter_fastq2(file1, file2, 256)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .boxed();
 
-        description.build_pipeline(iter_read, outfile.clone());
-    }
+    pipeline = read_descrption_two.build_pipeline(read_descrption_one.build_pipeline(pipeline));
+
+    pipeline
+        .collect_fastq2(sel!(), out1, out2)
+        .run()
+        .unwrap_or_else(|e| panic!("{e}"));
 }
 
-fn cut_validate_length<B>(
+fn cut(
     read: Box<dyn antisequence::Reads>,
     cut_transform_expression: TransformExpr,
-    length_transform_expression: TransformExpr,
-    selector_expression: SelectorExpr,
     cut_index: EndIdx,
-    bound: B,
-) -> Box<dyn antisequence::Reads>
-where
-    B: RangeBounds<usize> + Send + Sync + 'static,
-{
+) -> Box<dyn antisequence::Reads> {
     read.cut(sel!(), cut_transform_expression, cut_index)
-        .length_in_bounds(sel!(), length_transform_expression, bound)
-        .retain(selector_expression)
         .boxed()
 }
 
@@ -451,10 +444,14 @@ fn match_pattern(
     selector_expression: SelectorExpr,
     pattern: String,
     match_type: MatchType,
+    trim_labels: Vec<Label>,
 ) -> Box<dyn antisequence::Reads> {
-    read.match_any(sel!(), transform_expression, pattern, match_type)
-        .retain(selector_expression)
-        .boxed()
+    trim(
+        read.match_any(sel!(), transform_expression, pattern, match_type)
+            .retain(selector_expression)
+            .boxed(),
+        trim_labels,
+    )
 }
 
 fn validate_length<B>(
@@ -469,4 +466,80 @@ where
     read.length_in_bounds(sel!(), length_transform_expression, bound)
         .retain(selector_expression)
         .boxed()
+}
+
+fn pad(
+    read: Box<dyn antisequence::Reads>,
+    labels: Vec<Label>,
+    to_length: usize,
+) -> Box<dyn antisequence::Reads> {
+    read.pad(sel!(), labels, to_length).boxed()
+}
+
+fn trim(read: Box<dyn antisequence::Reads>, labels: Vec<Label>) -> Box<dyn antisequence::Reads> {
+    read.trim(sel!(), labels).boxed()
+}
+
+fn make_label(prefix: &str, suffix: &str) -> Label {
+    Label::new(format!("{prefix}_{suffix}").as_bytes()).unwrap()
+}
+
+fn process_sequence(
+    pipeline: Box<dyn Reads>,
+    sequence: String,
+    starting_label: String,
+    label: &str,
+) -> Box<dyn Reads> {
+    let pattern =
+        format!("\n    name: _anchor\n    patterns:\n        - pattern: \"{sequence}\"\n");
+
+    let match_transform_expression = TransformExpr::new(
+        format!("{0} -> {1}_l, {1}_anchor, {1}_r", starting_label, label).as_bytes(),
+    )
+    .unwrap();
+    let match_selector_expression =
+        SelectorExpr::new(format!("{label}_anchor").as_bytes()).unwrap();
+
+    let labels = vec![Label::new(format!("{}_anchor", label).as_bytes()).unwrap()];
+
+    match_pattern(
+        pipeline,
+        match_transform_expression,
+        match_selector_expression,
+        pattern,
+        LocalAln {
+            identity: 0.83,
+            overlap: 1.0,
+        },
+        labels,
+    )
+}
+
+fn cut_sequence(
+    pipeline: Box<dyn Reads>,
+    starting_label: String,
+    label: &str,
+    index: EndIdx,
+) -> Box<dyn Reads> {
+    let transform_expression =
+        TransformExpr::new(format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes())
+            .unwrap();
+
+    cut(pipeline, transform_expression, index)
+}
+
+fn validate_sequence_length<B>(pipeline: Box<dyn Reads>, label: &str, bound: B) -> Box<dyn Reads>
+where
+    B: RangeBounds<usize> + Send + Sync + 'static,
+{
+    let length_transform_expression =
+        TransformExpr::new(format!("{0}_l -> {0}_l.v_len", label).as_bytes()).unwrap();
+    let selector_expression = SelectorExpr::new(format!("{}_l.v_len", label).as_bytes()).unwrap();
+
+    validate_length(
+        pipeline,
+        length_transform_expression,
+        selector_expression,
+        bound,
+    )
 }

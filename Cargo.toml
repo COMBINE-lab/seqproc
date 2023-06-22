@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 chumsky="0.9.2"
-antisequence = { git = "https://github.com/Daniel-Liu-c0deb0t/ANTISEQUENCE/", branch='main' }
+argh="0.1.10"
+antisequence = { git = "https://github.com/noahcape/ANTISEQUENCE/", branch='main' }

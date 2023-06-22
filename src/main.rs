@@ -1,16 +1,20 @@
 use chumsky::prelude::*;
-use std::{env, fs};
+use std::time::Instant;
 
 fn main() {
-    let src = fs::read_to_string(env::args().nth(1).unwrap()).unwrap();
-    let infile = env::args().nth(2).unwrap();
-    let outfile = env::args().nth(3).unwrap();
+    let args: seqproc::Args = argh::from_env();
 
-    match seqproc::parser().parse(src) {
-        Ok(read_description) => {
-            println!("{:?}", read_description);
-            seqproc::interpret(infile, outfile, read_description)
-        }
+    let start = Instant::now();
+    match seqproc::parser().parse(args.geom) {
+        Ok(read_description) => seqproc::interpret(
+            args.file1,
+            args.file2,
+            args.out1,
+            args.out2,
+            read_description,
+        ),
         Err(errs) => println!("Error: {:?}", errs),
     }
+    let duration = start.elapsed();
+    println!("tranformation completed in {:.2}s", duration.as_secs_f32());
 }

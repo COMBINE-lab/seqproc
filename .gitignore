@@ -17,3 +17,11 @@ Cargo.lock
 # Added by cargo
 
 /target
+
+
+# testing files
+
+example_data/
+example_outputs/
+out/
+descriptions/
