@@ -2,34 +2,10 @@ use antisequence::{
     expr::{Label, SelectorExpr, TransformExpr},
     *,
 };
-use argh::FromArgs;
+
 use chumsky::prelude::*;
 use core::panic;
 use std::ops::RangeBounds;
-
-#[derive(FromArgs, Debug)]
-/// Reach new heights.
-pub struct Args {
-    /// FGDL string
-    #[argh(option, short = 'g')]
-    pub geom: String,
-
-    /// r1 file
-    #[argh(option, short = '1')]
-    pub file1: String,
-
-    /// r2 file
-    #[argh(option, short = '2')]
-    pub file2: String,
-
-    /// write r1 transforms to
-    #[argh(option, short = 'o')]
-    pub out1: String,
-
-    /// write r2 transforms to    
-    #[argh(option, short = 'w')]
-    pub out2: String,
-}
 
 #[derive(Debug, Clone)]
 pub enum SegmentData {
@@ -104,23 +80,27 @@ macro_rules! range {
     };
 }
 
-fn process_bounded_segment(
-    pipeline: Box<dyn antisequence::Reads>,
-    bounded_segment: BoundedSegment,
-    label: &str,
-) -> Box<dyn antisequence::Reads> {
-    let mut starting_label = label.to_string();
+impl BoundedSegment {
+    fn interpret(self, pipeline: Box<dyn Reads>, label: &str) -> Box<dyn Reads> {
+        let mut starting_label = label.to_string();
 
-    if !label.contains('_') {
-        starting_label = format!("{}*", label);
-    }
-
-    match bounded_segment {
-        BoundedSegment::Fixed(fixed_seg) => {
-            process_fixed_segment_alone(pipeline, fixed_seg, starting_label, label)
+        if !label.contains('_') {
+            starting_label = format!("{}*", label);
         }
-        BoundedSegment::VariableLenToSequence(variable_seg, fixed_seg) => {
-            process_variable_then_fixed(pipeline, fixed_seg, variable_seg, starting_label, label)
+
+        match self {
+            BoundedSegment::Fixed(fixed_seg) => {
+                process_fixed_segment_alone(pipeline, fixed_seg, starting_label, label)
+            }
+            BoundedSegment::VariableLenToSequence(variable_seg, fixed_seg) => {
+                process_variable_then_fixed(
+                    pipeline,
+                    fixed_seg,
+                    variable_seg,
+                    starting_label,
+                    label,
+                )
+            }
         }
     }
 }
@@ -176,20 +156,22 @@ fn process_variable_then_fixed(
     label: &str,
 ) -> Box<dyn Reads> {
     if let Segment::FixedSequence(_, SegmentData::Sequence(sequence)) = seq_segment {
-        let pipeline = process_sequence(
-            pipeline,
-            sequence,
-            starting_label,
-            label,
-            LocalAln {
-                identity: 1.0,
-                overlap: 1.0,
-            },
-        );
-
         match variable_segment {
             Segment::Ranged(segment_type, r) => {
                 let Range { from, to } = r;
+
+                let pipeline = process_sequence(
+                    pipeline,
+                    sequence.clone(),
+                    starting_label,
+                    label,
+                    BoundedAln {
+                        identity: 1.0,
+                        overlap: 1.0,
+                        from, 
+                        to: to + sequence.len()
+                    }
+                );
 
                 let pipeline = validate_sequence_length(pipeline, label, from..to + 1);
 
@@ -201,9 +183,22 @@ fn process_variable_then_fixed(
                 }
             }
             // trim the unbounded segment in this case, otherwise not
-            Segment::Unbounded(segment_type) => match segment_type {
-                SegmentType::Discard => trim(pipeline, vec![make_label(label, "l")]),
-                _ => pipeline,
+            Segment::Unbounded(segment_type) => {
+                let pipeline = process_sequence(
+                    pipeline,
+                    sequence,
+                    starting_label,
+                    label,
+                    LocalAln {
+                        identity: 1.0,
+                        overlap: 1.0,
+                    }
+                );
+
+                match segment_type {
+                    SegmentType::Discard => trim(pipeline, vec![make_label(label, "l")]),
+                    _ => pipeline,
+                }
             },
             _ => panic!(
                 "Expected a ranged or unbounded segment, found: {:?}",
@@ -257,7 +252,7 @@ fn process_ending_variable_segment(
 
 // this method will create the antisequence pipeline
 impl ReadDescription {
-    fn build_pipeline(self, fastq_read: Box<dyn antisequence::Reads>) -> Box<dyn Reads> {
+    pub fn build_pipeline(self, fastq_read: Box<dyn antisequence::Reads>) -> Box<dyn Reads> {
         let mut pipeline: Box<dyn Reads> = fastq_read;
 
         let mut seq_identifier = String::new();
@@ -275,9 +270,9 @@ impl ReadDescription {
                 variable_segment,
             ) => {
                 for bounded_segment in bounded_segments {
-                    pipeline = process_bounded_segment(
-                        pipeline,
+                    pipeline = BoundedSegment::interpret(
                         bounded_segment,
+                        pipeline,
                         label.join("_").as_str(),
                     );
                     label.push("r");
@@ -417,27 +412,6 @@ pub fn parser() -> impl Parser<char, Vec<ReadDescription>, Error = Simple<char>>
     read_description.then_ignore(end())
 }
 
-pub fn interpret(
-    file1: String,
-    file2: String,
-    out1: String,
-    out2: String,
-    read_descriptions: Vec<ReadDescription>,
-) {
-    let read_descrption_one = read_descriptions.first().unwrap().to_owned();
-    let read_descrption_two = read_descriptions.last().unwrap().to_owned();
-
-    let mut pipeline = iter_fastq2(file1, file2, 256)
-        .unwrap_or_else(|e| panic!("{e}"))
-        .boxed();
-
-    pipeline = read_descrption_two.build_pipeline(read_descrption_one.build_pipeline(pipeline));
-
-    pipeline
-        .collect_fastq2(sel!(), out1, out2)
-        .run_with_threads(256)
-}
-
 fn cut(
     read: Box<dyn antisequence::Reads>,
     cut_transform_expression: TransformExpr,
@@ -501,17 +475,10 @@ fn process_sequence(
     match_type: iter::MatchType,
 ) -> Box<dyn Reads> {
     let transform = match match_type {
-        // other things
-        PrefixAln {
-            identity: _,
-            overlap: _,
-        } => TransformExpr::new(
+        PrefixAln { .. } => TransformExpr::new(
             format!("{0} -> {1}_anchor, {1}_r", starting_label, label).as_bytes(),
         ),
-        LocalAln {
-            identity: _,
-            overlap: _,
-        } => TransformExpr::new(
+        LocalAln { .. } | BoundedAln { .. } => TransformExpr::new(
             format!("{0} -> {1}_l, {1}_anchor, {1}_r", starting_label, label).as_bytes(),
         ),
         _ => panic!(

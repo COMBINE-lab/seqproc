@@ -18,6 +18,11 @@ Cargo.lock
 
 /target
 
+# vscode files
+.vscode/
+
+# mac files
+.DS_store
 
 # testing files
 
@@ -25,3 +30,5 @@ example_data/
 example_outputs/
 out/
 descriptions/
+temp.txt
+run.sh
