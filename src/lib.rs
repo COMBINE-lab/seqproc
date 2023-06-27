@@ -1,11 +1,14 @@
 use antisequence::{
-    expr::{Label, SelectorExpr, TransformExpr},
+    expr::Label,
     *,
 };
 
 use chumsky::prelude::*;
 use core::panic;
-use std::ops::RangeBounds;
+
+mod processors;
+
+use crate::processors::*;
 
 #[derive(Debug, Clone)]
 pub enum SegmentData {
@@ -114,8 +117,8 @@ fn process_fixed_segment_alone(
     match fixed_segment {
         Segment::FixedLength(segment_type, d) => {
             if let SegmentData::Num(n) = d {
-                let pipeline = validate_sequence_length(
-                    cut_sequence(pipeline, starting_label, label, LeftEnd(n)),
+                let pipeline = validate_length(
+                    cut(pipeline, starting_label, label, LeftEnd(n)),
                     label,
                     n..=n,
                 );
@@ -168,12 +171,12 @@ fn process_variable_then_fixed(
                     BoundedAln {
                         identity: 1.0,
                         overlap: 1.0,
-                        from, 
-                        to: to + sequence.len()
-                    }
+                        from,
+                        to: to + sequence.len(),
+                    },
                 );
 
-                let pipeline = validate_sequence_length(pipeline, label, from..to + 1);
+                let pipeline = validate_length(pipeline, label, from..to + 1);
 
                 let labels = vec![make_label(label, "l")];
 
@@ -192,14 +195,14 @@ fn process_variable_then_fixed(
                     LocalAln {
                         identity: 1.0,
                         overlap: 1.0,
-                    }
+                    },
                 );
 
                 match segment_type {
                     SegmentType::Discard => trim(pipeline, vec![make_label(label, "l")]),
                     _ => pipeline,
                 }
-            },
+            }
             _ => panic!(
                 "Expected a ranged or unbounded segment, found: {:?}",
                 variable_segment
@@ -234,8 +237,8 @@ fn process_ending_variable_segment(
             _ => {
                 let Range { from, to } = r;
 
-                let pipeline = validate_sequence_length(
-                    cut_sequence(pipeline, starting_label, label, LeftEnd(to)),
+                let pipeline = validate_length(
+                    cut(pipeline, starting_label, label, LeftEnd(to)),
                     label,
                     from..to + 1,
                 );
@@ -410,131 +413,4 @@ pub fn parser() -> impl Parser<char, Vec<ReadDescription>, Error = Simple<char>>
         .exactly(2);
 
     read_description.then_ignore(end())
-}
-
-fn cut(
-    read: Box<dyn antisequence::Reads>,
-    cut_transform_expression: TransformExpr,
-    cut_index: EndIdx,
-) -> Box<dyn antisequence::Reads> {
-    read.cut(sel!(), cut_transform_expression, cut_index)
-        .boxed()
-}
-
-fn match_pattern(
-    read: Box<dyn antisequence::Reads>,
-    transform_expression: TransformExpr,
-    selector_expression: SelectorExpr,
-    pattern: String,
-    match_type: MatchType,
-    trim_labels: Vec<Label>,
-) -> Box<dyn antisequence::Reads> {
-    trim(
-        read.match_any(sel!(), transform_expression, pattern, match_type)
-            .retain(selector_expression)
-            .boxed(),
-        trim_labels,
-    )
-}
-
-fn validate_length<B>(
-    read: Box<dyn antisequence::Reads>,
-    length_transform_expression: TransformExpr,
-    selector_expression: SelectorExpr,
-    bound: B,
-) -> Box<dyn antisequence::Reads>
-where
-    B: RangeBounds<usize> + Send + Sync + 'static,
-{
-    read.length_in_bounds(sel!(), length_transform_expression, bound)
-        .retain(selector_expression)
-        .boxed()
-}
-
-fn pad(
-    read: Box<dyn antisequence::Reads>,
-    labels: Vec<Label>,
-    to_length: usize,
-) -> Box<dyn antisequence::Reads> {
-    read.pad(sel!(), labels, to_length).boxed()
-}
-
-fn trim(read: Box<dyn antisequence::Reads>, labels: Vec<Label>) -> Box<dyn antisequence::Reads> {
-    read.trim(sel!(), labels).boxed()
-}
-
-fn make_label(prefix: &str, suffix: &str) -> Label {
-    Label::new(format!("{prefix}_{suffix}").as_bytes()).unwrap()
-}
-
-fn process_sequence(
-    pipeline: Box<dyn Reads>,
-    sequence: String,
-    starting_label: String,
-    label: &str,
-    match_type: iter::MatchType,
-) -> Box<dyn Reads> {
-    let transform = match match_type {
-        PrefixAln { .. } => TransformExpr::new(
-            format!("{0} -> {1}_anchor, {1}_r", starting_label, label).as_bytes(),
-        ),
-        LocalAln { .. } | BoundedAln { .. } => TransformExpr::new(
-            format!("{0} -> {1}_l, {1}_anchor, {1}_r", starting_label, label).as_bytes(),
-        ),
-        _ => panic!(
-            "Currently supports Local and Prefix alignment, found: {:?}",
-            match_type
-        ),
-    };
-
-    match transform {
-        Ok(t) => {
-            let pattern =
-                format!("\n    name: _anchor\n    patterns:\n        - pattern: \"{sequence}\"\n");
-
-            let match_selector_expression =
-                SelectorExpr::new(format!("{label}_anchor").as_bytes()).unwrap();
-
-            let labels = vec![Label::new(format!("{}_anchor", label).as_bytes()).unwrap()];
-
-            match_pattern(
-                pipeline,
-                t,
-                match_selector_expression,
-                pattern,
-                match_type,
-                labels,
-            )
-        }
-        Err(e) => panic!("{e}"),
-    }
-}
-
-fn cut_sequence(
-    pipeline: Box<dyn Reads>,
-    starting_label: String,
-    label: &str,
-    index: EndIdx,
-) -> Box<dyn Reads> {
-    let transform_expression =
-        TransformExpr::new(format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes())
-            .unwrap();
-
-    cut(pipeline, transform_expression, index)
-}
-
-fn validate_sequence_length<B>(pipeline: Box<dyn Reads>, label: &str, bound: B) -> Box<dyn Reads>
-where
-    B: RangeBounds<usize> + Send + Sync + 'static,
-{
-    let length_transform_expression =
-        TransformExpr::new(format!("{0}_l -> {0}_l.v_len", label).as_bytes()).unwrap();
-    let selector_expression = SelectorExpr::new(format!("{}_l.v_len", label).as_bytes()).unwrap();
-
-    validate_length(
-        pipeline,
-        length_transform_expression,
-        selector_expression,
-        bound,
-    )
 }

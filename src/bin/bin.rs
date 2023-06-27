@@ -1,9 +1,8 @@
-use clap::{Parser as cParser, arg};
 use antisequence::*;
 use chumsky::prelude::*;
+use clap::{arg, Parser as cParser};
 use seqproc::ReadDescription;
 use std::time::Instant;
-
 
 /// General puprose sequence preprocessor
 #[derive(Debug, cParser)]
@@ -30,18 +29,22 @@ pub struct Args {
 
     /// number of threads to use
     #[arg(short, long, default_value = "1")]
-    threads: usize
+    threads: usize,
 }
 
-pub fn interpret(
-    args: Args,
-    read_descriptions: Vec<ReadDescription>,
-) {
-    let Args { geom: _, read1, read2, out1, out2, threads } = args;
+pub fn interpret(args: Args, read_descriptions: Vec<ReadDescription>) {
+    let Args {
+        geom: _,
+        read1,
+        read2,
+        out1,
+        out2,
+        threads,
+    } = args;
 
     let read_description_one = read_descriptions.first().unwrap().to_owned();
     let read_description_two = read_descriptions.last().unwrap().to_owned();
-    
+
     let mut pipeline = iter_fastq2(read1, read2, 256)
         .unwrap_or_else(|e| panic!("{e}"))
         .boxed();
@@ -52,8 +55,7 @@ pub fn interpret(
     );
 
     if out1.eq("/dev/null") | out2.eq("/dev/null") {
-        pipeline
-            .run_with_threads(threads);
+        pipeline.run_with_threads(threads);
     } else {
         // writing to /dev/null stalls with ANTISEQUENCE
         pipeline
@@ -69,10 +71,7 @@ fn main() {
     let geom = args.geom.as_str();
 
     match seqproc::parser().parse(geom) {
-        Ok(read_description) => interpret(
-            args,
-            read_description,
-        ),
+        Ok(read_description) => interpret(args, read_description),
         Err(errs) => println!("Error: {:?}", errs),
     }
     let duration = start.elapsed();
