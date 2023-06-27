@@ -15,7 +15,9 @@ pub fn cut(
         TransformExpr::new(format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes())
             .unwrap();
 
-    pipeline.cut(sel!(), transform_expression, index).boxed()
+    pipeline
+        .cut(sel!(), transform_expression, index)
+        .boxed()
 }
 
 pub fn pad(
@@ -31,6 +33,15 @@ pub fn trim(
     labels: Vec<Label>,
 ) -> Box<dyn antisequence::Reads> {
     read.trim(sel!(), labels).boxed()
+}
+
+pub fn trim_leftover(
+    read: Box<dyn antisequence::Reads>,
+    labels: &mut Vec<&str>,
+) -> Box<dyn antisequence::Reads> {
+    let labels = vec![Label::new(&labels.join("_").as_bytes()).unwrap()];
+
+    trim(read, labels)
 }
 
 pub fn make_label(prefix: &str, suffix: &str) -> Label {

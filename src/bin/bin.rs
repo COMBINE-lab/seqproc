@@ -1,8 +1,9 @@
-use antisequence::*;
+use antisequence::{iter_fastq2, Reads, sel};
 use chumsky::prelude::*;
 use clap::{arg, Parser as cParser};
-use seqproc::ReadDescription;
 use std::time::Instant;
+
+use seqproc::syntax::Read;
 
 /// General puprose sequence preprocessor
 #[derive(Debug, cParser)]
@@ -13,11 +14,11 @@ pub struct Args {
 
     /// r1 fastq file
     #[arg(short = '1', long)]
-    read1: String,
+    file1: String,
 
     /// r2 fastq file
     #[arg(short = '2', long)]
-    read2: String,
+    file2: String,
 
     /// r1 out fastq file
     #[arg(short = 'o', long)]
@@ -32,36 +33,29 @@ pub struct Args {
     threads: usize,
 }
 
-pub fn interpret(args: Args, read_descriptions: Vec<ReadDescription>) {
+pub fn interpret(args: Args, reads: Vec<Read>) {
     let Args {
         geom: _,
-        read1,
-        read2,
+        file1,
+        file2,
         out1,
         out2,
         threads,
     } = args;
 
-    let read_description_one = read_descriptions.first().unwrap().to_owned();
-    let read_description_two = read_descriptions.last().unwrap().to_owned();
+    let read_one = reads.first().unwrap().to_owned();
+    let read_two = reads.last().unwrap().to_owned();
 
-    let mut pipeline = iter_fastq2(read1, read2, 256)
+    let read = iter_fastq2(file1, file2, 256)
         .unwrap_or_else(|e| panic!("{e}"))
         .boxed();
 
-    pipeline = ReadDescription::build_pipeline(
-        read_description_two,
-        ReadDescription::build_pipeline(read_description_one, pipeline),
-    );
+    let read = read_one.interpret(read);
+    let read = read_two.interpret(read);
 
-    if out1.eq("/dev/null") | out2.eq("/dev/null") {
-        pipeline.run_with_threads(threads);
-    } else {
-        // writing to /dev/null stalls with ANTISEQUENCE
-        pipeline
-            .collect_fastq2(sel!(), out1, out2)
-            .run_with_threads(threads);
-    }
+    // TODO if passed /dev/null
+    read.collect_fastq2(sel!(), out1, out2)
+        .run_with_threads(threads)
 }
 
 fn main() {
@@ -70,8 +64,8 @@ fn main() {
     let start = Instant::now();
     let geom = args.geom.as_str();
 
-    match seqproc::parser().parse(geom) {
-        Ok(read_description) => interpret(args, read_description),
+    match seqproc::parse::parser().parse(geom) {
+        Ok(reads) => interpret(args, reads),
         Err(errs) => println!("Error: {:?}", errs),
     }
     let duration = start.elapsed();
