@@ -15,9 +15,7 @@ pub fn cut(
         TransformExpr::new(format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes())
             .unwrap();
 
-    pipeline
-        .cut(sel!(), transform_expression, index)
-        .boxed()
+    pipeline.cut(sel!(), transform_expression, index).boxed()
 }
 
 pub fn pad(

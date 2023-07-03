@@ -1,4 +1,4 @@
-use antisequence::{iter_fastq2, Reads, sel};
+use antisequence::{iter_fastq2, sel, Reads};
 use chumsky::prelude::*;
 use clap::{arg, Parser as cParser};
 use std::time::Instant;
@@ -21,11 +21,11 @@ pub struct Args {
     file2: String,
 
     /// r1 out fastq file
-    #[arg(short = 'o', long)]
+    #[arg(short = 'o', long, default_value = "")]
     out1: String,
 
     /// r2 out fastq file
-    #[arg(short = 'w', long)]
+    #[arg(short = 'w', long, default_value = "")]
     out2: String,
 
     /// number of threads to use
@@ -53,7 +53,12 @@ pub fn interpret(args: Args, reads: Vec<Read>) {
     let read = read_one.interpret(read);
     let read = read_two.interpret(read);
 
-    // TODO if passed /dev/null
+    if out1.is_empty() && out2.is_empty() {
+        return read
+            .collect_fastq1(sel!(), "/dev/null")
+            .run_with_threads(threads);
+    }
+
     read.collect_fastq2(sel!(), out1, out2)
         .run_with_threads(threads)
 }
@@ -62,10 +67,13 @@ fn main() {
     let args: Args = Args::parse();
 
     let start = Instant::now();
-    let geom = args.geom.as_str();
+    let geom = std::fs::read_to_string(args.geom).unwrap();
 
     match seqproc::parse::parser().parse(geom) {
-        Ok(reads) => interpret(args, reads),
+        Ok(reads) => {
+            println!("{:?}", reads);
+            // interpret(args, reads)
+        }
         Err(errs) => println!("Error: {:?}", errs),
     }
     let duration = start.elapsed();

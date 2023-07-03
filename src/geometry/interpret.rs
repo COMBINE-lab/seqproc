@@ -27,8 +27,8 @@ impl FixedGeomPiece {
         let (starting_label, next_label) = get_labels(read_label);
 
         match self {
-            Self::Fixed(_, _) => self.sequence_interpret(read, read_label, None),
-            Self::Discard(FixedGeom::Len(len), label) => trim(
+            Self::FixedSeq(..) => self.sequence_interpret(read, read_label, None),
+            Self::Discard(FixedGeom::Len(len), ..) => trim(
                 validate_length(
                     cut(read, starting_label, &next_label, LeftEnd(len)),
                     &next_label,
@@ -36,9 +36,9 @@ impl FixedGeomPiece {
                 ),
                 vec![make_label(&next_label, "l")],
             ),
-            Self::Barcode(FixedGeom::Len(len), label)
-            | Self::Umi(FixedGeom::Len(len), label)
-            | Self::ReadSeq(FixedGeom::Len(len), label) => validate_length(
+            Self::Barcode(FixedGeom::Len(len), ..)
+            | Self::Umi(FixedGeom::Len(len), ..)
+            | Self::ReadSeq(FixedGeom::Len(len), ..) => validate_length(
                 cut(read, starting_label, &next_label, LeftEnd(len)),
                 &next_label,
                 len..=len,
@@ -54,7 +54,7 @@ impl FixedGeomPiece {
     ) -> Box<dyn antisequence::Reads> {
         let (starting_label, next_label) = get_labels(read_label);
 
-        if let Self::Fixed(NucStr::Seq(sequence), label) = self {
+        if let Self::FixedSeq(NucStr::Seq(sequence), ..) = self {
             let match_type = if let Some((i, j)) = bound {
                 BoundedAln {
                     identity: 1.0,
@@ -84,20 +84,20 @@ impl VariableGeomPiece {
         fixed: FixedGeomPiece,
     ) -> Box<dyn antisequence::Reads> {
         match self {
-            Self::Barcode(VariableGeom::Range(i, j), _)
-            | Self::Discard(VariableGeom::Range(i, j), _)
-            | Self::ReadSeq(VariableGeom::Range(i, j), _)
-            | Self::Umi(VariableGeom::Range(i, j), _) => {
+            Self::Barcode(VariableGeom::Range(i, j), ..)
+            | Self::Discard(VariableGeom::Range(i, j), ..)
+            | Self::ReadSeq(VariableGeom::Range(i, j), ..)
+            | Self::Umi(VariableGeom::Range(i, j), ..) => {
                 let read = fixed.sequence_interpret(read, read_label, Some((i, j)));
                 read_label.push("l");
                 let read = self.interpret(read, read_label);
                 read_label.pop();
                 read
             }
-            Self::Barcode(VariableGeom::Unbounded, _)
-            | Self::Discard(VariableGeom::Unbounded, _)
-            | Self::ReadSeq(VariableGeom::Unbounded, _)
-            | Self::Umi(VariableGeom::Unbounded, _) => {
+            Self::Barcode(VariableGeom::Unbounded, ..)
+            | Self::Discard(VariableGeom::Unbounded, ..)
+            | Self::ReadSeq(VariableGeom::Unbounded, ..)
+            | Self::Umi(VariableGeom::Unbounded, ..) => {
                 let read = fixed.sequence_interpret(read, read_label, None);
                 read_label.push("l");
                 let read = self.interpret(read, read_label);
@@ -114,7 +114,7 @@ impl VariableGeomPiece {
     ) -> Box<dyn antisequence::Reads> {
         let (starting_label, next_label) = get_labels(read_label);
         match self {
-            Self::Discard(VariableGeom::Range(i, j), label) => trim(
+            Self::Discard(VariableGeom::Range(i, j), ..) => trim(
                 validate_length(
                     cut(read, starting_label, &next_label, LeftEnd(j)),
                     &next_label,
@@ -122,19 +122,23 @@ impl VariableGeomPiece {
                 ),
                 vec![make_label(&next_label, "l")],
             ),
-            Self::Discard(VariableGeom::Unbounded, label) => {
+            Self::Discard(VariableGeom::Unbounded, ..) => {
                 trim(read, vec![Label::new(next_label.as_bytes()).unwrap()])
             }
-            Self::Barcode(VariableGeom::Range(i, j), label)
-            | Self::ReadSeq(VariableGeom::Range(i, j), label)
-            | Self::Umi(VariableGeom::Range(i, j), label) => {
-                let read = cut(read, starting_label, &next_label, LeftEnd(j));
-                let read = validate_length(read, &next_label, i..j + 1);
-                pad(read, vec![make_label(&next_label, "l")], j + 1)
-            }
-            Self::Barcode(VariableGeom::Unbounded, label)
-            | Self::ReadSeq(VariableGeom::Unbounded, label)
-            | Self::Umi(VariableGeom::Unbounded, label) => read,
+            Self::Barcode(VariableGeom::Range(i, j), ..)
+            | Self::ReadSeq(VariableGeom::Range(i, j), ..)
+            | Self::Umi(VariableGeom::Range(i, j), ..) => pad(
+                validate_length(
+                    cut(read, starting_label, &next_label, LeftEnd(j)),
+                    &next_label,
+                    i..j + 1,
+                ),
+                vec![make_label(&next_label, "l")],
+                j + 1,
+            ),
+            Self::Barcode(VariableGeom::Unbounded, ..)
+            | Self::ReadSeq(VariableGeom::Unbounded, ..)
+            | Self::Umi(VariableGeom::Unbounded, ..) => read,
         }
     }
 }
@@ -185,10 +189,10 @@ impl Description {
                 let read = variable.clone().interpret(read, read_label);
 
                 if !variable.is_unbounded() {
-                    trim_leftover(read, read_label)    
-                } else {
-                    read
-                }                
+                    return trim_leftover(read, read_label);
+                }
+
+                read
             }
         }
     }
