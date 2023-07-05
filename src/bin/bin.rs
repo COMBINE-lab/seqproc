@@ -1,9 +1,10 @@
 use antisequence::{iter_fastq2, sel, Reads};
+use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::prelude::*;
 use clap::{arg, Parser as cParser};
-use std::time::Instant;
+// use std::time::Instant;
 
-use seqproc::syntax::Read;
+use seqproc::{lexer, syntax::Read};
 
 /// General puprose sequence preprocessor
 #[derive(Debug, cParser)]
@@ -66,16 +67,63 @@ pub fn interpret(args: Args, reads: Vec<Read>) {
 fn main() {
     let args: Args = Args::parse();
 
-    let start = Instant::now();
+    // let start = Instant::now();
     let geom = std::fs::read_to_string(args.geom).unwrap();
+    println!("{:?}", &geom);
 
-    match seqproc::parse::parser().parse(geom) {
-        Ok(reads) => {
-            println!("{:?}", reads);
-            // interpret(args, reads)
-        }
-        Err(errs) => println!("Error: {:?}", errs),
-    }
-    let duration = start.elapsed();
-    println!("tranformation completed in {:.2}s", duration.as_secs_f32());
+    let (tokens, errs) = lexer::lexer().parse_recovery(geom.clone());
+    println!("{:?}, {:?}", tokens, errs.len());
+
+    // error recovery
+    errs.into_iter()
+        .map(|e| e.map(|c| c.to_string()))
+        .for_each(|e| {
+            let report = Report::build(ReportKind::Error, (), e.span().start);
+
+            let report = match e.reason() {
+                // chumsky::error::SimpleReason::Unexpected
+                _ => report
+                    .with_message(format!(
+                        "{}, expected {}",
+                        if e.found().is_some() {
+                            "Unexpected token in input"
+                        } else {
+                            "Unexpected end of input"
+                        },
+                        if e.expected().len() == 0 {
+                            "something else".to_string()
+                        } else {
+                            e.expected()
+                                .map(|expected| match expected {
+                                    Some(expected) => expected.to_string(),
+                                    None => "end of input".to_string(),
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    ))
+                    .with_label(
+                        Label::new(e.span())
+                            .with_message(format!(
+                                "Unexpected token {}",
+                                e.found()
+                                    .unwrap_or(&"end of file".to_string())
+                                    .fg(Color::Red)
+                            ))
+                            .with_color(Color::Red),
+                    ),
+            };
+
+            report.finish().print(Source::from(&geom)).unwrap();
+        })
+
+    // match seqproc::parse::parser().parse(geom) {
+    //     Ok(reads) => {
+    //         println!("{:?}", reads);
+    //         // interpret(args, reads)
+    //     }
+    //     Err(errs) => println!("Error: {:?}", errs),
+    // }
+    // let duration = start.elapsed();
+    // println!("tranformation completed in {:.2}s", duration.as_secs_f32());
 }

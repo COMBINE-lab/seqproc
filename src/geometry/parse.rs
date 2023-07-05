@@ -405,14 +405,15 @@ pub fn parser() -> impl Parser<char, Expression, Error = Simple<char>> {
         )))
         .map(|(label, geom_piece)| Definition { label, geom_piece })
         .padded()
-        .repeated().validate(move |definitions, emit, span| {
+        .repeated()
+        .validate(move |definitions, _emit, _span| {
             let mut label_map: HashMap<Label, GeomPiece> = HashMap::new();
 
-            for Definition {label, geom_piece} in &definitions {
+            for Definition { label, geom_piece } in &definitions {
                 // validate not already there
                 label_map.insert(label.clone(), geom_piece.clone());
-            };
-    
+            }
+
             label_map
         });
 
