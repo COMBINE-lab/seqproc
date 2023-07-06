@@ -80,7 +80,7 @@ fn transformation() {
     let res = if let Some(trans) = res.deref() {
         trans
     } else {
-        panic!("No definitions in {}", src.clone())
+        panic!("No transformation in {}", src.clone())
     };
 
     assert_eq!(0, lex_err.len());

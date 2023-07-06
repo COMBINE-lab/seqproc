@@ -4,7 +4,7 @@ use std::{fmt, ops::Deref};
 
 pub type Spanned<T> = (T, Span);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Size {
     FixedSeq(Spanned<String>),
     FixedLen(Spanned<i32>),
@@ -24,7 +24,7 @@ impl fmt::Display for Size {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Function {
     Reverse,
     ReverseComp,
@@ -52,7 +52,7 @@ impl fmt::Display for Function {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     Barcode,
     Umi,
@@ -74,7 +74,7 @@ impl fmt::Display for Type {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     Error,
     Label(Spanned<String>),
@@ -293,87 +293,71 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .or(label.clone());
 
     let transformed_pieces = recursive(|transformed_pieces| {
+        let recursive_num_arg = transformed_pieces
+            .clone()
+            .then_ignore(just(Token::Ctrl(',')))
+            .then(num)
+            .map_with_span(|tok, span| (tok, span))
+            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
+
+        let num_arg = geom_piece
+            .clone()
+            .then_ignore(just(Token::Ctrl(',')))
+            .then(num)
+            .map_with_span(|tok, span| (tok, span))
+            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
+
+        let no_arg = geom_piece
+            .clone()
+            .map_with_span(|tok, span| (tok, span))
+            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
+
+        let recursive_no_arg = transformed_pieces
+            .clone()
+            .map_with_span(|tok, span| (tok, span))
+            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
+
         choice((
             geom_piece.clone(),
             just(Token::Remove)
                 .map_with_span(|_, span| (Function::Remove, span))
-                .then(
-                    transformed_pieces
-                        .clone()
-                        .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
-                )
+                .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
                 .labelled("Remove function"),
             just(Token::Normalize)
                 .map_with_span(|_, span| (Function::Normalize, span))
-                .then(
-                    geom_piece
-                        .clone()
-                        .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
-                )
+                .then(no_arg)
                 .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
                 .labelled("Normalize function"),
             just(Token::Hamming)
                 .map_with_span(|_, span| span)
-                .then(
-                    geom_piece
-                        .then_ignore(just(Token::Ctrl(',')))
-                        .then(num)
-                        .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
-                )
+                .then(num_arg)
                 .map(|(fn_span, ((geom_p, num), span))| {
                     Expr::Function((Function::Hamming(num), fn_span), Box::new((geom_p, span)))
                 })
                 .labelled("Hamming function"),
             just(Token::Trim)
                 .map_with_span(|_, span| span)
-                .then(
-                    transformed_pieces
-                        .clone()
-                        .then_ignore(just(Token::Ctrl(',')))
-                        .then(num)
-                        .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
-                )
+                .then(recursive_num_arg.clone())
                 .map(|(fn_span, ((geom_p, num), span))| {
                     Expr::Function((Function::Trim(num), fn_span), Box::new((geom_p, span)))
                 })
                 .labelled("Trim function"),
             just(Token::Pad)
                 .map_with_span(|_, span| span)
-                .then(
-                    transformed_pieces
-                        .clone()
-                        .then_ignore(just(Token::Ctrl(',')))
-                        .then(num)
-                        .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
-                )
+                .then(recursive_num_arg)
                 .map(|(fn_span, ((geom_p, num), span))| {
                     Expr::Function((Function::Pad(num), fn_span), Box::new((geom_p, span)))
                 })
                 .labelled("Pad function"),
             just(Token::Reverse)
                 .map_with_span(|_, span| (Function::Reverse, span))
-                .then(
-                    transformed_pieces
-                        .clone()
-                        .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
-                )
+                .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
                 .labelled("Reverse function"),
             just(Token::ReverseComp)
                 .map_with_span(|_, span| (Function::ReverseComp, span))
-                .then(
-                    transformed_pieces
-                        .clone()
-                        .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
-                )
+                .then(recursive_no_arg)
                 .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
                 .labelled("Reverse Compliment function"),
             just(Token::Map)
@@ -409,7 +393,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
             )
         })
         .repeated()
-        .map(|tok| Expr::Definitions(tok));
+        .at_least(1);
 
     let reads = num
         .map_with_span(|tok, span| (tok, span))
@@ -431,7 +415,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .map(|reads| Expr::Transform(reads));
 
     definitions
-        .map_with_span(|tok, span| (tok, span))
+        .map_with_span(|tok, span| (Expr::Definitions(tok), span))
         .or_not()
         .then(reads.map_with_span(|tok, span| (tok, span)))
         .then(
