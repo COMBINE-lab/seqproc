@@ -205,9 +205,8 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         Token::C => 'C',
     };
 
-    let label = just(Token::Ctrl('<'))
-        .ignore_then(ident.map_with_span(|l, span| Expr::Label((l, span))))
-        .then_ignore(just(Token::Ctrl('>')))
+    let label = ident
+        .map_with_span(|l, span| Expr::Label((l, span)))
         .labelled("Label");
 
     let range = just(Token::Ctrl('['))
@@ -285,12 +284,13 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         })
         .labelled("Fixed Sequence Segment");
 
-    let geom_piece = unbounded
-        .clone()
-        .or(ranged.clone())
-        .or(fixed.clone())
-        .or(fixed_seq.clone())
-        .or(label.clone());
+    let geom_piece = choice((
+        unbounded.clone(),
+        ranged.clone(),
+        fixed.clone(),
+        fixed_seq.clone(),
+        label.clone(),
+    ));
 
     let transformed_pieces = recursive(|transformed_pieces| {
         let recursive_num_arg = transformed_pieces

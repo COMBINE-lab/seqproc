@@ -4,7 +4,7 @@ use chumsky::{prelude::*, Stream};
 use seqproc::{
     lexer::lexer,
     parser::{parser, Expr},
-    validate::{compile_definitions, unwrap_val_fn},
+    validate::{compile_definitions, unwrap_val_fn, validate},
 };
 
 #[test]
@@ -27,11 +27,9 @@ fn no_err() {
 
     for read in &res {
         if let Expr::Read(_, exprs) = read {
-            for (expr, _) in exprs {
-                let res = unwrap_val_fn(expr.clone(), HashMap::new());
+            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
 
-                assert_eq!(true, res.is_ok());
-            }
+            assert_eq!(true, res.is_ok());
         } else {
             todo!()
         }
@@ -58,11 +56,9 @@ fn fail_norm() {
 
     for read in &res {
         if let Expr::Read(_, exprs) = read {
-            for (expr, _) in exprs {
-                let res = unwrap_val_fn(expr.clone(), HashMap::new());
+            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
 
-                assert_eq!(false, res.is_ok());
-            }
+            assert_eq!(false, res.is_ok());
         } else {
             todo!()
         }
@@ -89,11 +85,9 @@ fn fail_composition() {
 
     for read in &res {
         if let Expr::Read(_, exprs) = read {
-            for (expr, _) in exprs {
-                let res = unwrap_val_fn(expr.clone(), HashMap::new());
+            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
 
-                assert_eq!(true, res.is_ok());
-            }
+            assert!(res.is_err());
         } else {
             todo!()
         }
@@ -120,11 +114,38 @@ fn fail_remove() {
 
     for read in &res {
         if let Expr::Read(_, exprs) = read {
-            for (expr, _) in exprs {
-                let res = unwrap_val_fn(expr.clone(), HashMap::new());
+            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
 
-                assert_eq!(false, res.is_ok());
-            }
+            assert!(res.is_err());
+        } else {
+            todo!()
+        }
+    }
+}
+
+#[test]
+fn discard_as_void() {
+    let src = "1{rev(x[10])}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
+        r.0
+    } else {
+        unreachable!()
+    };
+
+    for read in &res {
+        if let Expr::Read(_, exprs) = read {
+            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
+
+            assert!(res.is_err());
         } else {
             todo!()
         }
@@ -223,10 +244,8 @@ fn label_replacement() {
 
     for read in &reads {
         if let Expr::Read(_, exprs) = read {
-            for (expr, _) in exprs {
-                let res = unwrap_val_fn(expr.clone(), def_map.clone());
-                assert!(res.is_err());
-            }
+            let res = unwrap_val_fn(exprs.clone(), Some(def_map.clone()));
+            assert!(res.is_err());
         } else {
             todo!()
         }
@@ -260,10 +279,8 @@ fn no_variable() {
 
     for read in &reads {
         if let Expr::Read(_, exprs) = read {
-            for (expr, _) in exprs {
-                let res = unwrap_val_fn(expr.clone(), def_map.clone());
-                assert!(res.is_err());
-            }
+            let res = unwrap_val_fn(exprs.clone(), Some(def_map.clone()));
+            assert!(res.is_err());
         } else {
             todo!()
         }
@@ -288,22 +305,19 @@ fn expr_unwrap() {
         unreachable!()
     };
 
-    let mut geom: Vec<Expr> = vec![];
     for read in &reads {
         if let Expr::Read(_, exprs) = read {
-            for (expr, _) in exprs {
-                let res = unwrap_val_fn(expr.clone(), HashMap::new());
+            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
 
-                if let Ok(expr) = res {
-                    geom.push(expr);
-                }
+            assert!(res.is_ok());
+
+            if let Ok((expr, _)) = res {
+                assert_eq!(4, expr.len());
             }
         } else {
             todo!()
         }
     }
-
-    assert_eq!(4, geom.len());
 }
 
 #[test]
@@ -320,21 +334,159 @@ brc = b[10]
 
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    let (reads, _) = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
+    let (def, (reads, _)) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
+        (d.deref().clone().unwrap(), r)
     } else {
         unreachable!()
     };
 
+    let def_map = if let Ok(d) = compile_definitions(def.clone()) {
+        d
+    } else {
+        todo!()
+    };
+
     for read in &reads {
         if let Expr::Read(_, exprs) = read {
-            for (expr, _) in exprs {
-                let res = unwrap_val_fn(expr.clone(), HashMap::new());
+            let res = unwrap_val_fn(exprs.clone(), Some(def_map.clone()));
 
-                assert!(res.is_err());
-            }
+            dbg!(&res);
+            assert!(res.is_err());
         } else {
             todo!()
         }
     }
+}
+
+#[test]
+fn def_block_fail() {
+    let src = "
+brc = b[10]
+brc1 = pad(<brc>, 1)
+1{<brc>}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let res = if let Expr::Description(d, _r, _t) = res.clone().unwrap().0 {
+        d
+    } else {
+        unreachable!()
+    };
+
+    let res = if let Some(def) = res.deref() {
+        def
+    } else {
+        panic!("No definitions in {}", src.clone())
+    };
+
+    let def_map = compile_definitions(res.clone());
+
+    assert!(def_map.is_err());
+}
+
+#[test]
+fn validate_description() {
+    let src = "
+brc = b[10]
+umi = pad(u[10], 1)
+1{<brc>}2{<umi>}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = validate(desc);
+
+    assert!(res.is_ok())
+}
+
+#[test]
+fn fail_description() {
+    let src = "
+brc = b[10]
+umi = pad(u[10], 1)
+1{<brc><brc>}2{r:}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = validate(desc);
+
+    assert!(res.is_err())
+}
+
+#[test]
+fn valid_geom() {
+    let src = "1{b<brc1>[9-11]remove(f[CAGAGC])u<umi>[8]b<brc2>[10]}2{r<read>:}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = validate(desc);
+
+    assert!(res.is_ok())
+}
+
+#[test]
+fn invalid_geom_one() {
+    let src = "1{b[9-11]f[CAGAGC]r:u[8]b[10]}2{r<read>:}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = validate(desc);
+
+    assert!(res.is_err())
+}
+
+#[test]
+fn invalid_geom_two() {
+    let src = "1{f[GAG]b[10-11]b[10]}2{r<read>:}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = validate(desc);
+
+    assert!(res.is_err())
 }

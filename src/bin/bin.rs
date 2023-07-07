@@ -1,10 +1,10 @@
 use antisequence::{iter_fastq2, sel, Reads};
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
-use chumsky::prelude::*;
+use chumsky::{prelude::*, Stream};
 use clap::{arg, Parser as cParser};
 // use std::time::Instant;
 
-use seqproc::{lexer, syntax::Read};
+use seqproc::{lexer, parser::parser, syntax::Read, validate::validate};
 
 /// General puprose sequence preprocessor
 #[derive(Debug, cParser)]
@@ -69,20 +69,65 @@ fn main() {
 
     // let start = Instant::now();
     let geom = std::fs::read_to_string(args.geom).unwrap();
-    println!("{:?}", &geom);
 
-    let (tokens, errs) = lexer::lexer().parse_recovery(geom.clone());
-    println!("{:?}, {:?}", tokens, errs.len());
+    let (tokens, mut errs) = lexer::lexer().parse_recovery(geom.clone());
+
+    let parse_errs = if let Some(tokens) = &tokens {
+        let (ast, parse_errs) = parser().parse_recovery(Stream::from_iter(
+            tokens.len()..tokens.len() + 1,
+            tokens.clone().into_iter(),
+        ));
+
+        if let Some((ast, _)) = &ast {
+            let err = validate(ast.clone());
+
+            if let Err(e) = err {
+                errs.push(Simple::custom(e.span, e.msg));
+            }
+        };
+
+        parse_errs
+    } else {
+        Vec::new()
+    };
 
     // error recovery
     errs.into_iter()
         .map(|e| e.map(|c| c.to_string()))
+        .chain(parse_errs.into_iter().map(|e| e.map(|tok| tok.to_string())))
         .for_each(|e| {
             let report = Report::build(ReportKind::Error, (), e.span().start);
 
             let report = match e.reason() {
-                // chumsky::error::SimpleReason::Unexpected
-                _ => report
+                chumsky::error::SimpleReason::Custom(msg) => report.with_message(msg).with_label(
+                    Label::new(e.span())
+                        .with_message(format!("{}", msg.fg(Color::Red)))
+                        .with_color(Color::Red),
+                ),
+                chumsky::error::SimpleReason::Unclosed { span, delimiter } => report
+                    .with_message(format!(
+                        "Unclosed delimiter {}",
+                        delimiter.fg(Color::Yellow)
+                    ))
+                    .with_label(
+                        Label::new(span.clone())
+                            .with_message(format!(
+                                "Unclosed delimiter {}",
+                                delimiter.fg(Color::Yellow)
+                            ))
+                            .with_color(Color::Yellow),
+                    )
+                    .with_label(
+                        Label::new(e.span())
+                            .with_message(format!(
+                                "Must be closed before this {}",
+                                e.found()
+                                    .unwrap_or(&"end of file".to_string())
+                                    .fg(Color::Red)
+                            ))
+                            .with_color(Color::Red),
+                    ),
+                chumsky::error::SimpleReason::Unexpected => report
                     .with_message(format!(
                         "{}, expected {}",
                         if e.found().is_some() {

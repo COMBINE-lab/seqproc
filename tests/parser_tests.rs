@@ -66,7 +66,7 @@ fn transformation() {
     let expected_res = (
         Expr::Transform(vec![Expr::Read(
             (1, 11..12),
-            vec![(Expr::Label(("t".to_string(), 14..15)), 13..16)],
+            vec![(Expr::Label(("t".to_string(), 13..16)), 13..16)],
         )]),
         8..17,
     );
@@ -127,7 +127,7 @@ fn hamming() {
         vec![(
             Expr::Function(
                 (Function::Hamming(1), 2..9),
-                Box::new((Expr::Label(("brc".to_string(), 11..14)), 10..18)),
+                Box::new((Expr::Label(("brc".to_string(), 10..15)), 10..18)),
             ),
             2..19,
         )],
@@ -162,7 +162,7 @@ fn remove() {
         vec![(
             Expr::Function(
                 (Function::Remove, 2..8),
-                Box::new((Expr::Label(("brc".to_string(), 10..13)), 9..14)),
+                Box::new((Expr::Label(("brc".to_string(), 9..14)), 9..14)),
             ),
             2..15,
         )],
@@ -218,7 +218,7 @@ fn nested() {
                 Box::new((
                     Expr::Function(
                         (Function::Normalize, 6..10),
-                        Box::new((Expr::Label(("brc".to_string(), 12..15)), 11..16)),
+                        Box::new((Expr::Label(("brc".to_string(), 11..16)), 11..16)),
                     ),
                     6..17,
                 )),
@@ -257,7 +257,7 @@ fn labeled_unbounded() {
         (1, 0..1),
         vec![(
             Expr::LabeledGeomPiece(
-                Box::new(Expr::Label(("barcode".to_string(), 4..11))),
+                Box::new(Expr::Label(("barcode".to_string(), 3..12))),
                 Box::new((Expr::GeomPiece(Type::Barcode, Size::UnboundedLen), 2..13)),
             ),
             2..13,

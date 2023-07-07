@@ -68,7 +68,12 @@ impl fmt::Display for Token {
 pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     let int = text::int(10).from_str().unwrapped().map(Token::Num);
 
-    let ctrl = one_of("()[]{}<>,").map(Token::Ctrl);
+    let ctrl = one_of("()[]{},").map(Token::Ctrl);
+
+    let label = just('<')
+        .ignore_then(text::ident())
+        .then_ignore(just('>'))
+        .map(Token::Label);
 
     let special = one_of(":-=").map(Token::Special);
 
@@ -88,7 +93,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         just('U').to(Token::U),
     ));
 
-    let idents = text::ident().map(|l: String| match l.as_str() {
+    let ident = text::ident().map(|s: String| match s.as_str() {
         "rev" => Token::Reverse,
         "revcomp" => Token::ReverseComp,
         "remove" => Token::Remove,
@@ -102,11 +107,12 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "r" => Token::ReadSeq,
         "x" => Token::Discard,
         "f" => Token::FixedSeq,
-        _ => Token::Label(l),
+        _ => Token::Label(s),
     });
 
     let token = nucs
-        .or(idents)
+        .or(ident)
+        .or(label)
         .or(transformto)
         .or(int)
         .or(ctrl)
