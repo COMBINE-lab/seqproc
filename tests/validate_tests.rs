@@ -4,7 +4,7 @@ use chumsky::{prelude::*, Stream};
 use seqproc::{
     lexer::lexer,
     parser::{parser, Expr},
-    validate::{compile_definitions, unwrap_val_fn, validate},
+    compile::{compile, reads::compile_reads, definitions::compile_definitions},
 };
 
 #[test]
@@ -20,20 +20,14 @@ fn no_err() {
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r.0
+        r
     } else {
         unreachable!()
     };
 
-    for read in &res {
-        if let Expr::Read(_, exprs) = read {
-            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
+    let res = compile_reads(res, HashMap::new());
 
-            assert_eq!(true, res.is_ok());
-        } else {
-            todo!()
-        }
-    }
+    assert_eq!(true, res.is_ok());
 }
 
 #[test]
@@ -49,20 +43,14 @@ fn fail_norm() {
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r.0
+        r
     } else {
         unreachable!()
     };
 
-    for read in &res {
-        if let Expr::Read(_, exprs) = read {
-            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
+    let res = compile_reads(res.clone(), HashMap::new());
 
-            assert_eq!(false, res.is_ok());
-        } else {
-            todo!()
-        }
-    }
+    assert_eq!(false, res.is_ok());
 }
 
 #[test]
@@ -78,20 +66,14 @@ fn fail_composition() {
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r.0
+        r
     } else {
         unreachable!()
     };
 
-    for read in &res {
-        if let Expr::Read(_, exprs) = read {
-            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
+    let res = compile_reads(res.clone(), HashMap::new());
 
-            assert!(res.is_err());
-        } else {
-            todo!()
-        }
-    }
+    assert_eq!(false, res.is_ok());
 }
 
 #[test]
@@ -107,20 +89,14 @@ fn fail_remove() {
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r.0
+        r
     } else {
         unreachable!()
     };
 
-    for read in &res {
-        if let Expr::Read(_, exprs) = read {
-            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
+    let res = compile_reads(res.clone(), HashMap::new());
 
-            assert!(res.is_err());
-        } else {
-            todo!()
-        }
-    }
+    assert_eq!(false, res.is_ok());
 }
 
 #[test]
@@ -136,20 +112,14 @@ fn discard_as_void() {
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r.0
+        r
     } else {
         unreachable!()
     };
 
-    for read in &res {
-        if let Expr::Read(_, exprs) = read {
-            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
+    let res = compile_reads(res.clone(), HashMap::new());
 
-            assert!(res.is_err());
-        } else {
-            todo!()
-        }
-    }
+    assert_eq!(false, res.is_ok());
 }
 
 #[test]
@@ -230,7 +200,7 @@ fn label_replacement() {
 
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    let (def, (reads, _)) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
+    let (def, reads) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
         (d.deref().clone().unwrap(), r)
     } else {
         unreachable!()
@@ -242,14 +212,9 @@ fn label_replacement() {
         todo!()
     };
 
-    for read in &reads {
-        if let Expr::Read(_, exprs) = read {
-            let res = unwrap_val_fn(exprs.clone(), Some(def_map.clone()));
-            assert!(res.is_err());
-        } else {
-            todo!()
-        }
-    }
+    let res = compile_reads(reads, def_map);
+
+    assert_eq!(false, res.is_ok());
 }
 
 #[test]
@@ -265,7 +230,7 @@ fn no_variable() {
 
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    let (def, (reads, _)) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
+    let (def, reads) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
         (d.deref().clone().unwrap(), r)
     } else {
         unreachable!()
@@ -277,19 +242,14 @@ fn no_variable() {
         todo!()
     };
 
-    for read in &reads {
-        if let Expr::Read(_, exprs) = read {
-            let res = unwrap_val_fn(exprs.clone(), Some(def_map.clone()));
-            assert!(res.is_err());
-        } else {
-            todo!()
-        }
-    }
+    let res = compile_reads(reads, def_map);
+
+    assert_eq!(false, res.is_ok());
 }
 
 #[test]
 fn expr_unwrap() {
-    let src = "1{norm(b[9-10])remove(f[CAGAGC])u[8]remove(b[10])}";
+    let src = "1{pad(norm(b[9-10]), 1)remove(f[CAGAGC])u[8]remove(b[10])}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -299,25 +259,11 @@ fn expr_unwrap() {
 
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    let (reads, _) = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
-    };
+    let desc = res.clone().unwrap().0;
 
-    for read in &reads {
-        if let Expr::Read(_, exprs) = read {
-            let res = unwrap_val_fn(exprs.clone(), Some(HashMap::new()));
+    let res = compile(desc);
 
-            assert!(res.is_ok());
-
-            if let Ok((expr, _)) = res {
-                assert_eq!(4, expr.len());
-            }
-        } else {
-            todo!()
-        }
-    }
+    assert_eq!(true, res.is_ok());
 }
 
 #[test]
@@ -334,7 +280,7 @@ brc = b[10]
 
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    let (def, (reads, _)) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
+    let (def, reads) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
         (d.deref().clone().unwrap(), r)
     } else {
         unreachable!()
@@ -346,16 +292,9 @@ brc = b[10]
         todo!()
     };
 
-    for read in &reads {
-        if let Expr::Read(_, exprs) = read {
-            let res = unwrap_val_fn(exprs.clone(), Some(def_map.clone()));
+    let res = compile_reads(reads, def_map);
 
-            dbg!(&res);
-            assert!(res.is_err());
-        } else {
-            todo!()
-        }
-    }
+    assert_eq!(false, res.is_ok());
 }
 
 #[test]
@@ -391,7 +330,7 @@ brc1 = pad(<brc>, 1)
 }
 
 #[test]
-fn validate_description() {
+fn compile_description() {
     let src = "
 brc = b[10]
 umi = pad(u[10], 1)
@@ -407,7 +346,7 @@ umi = pad(u[10], 1)
 
     let desc = res.clone().unwrap().0;
 
-    let res = validate(desc);
+    let res = compile(desc);
 
     assert!(res.is_ok())
 }
@@ -429,7 +368,7 @@ umi = pad(u[10], 1)
 
     let desc = res.clone().unwrap().0;
 
-    let res = validate(desc);
+    let res = compile(desc);
 
     assert!(res.is_err())
 }
@@ -448,7 +387,7 @@ fn valid_geom() {
 
     let desc = res.clone().unwrap().0;
 
-    let res = validate(desc);
+    let res = compile(desc);
 
     assert!(res.is_ok())
 }
@@ -467,7 +406,7 @@ fn invalid_geom_one() {
 
     let desc = res.clone().unwrap().0;
 
-    let res = validate(desc);
+    let res = compile(desc);
 
     assert!(res.is_err())
 }
@@ -486,7 +425,7 @@ fn invalid_geom_two() {
 
     let desc = res.clone().unwrap().0;
 
-    let res = validate(desc);
+    let res = compile(desc);
 
     assert!(res.is_err())
 }

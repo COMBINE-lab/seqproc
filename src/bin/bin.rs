@@ -4,7 +4,7 @@ use chumsky::{prelude::*, Stream};
 use clap::{arg, Parser as cParser};
 // use std::time::Instant;
 
-use seqproc::{lexer, parser::parser, syntax::Read, validate::validate};
+use seqproc::{lexer, parser::parser, syntax::Read, compile::compile};
 
 /// General puprose sequence preprocessor
 #[derive(Debug, cParser)]
@@ -79,7 +79,7 @@ fn main() {
         ));
 
         if let Some((ast, _)) = &ast {
-            let err = validate(ast.clone());
+            let err = compile(ast.clone());
 
             if let Err(e) = err {
                 errs.push(Simple::custom(e.span, e.msg));
