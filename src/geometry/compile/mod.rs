@@ -76,7 +76,7 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
             .iter()
             .flatten()
             .filter(|e| matches!(e.0, Interval::Named(_)))
-            .map(|e| e.clone())
+            .cloned()
             .collect::<Vec<_>>();
 
         if let Some((transformation, map)) = compiled_transformation {

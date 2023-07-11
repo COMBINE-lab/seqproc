@@ -54,18 +54,16 @@ pub fn compile_definitions(expr: Spanned<Expr>) -> Result<HashMap<String, Geomet
                     if let Err(e) = res {
                         err = Some(e);
                         break;
-                    } else {
-                        if map.insert(l.clone(), res.ok().unwrap()).is_some() {
-                            err = Some(Error {
-                                // span labels
-                                span,
-                                msg: format!(
-                                    "Repeated label in definition block: \"{}\" already defined",
-                                    l
-                                ),
-                            });
-                            break;
-                        }
+                    } else if map.insert(l.clone(), res.ok().unwrap()).is_some() {
+                        err = Some(Error {
+                            // span labels
+                            span,
+                            msg: format!(
+                                "Repeated label in definition block: \"{}\" already defined",
+                                l
+                            ),
+                        });
+                        break;
                     }
                 } else {
                     err = Some(Error {

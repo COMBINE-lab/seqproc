@@ -39,7 +39,7 @@ pub fn validate_geometry(
 
         if !expect_next.contains(&type_) {
             return Err(Error {
-                span: span.clone(),
+                span,
                 msg: format!(
                     "Ambiguous Geometry: expected {:?}, found: {}",
                     expect_next, type_
@@ -106,7 +106,7 @@ pub fn compile_reads(
             (read, num)
         } else {
             return Err(Error {
-                span: span.clone(),
+                span,
                 msg: format!("Expected a Read found {}", read),
             });
         };
@@ -126,7 +126,7 @@ pub fn compile_reads(
                     }
                     Expr::LabeledGeomPiece(l, gp) => {
                         if let Expr::Label((l, span)) = l.deref() {
-                            if labels.contains(&l) || map.clone().contains_key(l) {
+                            if labels.contains(l) || map.clone().contains_key(l) {
                                 err = Some(Error {
                                     span: span.clone(),
                                     msg: format!("Variable: {}, already defined above.", l),
@@ -154,27 +154,25 @@ pub fn compile_reads(
                             });
 
                             break 'outer;
+                        } else if let Some(inner_expr) = map.get(l) {
+                            label = Some(l.clone());
+                            labels.push(l.clone());
+                            spanned_geom_piece = Some(inner_expr.expr.clone());
+                            stack = inner_expr
+                                .stack
+                                .clone()
+                                .into_iter()
+                                .chain(stack)
+                                .collect::<Vec<_>>();
+
+                            break 'inner;
                         } else {
-                            if let Some(inner_expr) = map.get(l) {
-                                label = Some(l.clone());
-                                labels.push(l.clone());
-                                spanned_geom_piece = Some(inner_expr.expr.clone());
-                                stack = inner_expr
-                                    .stack
-                                    .clone()
-                                    .into_iter()
-                                    .chain(stack)
-                                    .collect::<Vec<_>>();
+                            err = Some(Error {
+                                span: span.clone(),
+                                msg: format!("No variable declared with label: {}", l),
+                            });
 
-                                break 'inner;
-                            } else {
-                                err = Some(Error {
-                                    span: span.clone(),
-                                    msg: format!("No variable declared with label: {}", l),
-                                });
-
-                                break 'outer;
-                            }
+                            break 'outer;
                         }
                     }
                     _ => break 'inner,
@@ -182,14 +180,12 @@ pub fn compile_reads(
             }
 
             // if spanned geom piece is set then expr should not matter
-            let spanned_gp = if spanned_geom_piece.is_some() {
-                spanned_geom_piece.unwrap()
+            let spanned_gp = if let Some(spanned_gp) = spanned_geom_piece {
+                spanned_gp
+            } else if let (Expr::GeomPiece(type_, size), span) = expr {
+                (GeometryPiece { type_, size }, span)
             } else {
-                if let (Expr::GeomPiece(type_, size), span) = expr {
-                    (GeometryPiece { type_, size }, span)
-                } else {
-                    unreachable!()
-                }
+                unreachable!()
             };
 
             let gm = GeometryMeta {

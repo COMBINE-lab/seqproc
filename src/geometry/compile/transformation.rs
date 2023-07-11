@@ -14,7 +14,7 @@ pub fn compile_transformation(
         exprs
     } else {
         return Err(Error {
-            span: span.clone(),
+            span,
             msg: format!("Expected a transformation expression found: {}", expr),
         });
     };
@@ -50,7 +50,7 @@ fn compile(
             Expr::Read((_num, _), read) => read,
             _ => {
                 return Err(Error {
-                    span: span.clone(),
+                    span,
                     msg: format!("Expected a Read found {}", read),
                 });
             }
@@ -81,7 +81,7 @@ fn compile(
                 l
             } else {
                 return Err(Error {
-                    span: span.clone(),
+                    span,
                     msg: "Transformations must only reference previously defined labels"
                         .to_string(),
                 });

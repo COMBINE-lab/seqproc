@@ -35,9 +35,9 @@ pub fn trim(
 
 pub fn trim_leftover(
     read: Box<dyn antisequence::Reads>,
-    labels: &mut Vec<&str>,
+    labels: &mut [&str],
 ) -> Box<dyn antisequence::Reads> {
-    let labels = vec![Label::new(&labels.join("_").as_bytes()).unwrap()];
+    let labels = vec![Label::new(labels.join("_").as_bytes()).unwrap()];
 
     trim(read, labels)
 }

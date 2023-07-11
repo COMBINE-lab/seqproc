@@ -151,13 +151,11 @@ impl fmt::Display for Expr {
 
                 let (r, _) = r;
 
-                let r_w = format!(
-                    "{}",
-                    r.iter()
-                        .map(|x| x.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                );
+                let r_w = r
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
 
                 if let Some(d_s) = d_w {
                     if let Some(t_s) = t_w {
@@ -183,11 +181,11 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
        restruct some invalid definitions
     */
 
-    let ident = select! { Token::Label(ident) => ident.clone() }.labelled("Piece Label");
+    let ident = select! { Token::Label(ident) => ident }.labelled("Piece Label");
 
-    let num = select! { Token::Num(n) => n.clone() }.labelled("Size Label");
+    let num = select! { Token::Num(n) => n }.labelled("Size Label");
 
-    let file = select! { Token::File(f) => f.clone() }.labelled("File Path");
+    let file = select! { Token::File(f) => f }.labelled("File Path");
 
     let piece_type = select! {
         Token::Barcode => Type::Barcode,
@@ -232,7 +230,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .labelled("Nucleotide String");
 
     let unbounded = piece_type
-        .then(label.clone().or_not())
+        .then(label.or_not())
         .then_ignore(just(Token::Special(':')))
         .map_with_span(|(type_, label), span| {
             let expr = Expr::GeomPiece(type_, Size::UnboundedLen);
@@ -245,7 +243,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .labelled("Unbounded Segment");
 
     let ranged = piece_type
-        .then(label.clone().or_not())
+        .then(label.or_not())
         .then(range)
         .map_with_span(|((type_, label), (_, range)), span| {
             let expr = Expr::GeomPiece(type_, range);
@@ -258,7 +256,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .labelled("Ranged Segment");
 
     let fixed = piece_type
-        .then(label.clone().or_not())
+        .then(label.or_not())
         .then(fixed_len)
         .map_with_span(|((type_, label), len), span| {
             let expr = Expr::GeomPiece(type_, len);
@@ -272,7 +270,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
 
     let fixed_seq = just(Token::FixedSeq)
         .to(Type::FixedSeq)
-        .then(label.clone().or_not())
+        .then(label.or_not())
         .then(nucstr)
         .map_with_span(|((type_, label), nucs), span| {
             let expr = Expr::GeomPiece(type_, nucs);
@@ -289,7 +287,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         ranged.clone(),
         fixed.clone(),
         fixed_seq.clone(),
-        label.clone(),
+        label,
     ));
 
     let transformed_pieces = recursive(|transformed_pieces| {
@@ -419,7 +417,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .repeated()
         .at_least(1)
         .at_most(2)
-        .map(|trans| Expr::Transform(trans));
+        .map(Expr::Transform);
 
     definitions
         .map_with_span(|tok, span| (Expr::Definitions(tok), span))

@@ -88,9 +88,7 @@ impl fmt::Display for GeometryPiece {
 }
 
 pub fn validate_expr(gp: GeometryMeta) -> Result<GeometryMeta, Error> {
-    if let Err(e) = gp_return_type(gp.clone()) {
-        return Err(e);
-    }
+    gp_return_type(gp.clone())?;
 
     Ok(gp)
 }
@@ -111,16 +109,10 @@ pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
         }
     };
 
-    let mut return_type = (expr_type.clone(), expr_span.clone());
+    let mut return_type = (expr_type, expr_span);
 
-    for fn_ in gp.clone().stack.into_iter() {
-        let res = validate_composition(fn_, return_type);
-
-        if let Err(e) = res {
-            return Err(e);
-        }
-
-        return_type = res.ok().unwrap();
+    for fn_ in gp.stack.into_iter() {
+        return_type = validate_composition(fn_, return_type)?;
     }
 
     Ok(return_type.0)
