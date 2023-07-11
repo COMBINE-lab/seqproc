@@ -2,7 +2,7 @@ use super::utils::*;
 
 use std::{collections::HashMap, ops::Deref};
 
-use crate::parser::{Expr, Size, Spanned, Function};
+use crate::parser::{Expr, Function, Size, Spanned};
 
 pub fn validate_geometry(
     map: HashMap<String, GeometryPiece>,
@@ -66,17 +66,18 @@ pub fn validate_geometry(
     Ok(())
 }
 
-pub fn standardize_geometry(map: &mut HashMap<String, GeometryPiece>, geometry: Geometry) -> Vec<Vec<GeometryPiece>> {
+pub fn standardize_geometry(
+    map: &mut HashMap<String, GeometryPiece>,
+    geometry: Geometry,
+) -> Vec<Vec<GeometryPiece>> {
     let mut std_geom: Vec<Vec<GeometryPiece>> = Vec::new();
 
     for read in geometry {
         let mut geom: Vec<GeometryPiece> = Vec::new();
         for interval in read {
             match interval {
-                (Interval::Named(l), _) => 
-                    geom.push(map.get(&l).unwrap().clone()),
-                (Interval::Temporary(gp), _) => 
-                    geom.push(gp.clone())
+                (Interval::Named(l), _) => geom.push(map.get(&l).unwrap().clone()),
+                (Interval::Temporary(gp), _) => geom.push(gp.clone()),
             }
         }
 

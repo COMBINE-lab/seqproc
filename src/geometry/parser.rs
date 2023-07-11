@@ -307,11 +307,6 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
             .map_with_span(|tok, span| (tok, span))
             .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
 
-        let no_arg = geom_piece
-            .clone()
-            .map_with_span(|tok, span| (tok, span))
-            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
-
         let recursive_no_arg = transformed_pieces
             .clone()
             .map_with_span(|tok, span| (tok, span))
@@ -326,7 +321,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .labelled("Remove function"),
             just(Token::Normalize)
                 .map_with_span(|_, span| (Function::Normalize, span))
-                .then(no_arg)
+                .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
                 .labelled("Normalize function"),
             just(Token::Hamming)

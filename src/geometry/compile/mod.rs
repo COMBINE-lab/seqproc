@@ -4,8 +4,8 @@ mod transformation;
 mod utils;
 
 use definitions::compile_definitions;
-use transformation::compile_transformation;
 use reads::compile_reads;
+use transformation::compile_transformation;
 use utils::Error;
 
 use std::{collections::HashMap, ops::Deref};
@@ -13,8 +13,9 @@ use std::{collections::HashMap, ops::Deref};
 use crate::parser::Expr;
 
 use self::{
+    reads::standardize_geometry,
     transformation::label_transformation,
-    utils::{GeometryPiece, Interval, Transformation}, reads::standardize_geometry,
+    utils::{GeometryPiece, Interval, Transformation},
 };
 
 #[derive(Debug)]
@@ -60,7 +61,6 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
             None
         };
 
-
         /*
            At this point we have
                - map
@@ -86,14 +86,14 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
 
             Ok(CompiledData {
                 geometry,
-                transformation: Some(transformation)
+                transformation: Some(transformation),
             })
         } else {
             let geometry = standardize_geometry(&mut map, geometry);
 
             Ok(CompiledData {
                 geometry,
-                transformation: None
+                transformation: None,
             })
         }
     } else {
