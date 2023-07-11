@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{
     lexer::Span,
-    parser::{Expr, Function, Size, Spanned, Type},
+    parser::{Function, Size, Spanned, Type},
 };
 
 pub type Geometry = Vec<Vec<(Interval, i32)>>;
@@ -50,7 +50,7 @@ impl fmt::Display for Error {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Interval {
     Named(String),
-    Temporary(GeometryPiece),
+    Temporary(GeometryMeta),
 }
 
 impl fmt::Display for Interval {
@@ -64,18 +64,30 @@ impl fmt::Display for Interval {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct GeometryPiece {
-    pub expr: Spanned<Expr>,
+pub struct GeometryMeta {
+    pub expr: Spanned<GeometryPiece>,
     pub stack: Vec<Spanned<Function>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GeometryPiece {
+    pub type_: Type,
+    pub size: Size,
+}
+
+impl fmt::Display for GeometryMeta {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Geometry Meta: {}, {:?}", self.expr.0, self.stack)
+    }
 }
 
 impl fmt::Display for GeometryPiece {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Geometry Piece: {}, {:?}", self.expr.0, self.stack)
+        write!(f, "Geometry Piece: {}, {}", self.type_, self.size)
     }
 }
 
-pub fn validate_expr(gp: GeometryPiece) -> Result<GeometryPiece, Error> {
+pub fn validate_expr(gp: GeometryMeta) -> Result<GeometryMeta, Error> {
     if let Err(e) = gp_return_type(gp.clone()) {
         return Err(e);
     }
@@ -83,22 +95,20 @@ pub fn validate_expr(gp: GeometryPiece) -> Result<GeometryPiece, Error> {
     Ok(gp)
 }
 
-pub fn gp_return_type(gp: GeometryPiece) -> Result<ReturnType, Error> {
+pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
     let (expr, expr_span) = gp.clone().expr;
 
-    let expr_type = if let Expr::GeomPiece(type_, size) = expr.clone() {
-        if let Type::Discard = type_ {
+    let expr_type = {
+        if let Type::Discard = expr.type_ {
             ReturnType::Void
         } else {
-            match size {
+            match expr.size {
                 Size::FixedSeq(_) => ReturnType::FixedSeq,
                 Size::FixedLen(_) => ReturnType::FixedLen,
                 Size::RangedLen(_) => ReturnType::Ranged,
                 Size::UnboundedLen => ReturnType::Unbounded,
             }
         }
-    } else {
-        unreachable!();
     };
 
     let mut return_type = (expr_type.clone(), expr_span.clone());

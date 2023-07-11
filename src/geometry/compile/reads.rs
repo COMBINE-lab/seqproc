@@ -5,7 +5,7 @@ use std::{collections::HashMap, ops::Deref};
 use crate::parser::{Expr, Function, Size, Spanned};
 
 pub fn validate_geometry(
-    map: HashMap<String, GeometryPiece>,
+    map: HashMap<String, GeometryMeta>,
     geom: Vec<(Interval, i32)>,
 ) -> Result<(), Error> {
     let mut expect_next = vec![
@@ -23,57 +23,57 @@ pub fn validate_geometry(
             break;
         }
 
-        let gp = match next.unwrap() {
+        let gm = match next.unwrap() {
             (Interval::Named(l), _) => map.get(l).unwrap(),
             (Interval::Temporary(gp_), _) => gp_,
         };
 
-        if let (Expr::GeomPiece(_, geom_type), span) = gp.expr.clone() {
-            let type_ = match geom_type {
-                Size::FixedSeq(_) => ReturnType::FixedSeq,
-                Size::FixedLen(_) => ReturnType::FixedLen,
-                Size::RangedLen(_) => ReturnType::Ranged,
-                Size::UnboundedLen => ReturnType::Unbounded,
-            };
+        let (gp, span) = gm.expr.clone();
 
-            if !expect_next.contains(&type_) {
-                return Err(Error {
-                    span: span.clone(),
-                    msg: format!(
-                        "Ambiguous Geometry: expected {:?}, found: {}",
-                        expect_next, type_
-                    ),
-                });
-            }
+        let type_ = match gp.size {
+            Size::FixedSeq(_) => ReturnType::FixedSeq,
+            Size::FixedLen(_) => ReturnType::FixedLen,
+            Size::RangedLen(_) => ReturnType::Ranged,
+            Size::UnboundedLen => ReturnType::Unbounded,
+        };
 
-            expect_next = match type_ {
-                ReturnType::FixedLen | ReturnType::FixedSeq => {
-                    vec![
-                        ReturnType::FixedLen,
-                        ReturnType::FixedSeq,
-                        ReturnType::Unbounded,
-                        ReturnType::Ranged,
-                    ]
-                }
-                ReturnType::Ranged | ReturnType::Unbounded => {
-                    vec![ReturnType::FixedSeq]
-                }
-                _ => unreachable!(),
-            };
+        if !expect_next.contains(&type_) {
+            return Err(Error {
+                span: span.clone(),
+                msg: format!(
+                    "Ambiguous Geometry: expected {:?}, found: {}",
+                    expect_next, type_
+                ),
+            });
         }
+
+        expect_next = match type_ {
+            ReturnType::FixedLen | ReturnType::FixedSeq => {
+                vec![
+                    ReturnType::FixedLen,
+                    ReturnType::FixedSeq,
+                    ReturnType::Unbounded,
+                    ReturnType::Ranged,
+                ]
+            }
+            ReturnType::Ranged | ReturnType::Unbounded => {
+                vec![ReturnType::FixedSeq]
+            }
+            _ => unreachable!(),
+        };
     }
 
     Ok(())
 }
 
 pub fn standardize_geometry(
-    map: &mut HashMap<String, GeometryPiece>,
+    map: &mut HashMap<String, GeometryMeta>,
     geometry: Geometry,
-) -> Vec<Vec<GeometryPiece>> {
-    let mut std_geom: Vec<Vec<GeometryPiece>> = Vec::new();
+) -> Vec<Vec<GeometryMeta>> {
+    let mut std_geom: Vec<Vec<GeometryMeta>> = Vec::new();
 
     for read in geometry {
-        let mut geom: Vec<GeometryPiece> = Vec::new();
+        let mut geom: Vec<GeometryMeta> = Vec::new();
         for interval in read {
             match interval {
                 (Interval::Named(l), _) => geom.push(map.get(&l).unwrap().clone()),
@@ -90,8 +90,8 @@ pub fn standardize_geometry(
 // this should take both reads and parse them. Allowing for combined label_map
 pub fn compile_reads(
     exprs: Spanned<Vec<Expr>>,
-    map: &mut HashMap<String, GeometryPiece>,
-) -> Result<(HashMap<String, GeometryPiece>, Geometry), Error> {
+    map: &mut HashMap<String, GeometryMeta>,
+) -> Result<(HashMap<String, GeometryMeta>, Geometry), Error> {
     let mut err: Option<Error> = None;
     let mut geometry: Geometry = Vec::new();
     let mut labels: Vec<String> = Vec::new();
@@ -114,6 +114,7 @@ pub fn compile_reads(
         let mut read_geom: Vec<(Interval, i32)> = Vec::new();
         'outer: for expr in read {
             let mut expr = expr;
+            let mut spanned_geom_piece: Option<Spanned<GeometryPiece>> = None;
             let mut stack: Vec<Spanned<Function>> = Vec::new();
             let mut label: Option<String> = None;
 
@@ -139,6 +140,8 @@ pub fn compile_reads(
                         // maybe return from this and add labeled elements to the map outside of this
                         // would have to unpack labeled values to validate at the end
                         expr = gp.deref().clone();
+
+                        break 'inner;
                     }
                     Expr::Label((ref l, ref span)) => {
                         if labels.contains(l) {
@@ -155,13 +158,15 @@ pub fn compile_reads(
                             if let Some(inner_expr) = map.get(l) {
                                 label = Some(l.clone());
                                 labels.push(l.clone());
-                                expr = inner_expr.expr.clone();
+                                spanned_geom_piece = Some(inner_expr.expr.clone());
                                 stack = inner_expr
                                     .stack
                                     .clone()
                                     .into_iter()
                                     .chain(stack)
                                     .collect::<Vec<_>>();
+
+                                break 'inner;
                             } else {
                                 err = Some(Error {
                                     span: span.clone(),
@@ -176,21 +181,32 @@ pub fn compile_reads(
                 }
             }
 
-            let gp = GeometryPiece {
-                expr: expr.clone(),
+            // if spanned geom piece is set then expr should not matter
+            let spanned_gp = if spanned_geom_piece.is_some() {
+                spanned_geom_piece.unwrap()
+            } else {
+                if let (Expr::GeomPiece(type_, size), span) = expr {
+                    (GeometryPiece { type_, size }, span)
+                } else {
+                    unreachable!()
+                }
+            };
+
+            let gm = GeometryMeta {
+                expr: spanned_gp,
                 stack,
             };
 
-            if let Err(e) = validate_expr(gp.clone()) {
+            if let Err(e) = validate_expr(gm.clone()) {
                 err = Some(e);
                 break 'outer;
             }
 
             if let Some(l) = label {
-                map.insert(l.clone(), gp.clone());
+                map.insert(l.clone(), gm.clone());
                 read_geom.push((Interval::Named(l), num))
             } else {
-                read_geom.push((Interval::Temporary(gp), num));
+                read_geom.push((Interval::Temporary(gm), num));
             }
         }
 

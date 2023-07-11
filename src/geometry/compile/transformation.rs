@@ -6,8 +6,8 @@ use crate::parser::{Expr, Function, Spanned};
 
 pub fn compile_transformation(
     transformation: Spanned<Expr>,
-    map: &mut HashMap<String, GeometryPiece>,
-) -> Result<(Transformation, &mut HashMap<String, GeometryPiece>), Error> {
+    map: &mut HashMap<String, GeometryMeta>,
+) -> Result<(Transformation, &mut HashMap<String, GeometryMeta>), Error> {
     let (expr, span) = transformation;
 
     let exprs = if let Expr::Transform(exprs) = expr {
@@ -39,8 +39,8 @@ pub fn compile_transformation(
 */
 fn compile(
     exprs: Spanned<Vec<Expr>>,
-    map: &mut HashMap<String, GeometryPiece>,
-) -> Result<(Transformation, &mut HashMap<String, GeometryPiece>), Error> {
+    map: &mut HashMap<String, GeometryMeta>,
+) -> Result<(Transformation, &mut HashMap<String, GeometryMeta>), Error> {
     let mut transformation: Transformation = Vec::new();
 
     let (exprs, span) = exprs;
@@ -88,7 +88,7 @@ fn compile(
             };
 
             let gp = if let Some(gp) = map.get(&label) {
-                GeometryPiece {
+                GeometryMeta {
                     expr: gp.expr.clone(),
                     stack: gp
                         .stack

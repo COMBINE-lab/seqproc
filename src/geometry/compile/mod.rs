@@ -15,12 +15,12 @@ use crate::parser::Expr;
 use self::{
     reads::standardize_geometry,
     transformation::label_transformation,
-    utils::{GeometryPiece, Interval, Transformation},
+    utils::{GeometryMeta, Interval, Transformation},
 };
 
 #[derive(Debug)]
 pub struct CompiledData {
-    pub geometry: Vec<Vec<GeometryPiece>>,
+    pub geometry: Vec<Vec<GeometryMeta>>,
     pub transformation: Option<Transformation>,
 }
 
