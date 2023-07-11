@@ -4,16 +4,27 @@ mod transformation;
 mod utils;
 
 use definitions::compile_definitions;
-use reads::compile_reads;
 use transformation::compile_transformation;
-use utils::{Error, Geometry};
+use reads::compile_reads;
+use utils::Error;
 
 use std::{collections::HashMap, ops::Deref};
 
 use crate::parser::Expr;
 
+use self::{
+    transformation::label_transformation,
+    utils::{GeometryPiece, Interval, Transformation}, reads::standardize_geometry,
+};
+
+#[derive(Debug)]
+pub struct CompiledData {
+    pub geometry: Vec<Vec<GeometryPiece>>,
+    pub transformation: Option<Transformation>,
+}
+
 // this should be more of a compile and also should return a kind of
-pub fn compile(expr: Expr) -> Result<Geometry, Error> {
+pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
     if let Expr::Description(d, r, t) = expr {
         // validate defintion block
         let mut map = if let Some(expr) = d.deref() {
@@ -28,28 +39,63 @@ pub fn compile(expr: Expr) -> Result<Geometry, Error> {
             HashMap::new()
         };
 
-        let validate_read_res = compile_reads(r, map.clone());
+        let validate_read_res = compile_reads(r, &mut map);
 
-        let (geometry, read_map) = if let Ok((g, m)) = validate_read_res {
-            (g, m)
+        let (mut map, geometry) = if let Ok(cd) = validate_read_res {
+            cd
         } else {
             return Err(validate_read_res.err().unwrap());
         };
 
-        map = map.into_iter().chain(read_map).collect();
-
         // this needs a bit more thought
-        let _transformation = if let Some(transform) = t.deref() {
-            let res = compile_transformation(transform.clone(), map);
+        let compiled_transformation = if let Some(transform) = t.deref() {
+            let res = compile_transformation(transform.clone(), &mut map);
 
             if let Err(e) = res {
                 return Err(e);
             } else {
-                res.ok().unwrap()
+                res.ok()
             }
+        } else {
+            None
         };
 
-        Ok(geometry)
+
+        /*
+           At this point we have
+               - map
+               - geometry
+               - transformation
+
+           What needs to happen
+               - labels in geometry replaced by their value in map
+               - labels in transformation add their read number from geometry DONE
+        */
+
+        let numbered_labels = geometry
+            .iter()
+            .flatten()
+            .filter(|e| matches!(e.0, Interval::Named(_)))
+            .map(|e| e.clone())
+            .collect::<Vec<_>>();
+
+        if let Some((transformation, map)) = compiled_transformation {
+            let transformation = label_transformation(transformation, numbered_labels);
+
+            let geometry = standardize_geometry(&mut map.clone(), geometry);
+
+            Ok(CompiledData {
+                geometry,
+                transformation: Some(transformation)
+            })
+        } else {
+            let geometry = standardize_geometry(&mut map, geometry);
+
+            Ok(CompiledData {
+                geometry,
+                transformation: None
+            })
+        }
     } else {
         unreachable!()
     }

@@ -2,11 +2,12 @@ use super::utils::*;
 
 use std::{collections::HashMap, ops::Deref};
 
-use crate::{
-    parser::{Expr, Function, Size, Spanned},
-};
+use crate::parser::{Expr, Size, Spanned, Function};
 
-pub fn validate_geometry(geom: Vec<GeometryPiece>) -> Result<(), Error> {
+pub fn validate_geometry(
+    map: HashMap<String, GeometryPiece>,
+    geom: Vec<(Interval, i32)>,
+) -> Result<(), Error> {
     let mut expect_next = vec![
         ReturnType::FixedLen,
         ReturnType::FixedSeq,
@@ -22,7 +23,10 @@ pub fn validate_geometry(geom: Vec<GeometryPiece>) -> Result<(), Error> {
             break;
         }
 
-        let gp = next.unwrap();
+        let gp = match next.unwrap() {
+            (Interval::Named(l), _) => map.get(l).unwrap(),
+            (Interval::Temporary(gp_), _) => gp_,
+        };
 
         if let (Expr::GeomPiece(_, geom_type), span) = gp.expr.clone() {
             let type_ = match geom_type {
@@ -62,24 +66,43 @@ pub fn validate_geometry(geom: Vec<GeometryPiece>) -> Result<(), Error> {
     Ok(())
 }
 
+pub fn standardize_geometry(map: &mut HashMap<String, GeometryPiece>, geometry: Geometry) -> Vec<Vec<GeometryPiece>> {
+    let mut std_geom: Vec<Vec<GeometryPiece>> = Vec::new();
+
+    for read in geometry {
+        let mut geom: Vec<GeometryPiece> = Vec::new();
+        for interval in read {
+            match interval {
+                (Interval::Named(l), _) => 
+                    geom.push(map.get(&l).unwrap().clone()),
+                (Interval::Temporary(gp), _) => 
+                    geom.push(gp.clone())
+            }
+        }
+
+        std_geom.push(geom);
+    }
+
+    std_geom
+}
+
 // this should take both reads and parse them. Allowing for combined label_map
 pub fn compile_reads(
     exprs: Spanned<Vec<Expr>>,
-    map: HashMap<String, GeometryPiece>,
-) -> Result<(Geometry, HashMap<String, GeometryPiece>), Error> {
+    map: &mut HashMap<String, GeometryPiece>,
+) -> Result<(HashMap<String, GeometryPiece>, Geometry), Error> {
     let mut err: Option<Error> = None;
     let mut geometry: Geometry = Vec::new();
     let mut labels: Vec<String> = Vec::new();
-    let mut label_map: HashMap<String, GeometryPiece> = HashMap::new();
 
     // create a vector of labels which have already been used. help with errors
     // labels and span!
 
     let (exprs, span) = exprs;
 
-    'oouter_outer: for read in exprs {
-        let read = if let Expr::Read((_num, _), read) = read {
-            read
+    'outer_outer: for read in exprs {
+        let (read, num) = if let Expr::Read((num, _), read) = read {
+            (read, num)
         } else {
             return Err(Error {
                 span: span.clone(),
@@ -87,7 +110,7 @@ pub fn compile_reads(
             });
         };
 
-        let mut read_geom: Vec<GeometryPiece> = Vec::new();
+        let mut read_geom: Vec<(Interval, i32)> = Vec::new();
         'outer: for expr in read {
             let mut expr = expr;
             let mut stack: Vec<Spanned<Function>> = Vec::new();
@@ -101,10 +124,7 @@ pub fn compile_reads(
                     }
                     Expr::LabeledGeomPiece(l, gp) => {
                         if let Expr::Label((l, span)) = l.deref() {
-                            if labels.contains(&l)
-                                || map.clone().contains_key(l)
-                                || label_map.contains_key(l)
-                            {
+                            if labels.contains(&l) || map.clone().contains_key(l) {
                                 err = Some(Error {
                                     span: span.clone(),
                                     msg: format!("Variable: {}, already defined above.", l),
@@ -132,8 +152,15 @@ pub fn compile_reads(
                             break 'outer;
                         } else {
                             if let Some(inner_expr) = map.get(l) {
+                                label = Some(l.clone());
                                 labels.push(l.clone());
                                 expr = inner_expr.expr.clone();
+                                stack = inner_expr
+                                    .stack
+                                    .clone()
+                                    .into_iter()
+                                    .chain(stack)
+                                    .collect::<Vec<_>>();
                             } else {
                                 err = Some(Error {
                                     span: span.clone(),
@@ -159,15 +186,16 @@ pub fn compile_reads(
             }
 
             if let Some(l) = label {
-                label_map.insert(l, gp.clone());
+                map.insert(l.clone(), gp.clone());
+                read_geom.push((Interval::Named(l), num))
+            } else {
+                read_geom.push((Interval::Temporary(gp), num));
             }
-
-            read_geom.push(gp);
         }
 
-        if let Err(e) = validate_geometry(read_geom.clone()) {
+        if let Err(e) = validate_geometry(map.clone(), read_geom.clone()) {
             err = Some(e);
-            break 'oouter_outer;
+            break 'outer_outer;
         }
 
         geometry.push(read_geom);
@@ -177,5 +205,5 @@ pub fn compile_reads(
         return Err(e);
     }
 
-    Ok((geometry, label_map))
+    Ok((map.clone(), geometry))
 }

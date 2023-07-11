@@ -5,7 +5,9 @@ use crate::{
     parser::{Expr, Function, Size, Spanned, Type},
 };
 
-pub type Geometry = Vec<Vec<GeometryPiece>>;
+pub type Geometry = Vec<Vec<(Interval, i32)>>;
+
+pub type Transformation = Vec<Vec<String>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ReturnType {
@@ -42,6 +44,22 @@ impl fmt::Display for Error {
             "Error: {}, at {}-{}",
             self.msg, self.span.start, self.span.end
         )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Interval {
+    Named(String),
+    Temporary(GeometryPiece),
+}
+
+impl fmt::Display for Interval {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use Interval::*;
+        match self {
+            Named(s) => write!(f, "Label: {}", s),
+            Temporary(gp) => write!(f, "{}", gp),
+        }
     }
 }
 

@@ -2,9 +2,7 @@ use super::utils::*;
 
 use std::{collections::HashMap, ops::Deref};
 
-use crate::{
-    parser::{Expr, Function, Spanned},
-};
+use crate::parser::{Expr, Function, Spanned};
 
 // validate definitions there should be no labels, just labeled geom peices and functions
 fn validate_definition(expr: Spanned<Expr>) -> Result<GeometryPiece, Error> {
@@ -14,7 +12,7 @@ fn validate_definition(expr: Spanned<Expr>) -> Result<GeometryPiece, Error> {
     loop {
         match expr.0 {
             Expr::Function(fn_, gp) => {
-                stack.push(fn_);
+                stack.insert(0, fn_);
                 expr = gp.deref().clone();
             }
             Expr::Label(_) => {

@@ -8,7 +8,7 @@ use seqproc::{
 
 #[test]
 fn definition() {
-    let src = "brc = b[10] 1{<brc>}";
+    let src = "brc = b[10] 1{<brc>}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 
@@ -52,7 +52,7 @@ fn definition() {
 
 #[test]
 fn transformation() {
-    let src = "1{b[1]} -> 1{<t>}";
+    let src = "1{b[1]}2{r:} -> 1{<t>}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 
@@ -65,10 +65,10 @@ fn transformation() {
 
     let expected_res = (
         Expr::Transform(vec![Expr::Read(
-            (1, 11..12),
-            vec![(Expr::Label(("t".to_string(), 13..16)), 13..16)],
+            (1, 13..17),
+            vec![(Expr::Label(("t".to_string(), 18..21)), 18..21)],
         )]),
-        8..17,
+        13..22,
     );
 
     let res = if let Expr::Description(_d, _r, t) = res.clone().unwrap().0 {
@@ -111,7 +111,7 @@ another = remove(u[9-11])
 
 #[test]
 fn hamming() {
-    let src = "1{hamming(<brc>, 1)}";
+    let src = "1{hamming(<brc>, 1)}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 
@@ -146,7 +146,7 @@ fn hamming() {
 
 #[test]
 fn remove() {
-    let src = "1{remove(<brc>)}";
+    let src = "1{remove(<brc>)}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 
@@ -199,7 +199,7 @@ fn illegal_nest() {
 
 #[test]
 fn nested() {
-    let src = "1{rev(norm(<brc>))}";
+    let src = "1{rev(norm(<brc>))}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 
@@ -242,7 +242,7 @@ fn nested() {
 
 #[test]
 fn labeled_unbounded() {
-    let src = "1{b<barcode>:}";
+    let src = "1{b<barcode>:}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 
@@ -279,7 +279,7 @@ fn labeled_unbounded() {
 
 #[test]
 fn ranged() {
-    let src = "1{b[10-11]}";
+    let src = "1{b[10-11]}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 
@@ -313,7 +313,7 @@ fn ranged() {
 
 #[test]
 fn fixed() {
-    let src = "1{r[10]}";
+    let src = "1{r[10]}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 
@@ -347,7 +347,7 @@ fn fixed() {
 
 #[test]
 fn fixed_seq() {
-    let src = "1{f[GATCU]}";
+    let src = "1{f[GATCU]}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 

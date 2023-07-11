@@ -406,13 +406,25 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         )
         .map(|(n, read)| Expr::Read(n, read))
         .repeated()
-        .at_least(1)
+        .at_least(2)
         .at_most(2)
         .collect::<Vec<_>>();
 
     let transformation = just(Token::TransformTo)
-        .ignore_then(reads.clone())
-        .map(|reads| Expr::Transform(reads));
+        .ignore_then(num)
+        .map_with_span(|tok, span| (tok, span))
+        .then(
+            transformed_pieces
+                .clone()
+                .repeated()
+                .at_least(1)
+                .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
+        )
+        .map(|(n, read)| Expr::Read(n, read))
+        .repeated()
+        .at_least(1)
+        .at_most(2)
+        .map(|trans| Expr::Transform(trans));
 
     definitions
         .map_with_span(|tok, span| (Expr::Definitions(tok), span))

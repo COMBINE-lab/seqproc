@@ -4,7 +4,7 @@ use chumsky::{prelude::*, Stream};
 use clap::{arg, Parser as cParser};
 // use std::time::Instant;
 
-use seqproc::{lexer, parser::parser, syntax::Read, compile::compile};
+use seqproc::{compile::compile, lexer, parser::parser, syntax::Read};
 
 /// General puprose sequence preprocessor
 #[derive(Debug, cParser)]

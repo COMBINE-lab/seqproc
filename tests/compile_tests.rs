@@ -2,14 +2,14 @@ use std::{collections::HashMap, ops::Deref};
 
 use chumsky::{prelude::*, Stream};
 use seqproc::{
+    compile::{compile, definitions::compile_definitions, reads::compile_reads},
     lexer::lexer,
     parser::{parser, Expr},
-    compile::{compile, reads::compile_reads, definitions::compile_definitions},
 };
 
 #[test]
 fn no_err() {
-    let src = "1{remove(hamming(f[CAG], 1))}";
+    let src = "1{remove(hamming(f[CAG], 1))}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -25,14 +25,14 @@ fn no_err() {
         unreachable!()
     };
 
-    let res = compile_reads(res, HashMap::new());
+    let res = compile_reads(res, &mut HashMap::new());
 
     assert_eq!(true, res.is_ok());
 }
 
 #[test]
 fn fail_norm() {
-    let src = "1{norm(r:)}";
+    let src = "1{norm(r:)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -48,14 +48,14 @@ fn fail_norm() {
         unreachable!()
     };
 
-    let res = compile_reads(res.clone(), HashMap::new());
+    let res = compile_reads(res.clone(), &mut HashMap::new());
 
     assert_eq!(false, res.is_ok());
 }
 
 #[test]
 fn fail_composition() {
-    let src = "1{trim(rev(r:), 1)}";
+    let src = "1{trim(rev(r:), 1)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -71,14 +71,14 @@ fn fail_composition() {
         unreachable!()
     };
 
-    let res = compile_reads(res.clone(), HashMap::new());
+    let res = compile_reads(res.clone(), &mut HashMap::new());
 
     assert_eq!(false, res.is_ok());
 }
 
 #[test]
 fn fail_remove() {
-    let src = "1{rev(remove(r:))}";
+    let src = "1{rev(remove(r:))}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -94,14 +94,14 @@ fn fail_remove() {
         unreachable!()
     };
 
-    let res = compile_reads(res.clone(), HashMap::new());
+    let res = compile_reads(res.clone(), &mut HashMap::new());
 
     assert_eq!(false, res.is_ok());
 }
 
 #[test]
 fn discard_as_void() {
-    let src = "1{rev(x[10])}";
+    let src = "1{rev(x[10])}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -117,7 +117,7 @@ fn discard_as_void() {
         unreachable!()
     };
 
-    let res = compile_reads(res.clone(), HashMap::new());
+    let res = compile_reads(res.clone(), &mut HashMap::new());
 
     assert_eq!(false, res.is_ok());
 }
@@ -127,7 +127,7 @@ fn ok_definition() {
     let src = "
 brc = b[10]
 brc1 = b[1-4]
-1{<brc>}";
+1{<brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -160,7 +160,7 @@ fn duplicate_def() {
     let src = "
 brc = b[10]
 brc = b[1-4]
-1{<brc>}";
+1{<brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -190,7 +190,7 @@ brc = b[1-4]
 #[test]
 fn label_replacement() {
     let src = "test = r: 
-    1{pad(<test>, 5)}";
+    1{pad(<test>, 5)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -206,13 +206,13 @@ fn label_replacement() {
         unreachable!()
     };
 
-    let def_map = if let Ok(d) = compile_definitions(def.clone()) {
+    let mut def_map = if let Ok(d) = compile_definitions(def.clone()) {
         d
     } else {
         todo!()
     };
 
-    let res = compile_reads(reads, def_map);
+    let res = compile_reads(reads, &mut def_map);
 
     assert_eq!(false, res.is_ok());
 }
@@ -220,7 +220,7 @@ fn label_replacement() {
 #[test]
 fn no_variable() {
     let src = "testing = r: 
-    1{pad(<test>, 5)}";
+    1{pad(<test>, 5)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -236,20 +236,20 @@ fn no_variable() {
         unreachable!()
     };
 
-    let def_map = if let Ok(d) = compile_definitions(def.clone()) {
+    let mut def_map = if let Ok(d) = compile_definitions(def.clone()) {
         d
     } else {
         todo!()
     };
 
-    let res = compile_reads(reads, def_map);
+    let res = compile_reads(reads, &mut def_map);
 
     assert_eq!(false, res.is_ok());
 }
 
 #[test]
 fn expr_unwrap() {
-    let src = "1{pad(norm(b[9-10]), 1)remove(f[CAGAGC])u[8]remove(b[10])}";
+    let src = "1{pad(norm(b[9-10]), 1)remove(f[CAGAGC])u[8]remove(b[10])}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -270,7 +270,7 @@ fn expr_unwrap() {
 fn fail_reuse_label() {
     let src = "
 brc = b[10]
-1{<brc><brc>}";
+1{<brc><brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -286,13 +286,13 @@ brc = b[10]
         unreachable!()
     };
 
-    let def_map = if let Ok(d) = compile_definitions(def.clone()) {
+    let mut def_map = if let Ok(d) = compile_definitions(def.clone()) {
         d
     } else {
         todo!()
     };
 
-    let res = compile_reads(reads, def_map);
+    let res = compile_reads(reads, &mut def_map);
 
     assert_eq!(false, res.is_ok());
 }
@@ -302,7 +302,7 @@ fn def_block_fail() {
     let src = "
 brc = b[10]
 brc1 = pad(<brc>, 1)
-1{<brc>}";
+1{<brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -334,7 +334,7 @@ fn compile_description() {
     let src = "
 brc = b[10]
 umi = pad(u[10], 1)
-1{<brc>}2{<umi>}";
+1{<brc>}2{<umi>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -357,6 +357,27 @@ fn fail_description() {
 brc = b[10]
 umi = pad(u[10], 1)
 1{<brc><brc>}2{r:}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = compile(desc);
+
+    assert!(res.is_err())
+}
+
+#[test]
+fn fail_label_composition() {
+    let src = "
+brc = remove(trim(b[10], 3))
+1{pad(<brc>, 1)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -428,4 +449,28 @@ fn invalid_geom_two() {
     let res = compile(desc);
 
     assert!(res.is_err())
+}
+
+#[test]
+fn transform_update_map() {
+    let src = "
+brc = b[10]
+umi = norm(u[9-11])
+test = r:
+1{pad(<brc>, 1)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
+ -> 1{<brc>remove(<read1>)remove(<umi>)<read>}
+";
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = compile(desc);
+
+    assert!(res.is_ok())
 }
