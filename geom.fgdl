@@ -1,0 +1,2 @@
+1{norm(b<brc1>[9-10])remove(hamming(f[CAGAGC], 5))u<umi>[8]b<brc2>[10]}2{r<read>:}
+-> 1{<brc1><umi><brc2><read>}

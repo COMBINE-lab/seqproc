@@ -1,9 +1,14 @@
-use antisequence::{iter_fastq2, Reads, sel};
-use chumsky::prelude::*;
+use antisequence::{iter_fastq2, Reads};
+use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
+use chumsky::{prelude::*, Stream};
 use clap::{arg, Parser as cParser};
-use std::time::Instant;
+// use std::time::Instant;
 
-use seqproc::syntax::Read;
+use seqproc::{
+    compile::{compile, CompiledData},
+    lexer,
+    parser::parser,
+};
 
 /// General puprose sequence preprocessor
 #[derive(Debug, cParser)]
@@ -21,11 +26,11 @@ pub struct Args {
     file2: String,
 
     /// r1 out fastq file
-    #[arg(short = 'o', long)]
+    #[arg(short = 'o', long, default_value = "")]
     out1: String,
 
     /// r2 out fastq file
-    #[arg(short = 'w', long)]
+    #[arg(short = 'w', long, default_value = "")]
     out2: String,
 
     /// number of threads to use
@@ -33,7 +38,7 @@ pub struct Args {
     threads: usize,
 }
 
-pub fn interpret(args: Args, reads: Vec<Read>) {
+pub fn interpret(args: Args, compiled_data: CompiledData) {
     let Args {
         geom: _,
         file1,
@@ -43,31 +48,111 @@ pub fn interpret(args: Args, reads: Vec<Read>) {
         threads,
     } = args;
 
-    let read_one = reads.first().unwrap().to_owned();
-    let read_two = reads.last().unwrap().to_owned();
-
     let read = iter_fastq2(file1, file2, 256)
         .unwrap_or_else(|e| panic!("{e}"))
         .boxed();
 
-    let read = read_one.interpret(read);
-    let read = read_two.interpret(read);
+    let read = compiled_data.interpret(read, out1, out2);
 
-    // TODO if passed /dev/null
-    read.collect_fastq2(sel!(), out1, out2)
-        .run_with_threads(threads)
+    read.run_with_threads(threads)
 }
 
 fn main() {
     let args: Args = Args::parse();
 
-    let start = Instant::now();
-    let geom = args.geom.as_str();
+    let geom = std::fs::read_to_string(args.geom.clone()).unwrap();
 
-    match seqproc::parse::parser().parse(geom) {
-        Ok(reads) => interpret(args, reads),
-        Err(errs) => println!("Error: {:?}", errs),
-    }
-    let duration = start.elapsed();
-    println!("tranformation completed in {:.2}s", duration.as_secs_f32());
+    let (tokens, mut errs) = lexer::lexer().parse_recovery(geom.clone());
+
+    let parse_errs = if let Some(tokens) = &tokens {
+        let (ast, parse_errs) = parser().parse_recovery(Stream::from_iter(
+            tokens.len()..tokens.len() + 1,
+            tokens.clone().into_iter(),
+        ));
+
+        if let Some((ast, _)) = &ast {
+            let res = compile(ast.clone());
+
+            if let Err(e) = res {
+                errs.push(Simple::custom(e.span, e.msg));
+            } else {
+                interpret(args, res.ok().unwrap());
+            }
+        };
+
+        parse_errs
+    } else {
+        Vec::new()
+    };
+
+    // error recovery
+    errs.into_iter()
+        .map(|e| e.map(|c| c.to_string()))
+        .chain(parse_errs.into_iter().map(|e| e.map(|tok| tok.to_string())))
+        .for_each(|e| {
+            let report = Report::build(ReportKind::Error, (), e.span().start);
+
+            let report = match e.reason() {
+                chumsky::error::SimpleReason::Custom(msg) => report.with_message(msg).with_label(
+                    Label::new(e.span())
+                        .with_message(format!("{}", msg.fg(Color::Red)))
+                        .with_color(Color::Red),
+                ),
+                chumsky::error::SimpleReason::Unclosed { span, delimiter } => report
+                    .with_message(format!(
+                        "Unclosed delimiter {}",
+                        delimiter.fg(Color::Yellow)
+                    ))
+                    .with_label(
+                        Label::new(span.clone())
+                            .with_message(format!(
+                                "Unclosed delimiter {}",
+                                delimiter.fg(Color::Yellow)
+                            ))
+                            .with_color(Color::Yellow),
+                    )
+                    .with_label(
+                        Label::new(e.span())
+                            .with_message(format!(
+                                "Must be closed before this {}",
+                                e.found()
+                                    .unwrap_or(&"end of file".to_string())
+                                    .fg(Color::Red)
+                            ))
+                            .with_color(Color::Red),
+                    ),
+                chumsky::error::SimpleReason::Unexpected => report
+                    .with_message(format!(
+                        "{}, expected {}",
+                        if e.found().is_some() {
+                            "Unexpected token in input"
+                        } else {
+                            "Unexpected end of input"
+                        },
+                        if e.expected().len() == 0 {
+                            "something else".to_string()
+                        } else {
+                            e.expected()
+                                .map(|expected| match expected {
+                                    Some(expected) => expected.to_string(),
+                                    None => "end of input".to_string(),
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    ))
+                    .with_label(
+                        Label::new(e.span())
+                            .with_message(format!(
+                                "Unexpected token {}",
+                                e.found()
+                                    .unwrap_or(&"end of file".to_string())
+                                    .fg(Color::Red)
+                            ))
+                            .with_color(Color::Red),
+                    ),
+            };
+
+            report.finish().print(Source::from(&geom)).unwrap();
+        })
 }
