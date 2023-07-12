@@ -1,2 +1,1 @@
 1{norm(b<brc1>[9-10])remove(f[CAGAGC])u<umi>[8]b<brc2>[10]}2{r<read>:}
- -> 1{remove(<brc1>)<umi><brc2><read>}

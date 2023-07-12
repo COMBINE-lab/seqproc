@@ -117,7 +117,7 @@ fn compile(
     Ok((transformation, map))
 }
 
-fn find_num(l: String, list: Vec<(Interval, i32)>) -> String {
+fn find_num(l: String, list: Vec<(Interval, usize)>) -> String {
     for (interval, n) in &list {
         if interval.clone() == Interval::Named(l.clone()) {
             return n.to_string();
@@ -129,7 +129,7 @@ fn find_num(l: String, list: Vec<(Interval, i32)>) -> String {
 
 pub fn label_transformation(
     transformation: Transformation,
-    numbered_labels: Vec<(Interval, i32)>,
+    numbered_labels: Vec<(Interval, usize)>,
 ) -> Transformation {
     let mut numbered_transformation: Transformation = Vec::new();
 

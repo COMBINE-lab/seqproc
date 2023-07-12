@@ -42,7 +42,6 @@ impl CompiledData {
                 println!("{{{}}}", tr.join("}{"))
             }
         }
-        
 
         read
     }
@@ -119,7 +118,7 @@ impl GeometryMeta {
                 let match_type = if !stack.is_empty() {
                     match stack.first().unwrap() {
                         (Function::Hamming(n), _) => {
-                            let dist = Frac(((seq.len() as i32) / n) as f64);
+                            let dist = Frac((seq.len() / n) as f64);
                             HammingSearch(dist)
                         }
                         _ => PrefixAln {
@@ -141,20 +140,12 @@ impl GeometryMeta {
                     match_type,
                 )
             }
-            Size::FixedLen((len, _)) => process_fixed_len(
-                read,
-                init_label,
-                this_label.clone(),
-                next_label,
-                len as usize,
-            ),
-            Size::RangedLen(((a, b), _)) => process_ranged_len(
-                read,
-                init_label,
-                this_label.clone(),
-                next_label,
-                (a as usize)..=(b as usize),
-            ),
+            Size::FixedLen((len, _)) => {
+                process_fixed_len(read, init_label, this_label.clone(), next_label, len)
+            }
+            Size::RangedLen(((a, b), _)) => {
+                process_ranged_len(read, init_label, this_label.clone(), next_label, a..=b)
+            }
             Size::UnboundedLen => process_unbounded(read, init_label, this_label.clone()),
         };
 
@@ -193,7 +184,7 @@ impl GeometryMeta {
                 let match_type = if !stack.is_empty() {
                     match stack.first().unwrap() {
                         (Function::Hamming(n), _) => {
-                            let dist = Frac(((seq.len() as i32) / n) as f64);
+                            let dist = Frac((seq.len() / n) as f64);
                             HammingSearch(dist)
                         }
                         _ => ExactSearch,

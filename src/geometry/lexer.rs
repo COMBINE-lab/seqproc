@@ -5,7 +5,7 @@ pub type Span = Range<usize>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Token {
-    Num(i32),
+    Num(usize),
     Ctrl(char),
     Label(String),
     File(String),

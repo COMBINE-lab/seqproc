@@ -6,7 +6,7 @@ use crate::parser::{Expr, Function, Size, Spanned};
 
 pub fn validate_geometry(
     map: HashMap<String, GeometryMeta>,
-    geom: Vec<(Interval, i32)>,
+    geom: Vec<(Interval, usize)>,
 ) -> Result<(), Error> {
     let mut expect_next = vec![
         ReturnType::FixedLen,
@@ -111,7 +111,7 @@ pub fn compile_reads(
             });
         };
 
-        let mut read_geom: Vec<(Interval, i32)> = Vec::new();
+        let mut read_geom: Vec<(Interval, usize)> = Vec::new();
         'outer: for expr in read {
             let mut expr = expr;
             let mut spanned_geom_piece: Option<Spanned<GeometryPiece>> = None;

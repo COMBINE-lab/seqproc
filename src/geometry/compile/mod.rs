@@ -49,8 +49,8 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
         };
 
         // this needs a bit more thought
-        let compiled_transformation = if let Some(transform) = t.deref() {
-            let res = compile_transformation(transform.clone(), &mut map);
+        let compiled_transformation = if let (Some(transform), span) = t.deref() {
+            let res = compile_transformation((transform.clone(), span.clone()), &mut map);
 
             if let Err(e) = res {
                 return Err(e);

@@ -5,7 +5,7 @@ use crate::{
     parser::{Function, Size, Spanned, Type},
 };
 
-pub type Geometry = Vec<Vec<(Interval, i32)>>;
+pub type Geometry = Vec<Vec<(Interval, usize)>>;
 
 pub type Transformation = Vec<Vec<String>>;
 

@@ -7,8 +7,8 @@ pub type Spanned<T> = (T, Span);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Size {
     FixedSeq(Spanned<String>),
-    FixedLen(Spanned<i32>),
-    RangedLen(Spanned<(i32, i32)>),
+    FixedLen(Spanned<usize>),
+    RangedLen(Spanned<(usize, usize)>),
     UnboundedLen,
 }
 
@@ -28,12 +28,12 @@ impl fmt::Display for Size {
 pub enum Function {
     Reverse,
     ReverseComp,
-    Trim(i32),
+    Trim(usize),
     Remove,
-    Pad(i32),
+    Pad(usize),
     Normalize,
     Map(String, String),
-    Hamming(i32),
+    Hamming(usize),
 }
 
 impl fmt::Display for Function {
@@ -82,13 +82,13 @@ pub enum Expr {
     GeomPiece(Type, Size),
     LabeledGeomPiece(Box<Self>, Box<Spanned<Self>>),
     Function(Spanned<Function>, Box<Spanned<Self>>),
-    Read(Spanned<i32>, Vec<Spanned<Self>>),
+    Read(Spanned<usize>, Vec<Spanned<Self>>),
     Definitions(Vec<Spanned<Self>>),
     Transform(Vec<Self>),
     Description(
         Box<Option<Spanned<Self>>>,
         Spanned<Vec<Self>>,
-        Box<Option<Spanned<Self>>>,
+        Box<Spanned<Option<Self>>>,
     ),
 }
 
@@ -143,7 +143,7 @@ impl fmt::Display for Expr {
                     None
                 };
 
-                let t_w = if let Some((t, _)) = t.deref() {
+                let t_w = if let (Some(t), _) = t.deref() {
                     Some(format!("{}", t))
                 } else {
                     None
@@ -403,31 +403,46 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .at_most(2)
         .collect::<Vec<_>>();
 
-    let transformation = just(Token::TransformTo)
-        .ignore_then(num)
-        .map_with_span(|tok, span| (tok, span))
-        .then(
-            transformed_pieces
-                .clone()
-                .repeated()
-                .at_least(1)
-                .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
-        )
-        .map(|(n, read)| Expr::Read(n, read))
-        .repeated()
-        .at_least(1)
-        .at_most(2)
-        .map(Expr::Transform);
+    let transformation = choice((
+        end().map_with_span(|_, span| (None, span)),
+        just(Token::TransformTo)
+            .ignore_then(num)
+            .map_with_span(|tok, span| (tok, span))
+            .then(
+                transformed_pieces
+                    .clone()
+                    .repeated()
+                    .at_least(1)
+                    .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
+            )
+            .map(|(n, read)| Expr::Read(n, read))
+            .repeated()
+            .at_least(1)
+            .at_most(2)
+            .map_with_span(|val, span| (Some(Expr::Transform(val)), span)),
+    ));
+
+    // let transformation = just(Token::TransformTo)
+    //     .ignore_then(num)
+    //     .map_with_span(|tok, span| (tok, span))
+    //     .then(
+    //         transformed_pieces
+    //             .clone()
+    //             .repeated()
+    //             .at_least(1)
+    //             .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
+    //     )
+    //     .map(|(n, read)| Expr::Read(n, read))
+    //     .repeated()
+    //     .at_least(1)
+    //     .at_most(2)
+    //     .map(Expr::Transform);
 
     definitions
         .map_with_span(|tok, span| (Expr::Definitions(tok), span))
         .or_not()
         .then(reads.map_with_span(|tok, span| (tok, span)))
-        .then(
-            transformation
-                .map_with_span(|tok, span| (tok, span))
-                .or_not(),
-        )
+        .then(transformation)
         .map(|((d, r), t)| Expr::Description(Box::new(d), r, Box::new(t)))
         .map_with_span(|tok, span| (tok, span))
         .recover_with(skip_then_retry_until([]))
