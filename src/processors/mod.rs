@@ -88,7 +88,7 @@ pub fn process_sequence(
         _ => unreachable!(),
     };
 
-    let sel_expr = SelectorExpr::new(format!("{starting_label}").as_bytes()).unwrap();
+    let sel_expr = SelectorExpr::new(starting_label.as_bytes()).unwrap();
 
     pipeline
         .match_one(sel_expr, tr_expr, sequence, match_type)
@@ -105,18 +105,18 @@ fn process_sized<B>(
 where
     B: RangeBounds<usize> + Send + Sync + 'static,
 {
-    let cut_sel_expr = SelectorExpr::new(format!("{init_label}").as_bytes()).unwrap();
+    let cut_sel_expr = SelectorExpr::new(init_label.as_bytes()).unwrap();
     let cut_tr_expr =
         TransformExpr::new(format!("{init_label} -> {this_label}, {next_label}").as_bytes())
             .unwrap();
 
     let end = match RangeBounds::<usize>::end_bound(&range) {
-        Bound::Included(end) => end.clone(),
+        Bound::Included(end) => *end,
         _ => unreachable!(),
     };
     let cut_read = cut(read, cut_sel_expr, cut_tr_expr, LeftEnd(end));
 
-    let len_sel_expr = SelectorExpr::new(format!("{this_label}").as_bytes()).unwrap();
+    let len_sel_expr = SelectorExpr::new(this_label.as_bytes()).unwrap();
     let len_tr_expr =
         TransformExpr::new(format!("{this_label} -> {this_label}.v_len").as_bytes()).unwrap();
     let r_sel_expr = SelectorExpr::new(format!("{this_label}.v_len").as_bytes()).unwrap();

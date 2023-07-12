@@ -33,7 +33,7 @@ impl CompiledData {
 
         let mut read = read;
 
-        for (i, read_geometry) in geometry.into_iter().enumerate() {
+        for (i, read_geometry) in geometry.iter().enumerate() {
             read = interpret_geometry(read_geometry.to_vec(), read, format!("seq{}.", i + 1));
         }
 
@@ -94,9 +94,7 @@ impl GeometryMeta {
     }
 
     fn interpret(&self, read: BoxedReads, label: &mut Vec<String>) -> BoxedReads {
-        let (type_, size, self_label, stack) = self.unpack();
-
-        let mut stack = stack.to_owned();
+        let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
         let seq_name = label.get(0).unwrap();
@@ -167,7 +165,7 @@ impl GeometryMeta {
             left_label.push(format!("_{l}"));
             format!("{seq_name}_{l}")
         } else {
-            left_label.push(format!("_l"));
+            left_label.push("_l".to_string());
             format!("{cur_label}_l")
         };
         let this_label = if let Some(l) = this_label {
