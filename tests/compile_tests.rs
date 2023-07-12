@@ -376,7 +376,7 @@ umi = pad(u[10], 1)
 #[test]
 fn fail_label_composition() {
     let src = "
-brc = remove(trim(b[10], 3))
+brc = remove(trunc(b[10], 3))
 1{pad(<brc>, 1)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
