@@ -55,7 +55,7 @@ fn fail_norm() {
 
 #[test]
 fn fail_composition() {
-    let src = "1{trim(rev(r:), 1)}2{r:}";
+    let src = "1{trunc(rev(r:), 1)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -334,7 +334,7 @@ fn compile_description() {
     let src = "
 brc = b[10]
 umi = pad(u[10], 1)
-1{<brc>}2{<umi>}2{r:}";
+1{<brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -459,6 +459,29 @@ umi = norm(u[9-11])
 test = r:
 1{pad(<brc>, 1)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
  -> 1{<brc>remove(<read1>)remove(<umi>)<read>}
+";
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = compile(desc);
+
+    assert!(res.is_ok())
+}
+
+#[test]
+fn stack_orientation() {
+    let src = "
+brc = b[10]
+umi = norm(u[9-11])
+1{pad(<brc>, 1)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
+ -> 1{<brc>remove(<read1>)remove(pad(<umi>, 1))<read>}
 ";
     let (res, _) = lexer().parse_recovery(src);
 

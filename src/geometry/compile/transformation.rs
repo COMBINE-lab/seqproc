@@ -67,7 +67,7 @@ fn compile(
                 match expr.0 {
                     Expr::Function(fn_, gp) => {
                         expr = gp.deref().clone();
-                        stack.insert(0, fn_);
+                        stack.push(fn_);
                     }
                     Expr::Label(ref l) => {
                         label = Some(l.clone());
