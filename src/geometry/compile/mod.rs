@@ -1,7 +1,7 @@
 pub mod definitions;
 pub mod reads;
 mod transformation;
-mod utils;
+pub mod utils;
 
 use definitions::compile_definitions;
 use reads::compile_reads;

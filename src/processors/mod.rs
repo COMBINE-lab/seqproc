@@ -1,21 +1,23 @@
-use std::ops::RangeBounds;
+use std::ops::{Bound, RangeBounds};
 
 use antisequence::{
     expr::{Label, SelectorExpr, TransformExpr},
     *,
 };
 
-pub fn cut(
-    pipeline: Box<dyn Reads>,
-    starting_label: String,
-    label: &str,
-    index: EndIdx,
-) -> Box<dyn Reads> {
-    let transform_expression =
-        TransformExpr::new(format!("{0} -> {1}_l, {1}_r", starting_label, label).as_bytes())
-            .unwrap();
+use crate::interpret::BoxedReads;
 
-    pipeline.cut(sel!(), transform_expression, index).boxed()
+fn set(read: BoxedReads, sel_expr: SelectorExpr, label: Label, transform: String) -> BoxedReads {
+    read.set(sel_expr, label, transform).boxed()
+}
+
+fn cut(
+    read: BoxedReads,
+    sel_expr: SelectorExpr,
+    tr_expr: TransformExpr,
+    index: EndIdx,
+) -> BoxedReads {
+    read.cut(sel_expr, tr_expr, index).boxed()
 }
 
 pub fn pad(
@@ -46,17 +48,18 @@ pub fn make_label(prefix: &str, suffix: &str) -> Label {
     Label::new(format!("{prefix}_{suffix}").as_bytes()).unwrap()
 }
 
-pub fn validate_length<B>(pipeline: Box<dyn Reads>, label: &str, bound: B) -> Box<dyn Reads>
+fn validate_length<B>(
+    read: BoxedReads,
+    sel_expr: SelectorExpr,
+    tr_expr: TransformExpr,
+    r_sel_expr: SelectorExpr,
+    bound: B,
+) -> BoxedReads
 where
     B: RangeBounds<usize> + Send + Sync + 'static,
 {
-    let transform_expression =
-        TransformExpr::new(format!("{0}_l -> {0}_l.v_len", label).as_bytes()).unwrap();
-    let selector_expression = SelectorExpr::new(format!("{}_l.v_len", label).as_bytes()).unwrap();
-
-    pipeline
-        .length_in_bounds(sel!(), transform_expression, bound)
-        .retain(selector_expression)
+    read.length_in_bounds(sel_expr, tr_expr, bound)
+        .retain(r_sel_expr)
         .boxed()
 }
 
@@ -64,40 +67,98 @@ pub fn process_sequence(
     pipeline: Box<dyn Reads>,
     sequence: String,
     starting_label: String,
-    label: &str,
+    this_label: String,
+    prev_label: String,
+    next_label: String,
     match_type: iter::MatchType,
 ) -> Box<dyn Reads> {
-    let transform = match match_type {
+    let tr_expr = match match_type {
         PrefixAln { .. } => TransformExpr::new(
-            format!("{0} -> {1}_anchor, {1}_r", starting_label, label).as_bytes(),
-        ),
-        LocalAln { .. } | BoundedAln { .. } => TransformExpr::new(
-            format!("{0} -> {1}_l, {1}_anchor, {1}_r", starting_label, label).as_bytes(),
-        ),
-        _ => panic!(
-            "Currently supports Local and Prefix alignment, found: {:?}",
-            match_type
-        ),
+            format!("{} -> {}, {}", starting_label, this_label, next_label).as_bytes(),
+        )
+        .unwrap(),
+        ExactSearch | HammingSearch(_) => TransformExpr::new(
+            format!(
+                "{} -> {}, {}, {}",
+                starting_label, prev_label, this_label, next_label
+            )
+            .as_bytes(),
+        )
+        .unwrap(),
+        _ => unreachable!(),
     };
 
-    match transform {
-        Ok(t) => {
-            let pattern =
-                format!("\n    name: _anchor\n    patterns:\n        - pattern: \"{sequence}\"\n");
+    let sel_expr = SelectorExpr::new(format!("{starting_label}").as_bytes()).unwrap();
 
-            let selector_expression =
-                SelectorExpr::new(format!("{label}_anchor").as_bytes()).unwrap();
+    pipeline
+        .match_one(sel_expr, tr_expr, sequence, match_type)
+        .boxed()
+}
 
-            let labels = vec![Label::new(format!("{}_anchor", label).as_bytes()).unwrap()];
+fn process_sized<B>(
+    read: BoxedReads,
+    init_label: String,
+    this_label: String,
+    next_label: String,
+    range: B,
+) -> BoxedReads
+where
+    B: RangeBounds<usize> + Send + Sync + 'static,
+{
+    let cut_sel_expr = SelectorExpr::new(format!("{init_label}").as_bytes()).unwrap();
+    let cut_tr_expr =
+        TransformExpr::new(format!("{init_label} -> {this_label}, {next_label}").as_bytes())
+            .unwrap();
 
-            trim(
-                pipeline
-                    .match_any(sel!(), t, pattern, match_type)
-                    .retain(selector_expression)
-                    .boxed(),
-                labels,
-            )
-        }
-        Err(e) => panic!("{e}"),
-    }
+    let end = match RangeBounds::<usize>::end_bound(&range) {
+        Bound::Included(end) => end.clone(),
+        _ => unreachable!(),
+    };
+    let cut_read = cut(read, cut_sel_expr, cut_tr_expr, LeftEnd(end));
+
+    let len_sel_expr = SelectorExpr::new(format!("{this_label}").as_bytes()).unwrap();
+    let len_tr_expr =
+        TransformExpr::new(format!("{this_label} -> {this_label}.v_len").as_bytes()).unwrap();
+    let r_sel_expr = SelectorExpr::new(format!("{this_label}.v_len").as_bytes()).unwrap();
+
+    let val_len_read = validate_length(cut_read, len_sel_expr, len_tr_expr, r_sel_expr, range);
+
+    val_len_read
+}
+
+pub fn process_fixed_len(
+    read: BoxedReads,
+    init_label: String,
+    this_label: String,
+    next_label: String,
+    len: usize,
+) -> BoxedReads {
+    process_sized(read, init_label, this_label, next_label, len..=len)
+}
+
+pub fn process_ranged_len<B>(
+    read: BoxedReads,
+    init_label: String,
+    this_label: String,
+    next_label: String,
+    range: B,
+) -> BoxedReads
+where
+    B: RangeBounds<usize> + Send + Sync + 'static,
+{
+    process_sized(read, init_label, this_label, next_label, range)
+}
+
+pub fn process_unbounded(read: BoxedReads, init_label: String, this_label: String) -> BoxedReads {
+    // set init_label to this_label
+    // cut left end 0
+    let sel_expr = SelectorExpr::new(init_label.as_bytes()).unwrap();
+    let cut_tr_expr =
+        TransformExpr::new(format!("{init_label} -> _, {this_label}").as_bytes()).unwrap();
+    let label = Label::new(init_label.as_bytes()).unwrap();
+    let tr = format!("{{{this_label}}}");
+
+    let cut_read = cut(read, sel_expr.clone(), cut_tr_expr, LeftEnd(0));
+
+    set(cut_read, sel_expr, label, tr)
 }

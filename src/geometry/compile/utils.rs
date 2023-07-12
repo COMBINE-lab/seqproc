@@ -73,6 +73,7 @@ pub struct GeometryMeta {
 pub struct GeometryPiece {
     pub type_: Type,
     pub size: Size,
+    pub label: Option<String>,
 }
 
 impl fmt::Display for GeometryMeta {
@@ -83,7 +84,7 @@ impl fmt::Display for GeometryMeta {
 
 impl fmt::Display for GeometryPiece {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Geometry Piece: {}, {}", self.type_, self.size)
+        write!(f, "{:?}: {}, {}", self.label, self.type_, self.size)
     }
 }
 

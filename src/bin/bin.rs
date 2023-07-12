@@ -4,7 +4,11 @@ use chumsky::{prelude::*, Stream};
 use clap::{arg, Parser as cParser};
 // use std::time::Instant;
 
-use seqproc::{compile::compile, lexer, parser::parser, syntax::Read};
+use seqproc::{
+    compile::{compile, CompiledData},
+    lexer,
+    parser::parser,
+};
 
 /// General puprose sequence preprocessor
 #[derive(Debug, cParser)]
@@ -34,7 +38,7 @@ pub struct Args {
     threads: usize,
 }
 
-pub fn interpret(args: Args, reads: Vec<Read>) {
+pub fn interpret(args: Args, compiled_data: CompiledData) {
     let Args {
         geom: _,
         file1,
@@ -44,23 +48,21 @@ pub fn interpret(args: Args, reads: Vec<Read>) {
         threads,
     } = args;
 
-    let read_one = reads.first().unwrap().to_owned();
-    let read_two = reads.last().unwrap().to_owned();
-
     let read = iter_fastq2(file1, file2, 256)
         .unwrap_or_else(|e| panic!("{e}"))
         .boxed();
 
-    let read = read_one.interpret(read);
-    let read = read_two.interpret(read);
+    let read = compiled_data.interpret(read);
 
     if out1.is_empty() && out2.is_empty() {
         return read
+            .dbg(sel!())
             .collect_fastq1(sel!(), "/dev/null")
             .run_with_threads(threads);
     }
 
-    read.collect_fastq2(sel!(), out1, out2)
+    read.dbg(sel!())
+        .collect_fastq2(sel!(), out1, out2)
         .run_with_threads(threads)
 }
 
@@ -68,7 +70,7 @@ fn main() {
     let args: Args = Args::parse();
 
     // let start = Instant::now();
-    let geom = std::fs::read_to_string(args.geom).unwrap();
+    let geom = std::fs::read_to_string(args.geom.clone()).unwrap();
 
     let (tokens, mut errs) = lexer::lexer().parse_recovery(geom.clone());
 
@@ -79,10 +81,12 @@ fn main() {
         ));
 
         if let Some((ast, _)) = &ast {
-            let err = compile(ast.clone());
+            let res = compile(ast.clone());
 
-            if let Err(e) = err {
+            if let Err(e) = res {
                 errs.push(Simple::custom(e.span, e.msg));
+            } else {
+                interpret(args, res.ok().unwrap());
             }
         };
 

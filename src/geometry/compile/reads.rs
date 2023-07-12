@@ -183,7 +183,14 @@ pub fn compile_reads(
             let spanned_gp = if let Some(spanned_gp) = spanned_geom_piece {
                 spanned_gp
             } else if let (Expr::GeomPiece(type_, size), span) = expr {
-                (GeometryPiece { type_, size }, span)
+                (
+                    GeometryPiece {
+                        type_,
+                        size,
+                        label: label.clone(),
+                    },
+                    span,
+                )
             } else {
                 unreachable!()
             };
