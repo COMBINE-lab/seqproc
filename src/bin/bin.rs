@@ -1,4 +1,4 @@
-use antisequence::{iter_fastq2, sel, Reads};
+use antisequence::{iter_fastq2, Reads};
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::{prelude::*, Stream};
 use clap::{arg, Parser as cParser};
@@ -52,24 +52,14 @@ pub fn interpret(args: Args, compiled_data: CompiledData) {
         .unwrap_or_else(|e| panic!("{e}"))
         .boxed();
 
-    let read = compiled_data.interpret(read);
+    let read = compiled_data.interpret(read, out1, out2);
 
-    if out1.is_empty() && out2.is_empty() {
-        return read
-            .dbg(sel!())
-            .collect_fastq1(sel!(), "/dev/null")
-            .run_with_threads(threads);
-    }
-
-    read.dbg(sel!())
-        .collect_fastq2(sel!(), out1, out2)
-        .run_with_threads(threads)
+    read.run_with_threads(threads)
 }
 
 fn main() {
     let args: Args = Args::parse();
 
-    // let start = Instant::now();
     let geom = std::fs::read_to_string(args.geom.clone()).unwrap();
 
     let (tokens, mut errs) = lexer::lexer().parse_recovery(geom.clone());
@@ -165,14 +155,4 @@ fn main() {
 
             report.finish().print(Source::from(&geom)).unwrap();
         })
-
-    // match seqproc::parse::parser().parse(geom) {
-    //     Ok(reads) => {
-    //         println!("{:?}", reads);
-    //         // interpret(args, reads)
-    //     }
-    //     Err(errs) => println!("Error: {:?}", errs),
-    // }
-    // let duration = start.elapsed();
-    // println!("tranformation completed in {:.2}s", duration.as_secs_f32());
 }

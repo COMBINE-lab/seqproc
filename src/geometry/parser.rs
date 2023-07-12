@@ -28,7 +28,7 @@ impl fmt::Display for Size {
 pub enum Function {
     Reverse,
     ReverseComp,
-    Trim(usize),
+    Truncate(usize),
     Remove,
     Pad(usize),
     Normalize,
@@ -42,7 +42,7 @@ impl fmt::Display for Function {
         match self {
             Reverse => write!(f, "rev"),
             ReverseComp => write!(f, "revcomp"),
-            Trim(n) => write!(f, "trim({}", n),
+            Truncate(n) => write!(f, "trunc({}", n),
             Remove => write!(f, "remove"),
             Pad(n) => write!(f, "pad({}", n),
             Normalize => write!(f, "norm"),
@@ -329,13 +329,13 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                     Expr::Function((Function::Hamming(num), fn_span), Box::new((geom_p, span)))
                 })
                 .labelled("Hamming function"),
-            just(Token::Trim)
+            just(Token::Truncate)
                 .map_with_span(|_, span| span)
                 .then(recursive_num_arg.clone())
                 .map(|(fn_span, ((geom_p, num), span))| {
-                    Expr::Function((Function::Trim(num), fn_span), Box::new((geom_p, span)))
+                    Expr::Function((Function::Truncate(num), fn_span), Box::new((geom_p, span)))
                 })
-                .labelled("Trim function"),
+                .labelled("Truncate function"),
             just(Token::Pad)
                 .map_with_span(|_, span| span)
                 .then(recursive_num_arg)

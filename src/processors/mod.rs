@@ -7,8 +7,22 @@ use antisequence::{
 
 use crate::interpret::BoxedReads;
 
-fn set(read: BoxedReads, sel_expr: SelectorExpr, label: Label, transform: String) -> BoxedReads {
+pub fn set(
+    read: BoxedReads,
+    sel_expr: SelectorExpr,
+    label: String,
+    transform: String,
+) -> BoxedReads {
+    let label = Label::new(label.as_bytes()).unwrap();
+
     read.set(sel_expr, label, transform).boxed()
+}
+
+pub fn remove(read: BoxedReads, label: String) -> BoxedReads {
+    let sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
+    let label = Label::new(label.as_bytes()).unwrap();
+
+    read.trim(sel_expr, vec![label]).boxed()
 }
 
 fn cut(
@@ -20,32 +34,46 @@ fn cut(
     read.cut(sel_expr, tr_expr, index).boxed()
 }
 
-pub fn pad(
-    read: Box<dyn antisequence::Reads>,
-    labels: Vec<Label>,
-    to_length: usize,
-) -> Box<dyn antisequence::Reads> {
-    read.pad(sel!(), labels, to_length).boxed()
+pub fn pad(read: BoxedReads, label: String, by: usize) -> BoxedReads {
+    let sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
+    let label = Label::new(label.as_bytes()).unwrap();
+
+    read.pad(sel_expr, vec![label], by).boxed()
 }
 
-pub fn trim(
-    read: Box<dyn antisequence::Reads>,
-    labels: Vec<Label>,
-) -> Box<dyn antisequence::Reads> {
-    read.trim(sel!(), labels).boxed()
+pub fn truncate(read: BoxedReads, label: String, _by: usize) -> BoxedReads {
+    let _sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
+    let _label = Label::new(label.as_bytes()).unwrap();
+
+    // read.truncate(sel_expr, vec![label], by).boxed()
+    read
 }
 
-pub fn trim_leftover(
-    read: Box<dyn antisequence::Reads>,
-    labels: &mut [&str],
-) -> Box<dyn antisequence::Reads> {
-    let labels = vec![Label::new(labels.join("_").as_bytes()).unwrap()];
+pub fn reverse(read: BoxedReads, label: String) -> BoxedReads {
+    let _sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
+    let _label = Label::new(label.as_bytes()).unwrap();
 
-    trim(read, labels)
+    // read.rev(sel_expr, vec![label]).boxed()
+    read
 }
 
-pub fn make_label(prefix: &str, suffix: &str) -> Label {
-    Label::new(format!("{prefix}_{suffix}").as_bytes()).unwrap()
+pub fn reverse_comp(read: BoxedReads, label: String) -> BoxedReads {
+    let _sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
+    let _label = Label::new(label.as_bytes()).unwrap();
+
+    // read.revcomp(sel_expr, vec![label]).boxed()
+    read
+}
+
+pub fn normalize<B>(read: BoxedReads, label: String, _range: B) -> BoxedReads
+where
+    B: RangeBounds<usize> + Send + Sync + 'static,
+{
+    let _sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
+    let _label = Label::new(label.as_bytes()).unwrap();
+
+    // read.normalize(sel_expr, vec![label], range).boxed()
+    read
 }
 
 fn validate_length<B>(
@@ -155,10 +183,10 @@ pub fn process_unbounded(read: BoxedReads, init_label: String, this_label: Strin
     let sel_expr = SelectorExpr::new(init_label.as_bytes()).unwrap();
     let cut_tr_expr =
         TransformExpr::new(format!("{init_label} -> _, {this_label}").as_bytes()).unwrap();
-    let label = Label::new(init_label.as_bytes()).unwrap();
+
     let tr = format!("{{{this_label}}}");
 
     let cut_read = cut(read, sel_expr.clone(), cut_tr_expr, LeftEnd(0));
 
-    set(cut_read, sel_expr, label, tr)
+    set(cut_read, sel_expr, init_label, tr)
 }

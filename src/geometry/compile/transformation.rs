@@ -90,11 +90,10 @@ fn compile(
             let gp = if let Some(gp) = map.get(&label) {
                 GeometryMeta {
                     expr: gp.expr.clone(),
-                    stack: gp
-                        .stack
+                    stack: stack
                         .clone()
                         .into_iter()
-                        .chain(stack)
+                        .chain(gp.stack.clone())
                         .collect::<Vec<_>>(),
                 }
             } else {

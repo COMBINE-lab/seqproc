@@ -112,7 +112,7 @@ pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
 
     let mut return_type = (expr_type, expr_span);
 
-    for fn_ in gp.stack.into_iter() {
+    for fn_ in gp.stack.into_iter().rev() {
         return_type = validate_composition(fn_, return_type)?;
     }
 
@@ -142,13 +142,13 @@ pub fn validate_composition(
             }),
             _ => Ok((return_type, fn_span)),
         },
-        Function::Trim(_) => match return_type {
+        Function::Truncate(_) => match return_type {
             ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
             ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
-                    "Function Trim must take fixed element an argument, found: {}",
+                    "Function Truncate must take fixed element an argument, found: {}",
                     return_type
                 ),
             }),

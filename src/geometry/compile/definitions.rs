@@ -12,7 +12,7 @@ fn validate_definition(expr: Spanned<Expr>, label: String) -> Result<GeometryMet
     loop {
         match expr.0 {
             Expr::Function(fn_, gp) => {
-                stack.insert(0, fn_);
+                stack.push(fn_);
                 expr = gp.deref().clone();
             }
             Expr::Label(_) => {

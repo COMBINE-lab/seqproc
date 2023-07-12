@@ -1,6 +1,7 @@
 use antisequence::{
     MatchType::{ExactSearch, HammingSearch, PrefixAln},
     Threshold::Frac,
+    *,
 };
 
 use crate::{
@@ -25,7 +26,7 @@ fn labels(read_label: &mut Vec<String>) -> (String, String) {
 pub type BoxedReads = Box<dyn antisequence::Reads>;
 
 impl CompiledData {
-    pub fn interpret(&self, read: BoxedReads) -> BoxedReads {
+    pub fn interpret(&self, read: BoxedReads, out1: String, out2: String) -> BoxedReads {
         let Self {
             geometry,
             transformation,
@@ -37,11 +38,25 @@ impl CompiledData {
             read = interpret_geometry(read_geometry.to_vec(), read, format!("seq{}.", i + 1));
         }
 
-        if let Some(trs) = transformation {
-            for tr in trs {
-                println!("{{{}}}", tr.join("}{"))
+        read = if let Some(trs) = transformation {
+            for (i, tr) in trs.iter().enumerate() {
+                let seq_name = format!("seq{}.*", i + 1);
+                let tr = format!("{{{}}}", tr.join("}{"));
+                read = set(read, sel!(), seq_name, tr);
             }
-        }
+
+            if trs.len() == 1 {
+                read.collect_fastq1(sel!(), out1).boxed()
+            } else if out1.is_empty() && out2.is_empty() {
+                read.collect_fastq1(sel!(), "/dev/null").boxed()
+            } else {
+                read.collect_fastq2(sel!(), out1, out2).boxed()
+            }
+        } else if out1.is_empty() && out2.is_empty() {
+            read.collect_fastq1(sel!(), "/dev/null").boxed()
+        } else {
+            read.collect_fastq2(sel!(), out1, out2).boxed()
+        };
 
         read
     }
@@ -79,7 +94,33 @@ fn interpret_geometry(
     read
 }
 
-fn execute_stack(_stack: Vec<Spanned<Function>>, _label: String, read: BoxedReads) -> BoxedReads {
+fn execute_stack(
+    stack: Vec<Spanned<Function>>,
+    label: String,
+    read: BoxedReads,
+    size: Size,
+) -> BoxedReads {
+    let mut read = read;
+
+    let range = if let Size::RangedLen(((a, b), _)) = size {
+        Some(a..=b)
+    } else {
+        None
+    };
+
+    for (fn_, _) in stack {
+        read = match fn_ {
+            Function::Reverse => reverse(read, label.clone()),
+            Function::ReverseComp => reverse_comp(read, label.clone()),
+            Function::Truncate(n) => truncate(read, label.clone(), n),
+            Function::Remove => remove(read, label.clone()),
+            Function::Pad(n) => pad(read, label.clone(), n),
+            Function::Normalize => normalize(read, label.clone(), range.clone().unwrap()),
+            Function::Map(..) => unimplemented!(),
+            Function::Hamming(_) => unreachable!(),
+        };
+    }
+
     read
 }
 
@@ -111,12 +152,12 @@ impl GeometryMeta {
         }
 
         // execute the requisite process here
-        let read = match size {
+        let read = match size.clone() {
             Size::FixedSeq((seq, _)) => {
                 let match_type = if !stack.is_empty() {
-                    match stack.first().unwrap() {
+                    match stack.pop().unwrap() {
                         (Function::Hamming(n), _) => {
-                            let dist = Frac((seq.len() / n) as f64);
+                            let dist = Frac(n as f64 / seq.len() as f64);
                             HammingSearch(dist)
                         }
                         _ => PrefixAln {
@@ -147,12 +188,12 @@ impl GeometryMeta {
             Size::UnboundedLen => process_unbounded(read, init_label, this_label.clone()),
         };
 
-        execute_stack(stack, this_label, read)
+        execute_stack(stack, this_label, read, size)
     }
 
     fn interpret_dual(&self, prev: Self, read: BoxedReads, label: &mut Vec<String>) -> BoxedReads {
         // unpack label for self
-        let (_, size, this_label, stack) = self.unpack();
+        let (_, size, this_label, mut stack) = self.unpack();
         let (_, _, prev_label, _) = prev.unpack();
         // execute the processing for next
 
@@ -175,14 +216,14 @@ impl GeometryMeta {
         };
         let next_label = format!("{cur_label}_r");
 
-        let read = match size {
+        let read = match size.clone() {
             Size::FixedSeq((seq, _)) => {
                 // check if the first function on the stack is a hamming search
                 // else do an exact match
                 let match_type = if !stack.is_empty() {
-                    match stack.first().unwrap() {
+                    match stack.pop().unwrap() {
                         (Function::Hamming(n), _) => {
-                            let dist = Frac((seq.len() / n) as f64);
+                            let dist = Frac(n as f64 / seq.len() as f64);
                             HammingSearch(dist)
                         }
                         _ => ExactSearch,
@@ -191,9 +232,17 @@ impl GeometryMeta {
                     ExactSearch
                 };
 
-                process_sequence(
-                    read, seq, init_label, this_label, prev_label, next_label, match_type,
-                )
+                let read = process_sequence(
+                    read,
+                    seq,
+                    init_label,
+                    this_label.clone(),
+                    prev_label,
+                    next_label,
+                    match_type,
+                );
+
+                execute_stack(stack, this_label, read, size)
             }
             _ => unreachable!(),
         };

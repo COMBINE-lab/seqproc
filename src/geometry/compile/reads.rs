@@ -122,7 +122,7 @@ pub fn compile_reads(
                 match expr.0 {
                     Expr::Function(fn_, gp) => {
                         expr = gp.deref().clone();
-                        stack.insert(0, fn_);
+                        stack.push(fn_);
                     }
                     Expr::LabeledGeomPiece(l, gp) => {
                         if let Expr::Label((l, span)) = l.deref() {
@@ -158,11 +158,10 @@ pub fn compile_reads(
                             label = Some(l.clone());
                             labels.push(l.clone());
                             spanned_geom_piece = Some(inner_expr.expr.clone());
-                            stack = inner_expr
-                                .stack
+                            stack = stack
                                 .clone()
                                 .into_iter()
-                                .chain(stack)
+                                .chain(inner_expr.stack.clone())
                                 .collect::<Vec<_>>();
 
                             break 'inner;
