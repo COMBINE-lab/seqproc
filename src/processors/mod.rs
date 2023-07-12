@@ -117,9 +117,11 @@ pub fn process_sequence(
     };
 
     let sel_expr = SelectorExpr::new(starting_label.as_bytes()).unwrap();
+    let r_sel_expr = SelectorExpr::new(this_label.as_bytes()).unwrap();
 
     pipeline
         .match_one(sel_expr, tr_expr, sequence, match_type)
+        .retain(r_sel_expr)
         .boxed()
 }
 
