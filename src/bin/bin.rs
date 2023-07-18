@@ -2,7 +2,6 @@ use antisequence::{iter_fastq2, Reads};
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::{prelude::*, Stream};
 use clap::{arg, Parser as cParser};
-// use std::time::Instant;
 
 use seqproc::{
     compile::{compile, CompiledData},

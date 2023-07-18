@@ -140,6 +140,7 @@ pub fn process_sequence(
     pipeline
         .match_one(sel_expr, tr_expr, sequence, match_type)
         .retain(r_sel_expr)
+        .dbg(sel!())
         .boxed()
 }
 

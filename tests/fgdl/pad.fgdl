@@ -1,0 +1,4 @@
+brc = b[6]
+anchor = f[TTTTT]
+1{<brc><anchor>x:}2{r<read>:}
+-> 1{<brc>pad(<anchor>, 3)<read>}
