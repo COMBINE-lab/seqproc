@@ -115,7 +115,7 @@ pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
     let mut return_type = (expr_type, expr_span);
 
     for fn_ in gp.stack.into_iter().rev() {
-        return_type = validate_composition(fn_, return_type)?;
+        return_type = validate_composition(fn_, return_type, expr.clone().size)?;
     }
 
     Ok(return_type.0)
@@ -124,9 +124,17 @@ pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
 pub fn validate_composition(
     fn_: Spanned<CompiledFunction>,
     return_type: Spanned<ReturnType>,
+    size: Size,
 ) -> Result<Spanned<ReturnType>, Error> {
     let (fn_, fn_span) = fn_;
     let (return_type, return_type_span) = return_type;
+
+    let (min, max) = match size {
+        Size::FixedSeq((seq, _)) => (0, seq.len()),
+        Size::FixedLen((n, _)) => (0, n),
+        Size::RangedLen(((a, b), _)) => (a, b),
+        Size::UnboundedLen => (100, 100),
+    };
 
     match fn_ {
         CompiledFunction::ReverseComp => match return_type {
@@ -144,16 +152,42 @@ pub fn validate_composition(
             }),
             _ => Ok((return_type, fn_span)),
         },
-        CompiledFunction::Truncate(_) => match return_type {
-            ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
-            ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
-            _ => Err(Error {
-                span: return_type_span,
-                msg: format!(
-                    "Function Truncate must take fixed element an argument, found: {}",
-                    return_type
-                ),
-            }),
+        CompiledFunction::Truncate(by) | CompiledFunction::TruncateLeft(by) => {
+            if min <= by && max <= by {
+                return Err(Error{
+                    span: return_type_span,
+                    msg: "Cannot truncate by more than the length of the segment".to_string()
+                })
+            }
+
+            match return_type {
+                ReturnType::Void => Err(Error {
+                    span: return_type_span,
+                    msg: "Function Truncate and TruncateLeft cannot take void element as an argument"
+                        .to_string(),
+                }),
+                _ => Ok((return_type, fn_span))
+            }
+        },
+        CompiledFunction::TruncateTo(to) | CompiledFunction::TruncateToLeft(to) => {
+            if to > max {
+                return Err(Error {
+                    span: return_type_span,
+                    msg: "Cannot truncate to a length greater than the elements length.".to_string()
+                })
+            }
+
+            match return_type {
+                ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
+                _ => Err(Error {
+                    span: return_type_span,
+                    msg: format!(
+                        "Function TruncateTo and TruncateToLeft must take fixed element an argument, found: {}",
+                        return_type
+                    ),
+                }),
+            }
         },
         CompiledFunction::Remove => match return_type {
             ReturnType::Void => Err(Error {
@@ -162,16 +196,33 @@ pub fn validate_composition(
             }),
             _ => Ok((ReturnType::Void, fn_span)),
         },
-        CompiledFunction::Pad(_) => match return_type {
-            ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
-            ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
-            _ => Err(Error {
+        CompiledFunction::Pad(_) | CompiledFunction::PadLeft(_) => match return_type {
+            ReturnType::Void => Err(Error {
                 span: return_type_span,
-                msg: format!(
-                    "Function Pad must take fixed element an argument, found: {}",
-                    return_type
-                ),
+                msg: "Function Pad and PadLeft cannot take void element as an argument"
+                    .to_string(),
             }),
+            _ => Ok((return_type, fn_span))
+        },
+        CompiledFunction::PadTo(to) | CompiledFunction::PadToLeft(to) => {
+            if to < max {
+                return Err(Error {
+                    span: return_type_span,
+                    msg: "Cannot pad to a length less than the elements length.".to_string()
+                })
+            }
+
+            match return_type {
+                ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
+                _ => Err(Error {
+                    span: return_type_span,
+                    msg: format!(
+                        "Function PadTo and PadToLeft must take fixed element an argument, found: {}",
+                        return_type
+                    ),
+                }),
+            }
         },
         CompiledFunction::Normalize => match return_type {
             ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),

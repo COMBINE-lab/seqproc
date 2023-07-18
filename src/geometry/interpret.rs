@@ -110,13 +110,37 @@ fn execute_stack(
         None
     };
 
+    let length = match size.clone() {
+        Size::FixedLen((n, _)) => Some(n),
+        Size::FixedSeq((seq, _)) => Some(seq.len()),
+        _ => None,
+    };
+
     for (fn_, _) in stack {
         read = match fn_ {
             CompiledFunction::Reverse => reverse(read, attr.clone(), label.clone()),
             CompiledFunction::ReverseComp => reverse_comp(read, attr.clone(), label.clone()),
-            CompiledFunction::Truncate(n) => truncate(read, label.clone(), attr.clone(), n),
+            CompiledFunction::Truncate(n) => {
+                truncate(read, label.clone(), attr.clone(), RightEnd(n))
+            }
+            CompiledFunction::TruncateLeft(n) => {
+                truncate(read, label.clone(), attr.clone(), LeftEnd(n))
+            },
+            CompiledFunction::TruncateTo(n) => {
+                truncate(read, label.clone(), attr.clone(), RightEnd(n - length.unwrap()))
+            },
+            CompiledFunction::TruncateToLeft(n) => {
+                truncate(read, label.clone(), attr.clone(), LeftEnd(n - length.unwrap()))
+            },
             CompiledFunction::Remove => remove(read, label.clone(), attr.clone()),
-            CompiledFunction::Pad(n) => pad(read, label.clone(), attr.clone(), n),
+            CompiledFunction::Pad(n) => pad(read, label.clone(), attr.clone(), RightEnd(n)),
+            CompiledFunction::PadLeft(n) => pad(read, label.clone(), attr.clone(), LeftEnd(n)),
+            CompiledFunction::PadTo(n) => {
+                pad(read, label.clone(), attr.clone(), RightEnd(n - length.unwrap()))
+            },
+            CompiledFunction::PadToLeft(n) => {
+                pad(read, label.clone(), attr.clone(), LeftEnd(n - length.unwrap()))
+            },
             CompiledFunction::Normalize => {
                 normalize(read, label.clone(), attr.clone(), range.clone().unwrap())
             }

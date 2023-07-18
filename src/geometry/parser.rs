@@ -29,8 +29,14 @@ pub enum Function {
     Reverse,
     ReverseComp,
     Truncate(usize),
+    TruncateLeft(usize),
+    TruncateTo(usize),
+    TruncateToLeft(usize),
     Remove,
     Pad(usize),
+    PadLeft(usize),
+    PadTo(usize),
+    PadToLeft(usize),
     Normalize,
     Map(String, Box<Spanned<Expr>>),
     MapWithMismatch(String, Box<Spanned<Expr>>, usize),
@@ -44,8 +50,14 @@ impl fmt::Display for Function {
             Reverse => write!(f, "rev"),
             ReverseComp => write!(f, "revcomp"),
             Truncate(n) => write!(f, "trunc({}", n),
+            TruncateLeft(n) => write!(f, "trunc_left({}", n),
+            TruncateTo(n) => write!(f, "trunc_to({}", n),
+            TruncateToLeft(n) => write!(f, "trunc_to_left({}", n),
             Remove => write!(f, "remove"),
             Pad(n) => write!(f, "pad({}", n),
+            PadLeft(n) => write!(f, "pad_left({}", n),
+            PadTo(n) => write!(f, "pad_to({}", n),
+            PadToLeft(n) => write!(f, "pad_to_left({}", n),
             Normalize => write!(f, "norm"),
             Map(p, b) => {
                 let (s, _) = b.deref();
@@ -349,13 +361,64 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                     Expr::Function((Function::Truncate(num), fn_span), Box::new((geom_p, span)))
                 })
                 .labelled("Truncate function"),
+            just(Token::TruncateLeft)
+                .map_with_span(|_, span| span)
+                .then(recursive_num_arg.clone())
+                .map(|(fn_span, ((geom_p, num), span))| {
+                    Expr::Function(
+                        (Function::TruncateLeft(num), fn_span),
+                        Box::new((geom_p, span)),
+                    )
+                })
+                .labelled("Truncate Left function"),
+            just(Token::TruncateTo)
+                .map_with_span(|_, span| span)
+                .then(recursive_num_arg.clone())
+                .map(|(fn_span, ((geom_p, num), span))| {
+                    Expr::Function(
+                        (Function::TruncateTo(num), fn_span),
+                        Box::new((geom_p, span)),
+                    )
+                })
+                .labelled("Truncate To function"),
+            just(Token::TruncateToLeft)
+                .map_with_span(|_, span| span)
+                .then(recursive_num_arg.clone())
+                .map(|(fn_span, ((geom_p, num), span))| {
+                    Expr::Function(
+                        (Function::TruncateToLeft(num), fn_span),
+                        Box::new((geom_p, span)),
+                    )
+                })
+                .labelled("Truncate To Left function"),
             just(Token::Pad)
                 .map_with_span(|_, span| span)
-                .then(recursive_num_arg)
+                .then(recursive_num_arg.clone())
                 .map(|(fn_span, ((geom_p, num), span))| {
                     Expr::Function((Function::Pad(num), fn_span), Box::new((geom_p, span)))
                 })
                 .labelled("Pad function"),
+            just(Token::PadLeft)
+                .map_with_span(|_, span| span)
+                .then(recursive_num_arg.clone())
+                .map(|(fn_span, ((geom_p, num), span))| {
+                    Expr::Function((Function::PadLeft(num), fn_span), Box::new((geom_p, span)))
+                })
+                .labelled("Pad Left function"),
+            just(Token::PadTo)
+                .map_with_span(|_, span| span)
+                .then(recursive_num_arg.clone())
+                .map(|(fn_span, ((geom_p, num), span))| {
+                    Expr::Function((Function::PadTo(num), fn_span), Box::new((geom_p, span)))
+                })
+                .labelled("Pad To function"),
+            just(Token::PadToLeft)
+                .map_with_span(|_, span| span)
+                .then(recursive_num_arg)
+                .map(|(fn_span, ((geom_p, num), span))| {
+                    Expr::Function((Function::PadToLeft(num), fn_span), Box::new((geom_p, span)))
+                })
+                .labelled("Pad To Left function"),
             just(Token::Reverse)
                 .map_with_span(|_, span| (Function::Reverse, span))
                 .then(recursive_no_arg.clone())
@@ -466,22 +529,6 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
             .at_most(2)
             .map_with_span(|val, span| (Some(Expr::Transform(val)), span)),
     ));
-
-    // let transformation = just(Token::TransformTo)
-    //     .ignore_then(num)
-    //     .map_with_span(|tok, span| (tok, span))
-    //     .then(
-    //         transformed_pieces
-    //             .clone()
-    //             .repeated()
-    //             .at_least(1)
-    //             .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
-    //     )
-    //     .map(|(n, read)| Expr::Read(n, read))
-    //     .repeated()
-    //     .at_least(1)
-    //     .at_most(2)
-    //     .map(Expr::Transform);
 
     definitions
         .map_with_span(|tok, span| (Expr::Definitions(tok), span))

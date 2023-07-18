@@ -41,18 +41,20 @@ pub fn remove(read: BoxedReads, label: String, attr: String) -> BoxedReads {
     read.trim(sel_expr, vec![label]).boxed()
 }
 
-pub fn pad(read: BoxedReads, label: String, attr: String, by: usize) -> BoxedReads {
+pub fn pad(read: BoxedReads, label: String, attr: String, by: EndIdx) -> BoxedReads {
     let sel_expr = get_selector(label.clone(), attr);
     let label = Label::new(label.as_bytes()).unwrap();
 
-    read.pad(sel_expr, vec![label], LeftEnd(by), b'A').boxed()
+    // this is a pad by function
+    read.pad(sel_expr, vec![label], by, b'A').boxed()
 }
 
-pub fn truncate(read: BoxedReads, label: String, attr: String, by: usize) -> BoxedReads {
+pub fn truncate(read: BoxedReads, label: String, attr: String, by: EndIdx) -> BoxedReads {
     let sel_expr = get_selector(label.clone(), attr);
     let label = Label::new(label.as_bytes()).unwrap();
 
-    read.trunc(sel_expr, vec![label], RightEnd(by)).boxed()
+    // this is a truncate by function
+    read.trunc(sel_expr, vec![label], by).boxed()
 }
 
 pub fn reverse(read: BoxedReads, label: String, attr: String) -> BoxedReads {

@@ -2,7 +2,7 @@ Areas which need work with `seqproc`
 
 #todo
 - [x] Parse number as `usize`
-- [ ] Validate bounds and variables for functions (decide if functions are `padTO` or `padBY`)
+- [x] Validate bounds and variables for functions (decide if functions are `padTO` or `padBY`)
 - [x] Execute transformations, tie it to `collect_fastq`
 - [x] Execute stack 
 	- [x] Propagate fixed size and ranged size to execute stack
@@ -17,10 +17,10 @@ Areas which need work with `seqproc`
 ANTISEQUENCE functions to add:
 - [x] normalize
 - [x] pad
-	- [ ] left and right
+	- [x] left and right
 	- [ ] specify character
 - [x] trucate
-	- [ ] left and right
+	- [x] left and right
 	- [ ] specify character
 - [x] reverse
 - [x] reverse compliment

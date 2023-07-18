@@ -55,7 +55,7 @@ fn fail_norm() {
 
 #[test]
 fn fail_composition() {
-    let src = "1{trunc(rev(r:), 1)}2{r:}";
+    let src = "1{trunc_to(rev(r:), 1)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -190,7 +190,7 @@ brc = b[1-4]
 #[test]
 fn label_replacement() {
     let src = "test = r: 
-    1{pad(<test>, 5)}2{r:}";
+    1{pad_to(<test>, 5)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
