@@ -2,8 +2,10 @@ use std::fmt;
 
 use crate::{
     lexer::Span,
-    parser::{Function, Size, Spanned, Type},
+    parser::{Size, Spanned, Type},
 };
+
+use super::functions::CompiledFunction;
 
 pub type Geometry = Vec<Vec<(Interval, usize)>>;
 
@@ -66,7 +68,7 @@ impl fmt::Display for Interval {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GeometryMeta {
     pub expr: Spanned<GeometryPiece>,
-    pub stack: Vec<Spanned<Function>>,
+    pub stack: Vec<Spanned<CompiledFunction>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -120,14 +122,14 @@ pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
 }
 
 pub fn validate_composition(
-    fn_: Spanned<Function>,
+    fn_: Spanned<CompiledFunction>,
     return_type: Spanned<ReturnType>,
 ) -> Result<Spanned<ReturnType>, Error> {
     let (fn_, fn_span) = fn_;
     let (return_type, return_type_span) = return_type;
 
     match fn_ {
-        Function::ReverseComp => match return_type {
+        CompiledFunction::ReverseComp => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
                 msg: "Function Reverse Complement cannot take void element as an argument"
@@ -135,14 +137,14 @@ pub fn validate_composition(
             }),
             _ => Ok((return_type, fn_span)),
         },
-        Function::Reverse => match return_type {
+        CompiledFunction::Reverse => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
                 msg: "Function Reverse cannot take void element as an argument".to_string(),
             }),
             _ => Ok((return_type, fn_span)),
         },
-        Function::Truncate(_) => match return_type {
+        CompiledFunction::Truncate(_) => match return_type {
             ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
             ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {
@@ -153,14 +155,14 @@ pub fn validate_composition(
                 ),
             }),
         },
-        Function::Remove => match return_type {
+        CompiledFunction::Remove => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
                 msg: "Function Remove cannot recieve a void element as an argument".to_string(),
             }),
             _ => Ok((ReturnType::Void, fn_span)),
         },
-        Function::Pad(_) => match return_type {
+        CompiledFunction::Pad(_) => match return_type {
             ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
             ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {
@@ -171,7 +173,7 @@ pub fn validate_composition(
                 ),
             }),
         },
-        Function::Normalize => match return_type {
+        CompiledFunction::Normalize => match return_type {
             ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
             _ => Err(Error {
                 span: return_type_span,
@@ -181,7 +183,7 @@ pub fn validate_composition(
                 ),
             }),
         },
-        Function::Map(_, _) => match return_type {
+        CompiledFunction::Map(..) | CompiledFunction::MapWithMismatch(..) => match return_type {
             ReturnType::Ranged | ReturnType::FixedLen | ReturnType::FixedSeq => {
                 Ok((ReturnType::FixedLen, fn_span))
             }
@@ -193,7 +195,7 @@ pub fn validate_composition(
                 ),
             }),
         },
-        Function::Hamming(_) => match return_type {
+        CompiledFunction::Hamming(_) => match return_type {
             ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {
                 span: return_type_span,

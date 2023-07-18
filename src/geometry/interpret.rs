@@ -6,10 +6,11 @@ use antisequence::{
 
 use crate::{
     compile::{
+        functions::CompiledFunction,
         utils::{GeometryMeta, GeometryPiece},
         CompiledData,
     },
-    parser::{Function, Size, Spanned, Type},
+    parser::{Size, Spanned, Type},
     processors::*,
 };
 
@@ -95,14 +96,15 @@ fn interpret_geometry(
 }
 
 fn execute_stack(
-    stack: Vec<Spanned<Function>>,
+    stack: Vec<Spanned<CompiledFunction>>,
     label: String,
+    attr: String,
     read: BoxedReads,
     size: Size,
 ) -> BoxedReads {
     let mut read = read;
 
-    let range = if let Size::RangedLen(((a, b), _)) = size {
+    let range = if let Size::RangedLen(((a, b), _)) = size.clone() {
         Some(a..=b)
     } else {
         None
@@ -110,14 +112,35 @@ fn execute_stack(
 
     for (fn_, _) in stack {
         read = match fn_ {
-            Function::Reverse => reverse(read, label.clone()),
-            Function::ReverseComp => reverse_comp(read, label.clone()),
-            Function::Truncate(n) => truncate(read, label.clone(), n),
-            Function::Remove => remove(read, label.clone()),
-            Function::Pad(n) => pad(read, label.clone(), n),
-            Function::Normalize => normalize(read, label.clone(), range.clone().unwrap()),
-            Function::Map(..) => unimplemented!(),
-            Function::Hamming(_) => unreachable!(),
+            CompiledFunction::Reverse => reverse(read, attr.clone(), label.clone()),
+            CompiledFunction::ReverseComp => reverse_comp(read, attr.clone(), label.clone()),
+            CompiledFunction::Truncate(n) => truncate(read, label.clone(), attr.clone(), n),
+            CompiledFunction::Remove => remove(read, label.clone(), attr.clone()),
+            CompiledFunction::Pad(n) => pad(read, label.clone(), attr.clone(), n),
+            CompiledFunction::Normalize => {
+                normalize(read, label.clone(), attr.clone(), range.clone().unwrap())
+            }
+            CompiledFunction::Map(file, fns) => {
+                let mapped = map(read, label.clone(), attr.clone(), file, 0);
+                execute_stack(
+                    fns,
+                    label.clone(),
+                    String::from("mapped"),
+                    mapped,
+                    size.clone(),
+                )
+            }
+            CompiledFunction::MapWithMismatch(file, fns, mismatch) => {
+                let mapped = map(read, label.clone(), attr.clone(), file, mismatch);
+                execute_stack(
+                    fns,
+                    label.clone(),
+                    String::from("mapped"),
+                    mapped,
+                    size.clone(),
+                )
+            }
+            CompiledFunction::Hamming(_) => unreachable!(),
         };
     }
 
@@ -125,7 +148,7 @@ fn execute_stack(
 }
 
 impl GeometryMeta {
-    fn unpack(&self) -> (Type, Size, Option<String>, Vec<Spanned<Function>>) {
+    fn unpack(&self) -> (Type, Size, Option<String>, Vec<Spanned<CompiledFunction>>) {
         let GeometryMeta {
             expr: (GeometryPiece { type_, size, label }, _),
             stack,
@@ -148,7 +171,7 @@ impl GeometryMeta {
         let next_label = format!("{cur_label}_r");
 
         if type_ == Type::Discard {
-            stack.push((Function::Remove, 0..1))
+            stack.push((CompiledFunction::Remove, 0..1))
         }
 
         // execute the requisite process here
@@ -156,7 +179,7 @@ impl GeometryMeta {
             Size::FixedSeq((seq, _)) => {
                 let match_type = if !stack.is_empty() {
                     match stack.pop().unwrap() {
-                        (Function::Hamming(n), _) => {
+                        (CompiledFunction::Hamming(n), _) => {
                             let dist = Frac(n as f64 / seq.len() as f64);
                             HammingSearch(dist)
                         }
@@ -188,7 +211,7 @@ impl GeometryMeta {
             Size::UnboundedLen => process_unbounded(read, init_label, this_label.clone()),
         };
 
-        execute_stack(stack, this_label, read, size)
+        execute_stack(stack, this_label, String::from(""), read, size)
     }
 
     fn interpret_dual(&self, prev: Self, read: BoxedReads, label: &mut Vec<String>) -> BoxedReads {
@@ -222,7 +245,7 @@ impl GeometryMeta {
                 // else do an exact match
                 let match_type = if !stack.is_empty() {
                     match stack.pop().unwrap() {
-                        (Function::Hamming(n), _) => {
+                        (CompiledFunction::Hamming(n), _) => {
                             let dist = Frac(n as f64 / seq.len() as f64);
                             HammingSearch(dist)
                         }
@@ -242,7 +265,7 @@ impl GeometryMeta {
                     match_type,
                 );
 
-                execute_stack(stack, this_label, read, size)
+                execute_stack(stack, this_label, String::from(""), read, size)
             }
             _ => unreachable!(),
         };

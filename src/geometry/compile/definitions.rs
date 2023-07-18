@@ -1,19 +1,23 @@
-use super::utils::*;
+use super::{
+    functions::{compile_fn, CompiledFunction},
+    utils::*,
+};
 
 use std::{collections::HashMap, ops::Deref};
 
-use crate::parser::{Expr, Function, Spanned};
+use crate::parser::{Expr, Spanned};
 
 // validate definitions there should be no labels, just labeled geom peices and functions
 fn validate_definition(expr: Spanned<Expr>, label: String) -> Result<GeometryMeta, Error> {
-    let mut stack: Vec<Spanned<Function>> = vec![];
+    let mut stack: Vec<Spanned<CompiledFunction>> = vec![];
     let mut expr = expr;
 
     loop {
         match expr.0 {
             Expr::Function(fn_, gp) => {
-                stack.push(fn_);
+                // parse the function and validate it
                 expr = gp.deref().clone();
+                stack.push(compile_fn(fn_, expr.clone())?); // here is where we can compile the functions
             }
             Expr::Label(_) => {
                 return Err(Error {

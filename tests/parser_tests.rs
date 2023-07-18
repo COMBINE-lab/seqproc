@@ -378,7 +378,39 @@ fn fixed_seq() {
 
 #[test]
 fn fail_ranged_seq() {
-    let src = "f[1-2]";
+    let src = "1{f[1-2]}2{r:}";
+
+    let (res, lex_err) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    assert_eq!(0, lex_err.len());
+    assert_eq!(1, parser_err.len());
+}
+
+#[test]
+fn allow_expr_arg() {
+    let src = "1{map(b[9-10], \"filepath\", norm(self))}2{r:}";
+
+    let (res, lex_err) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    assert_eq!(0, lex_err.len());
+    assert_eq!(0, parser_err.len());
+}
+
+#[test]
+fn fail_map() {
+    let src = "1{map(pad(b[9-10], 3), \"filepath\", norm(self))}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 

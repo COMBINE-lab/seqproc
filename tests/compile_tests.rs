@@ -497,3 +497,43 @@ umi = norm(u[9-11])
 
     assert!(res.is_ok())
 }
+
+#[test]
+fn compile_map_arguments() {
+    let src = "1{map(b[10-11], \"file\", norm(self))}2{r<read>:}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = compile(desc);
+
+    assert!(res.is_ok())
+}
+
+#[test]
+fn compile_map_arguments_with_label() {
+    let src = "
+brc = b[10-11]    
+1{map(<brc>>, \"file\", norm(self))}2{r<read>:}";
+
+    let (res, _) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    let desc = res.clone().unwrap().0;
+
+    let res = compile(desc);
+
+    assert!(res.is_ok())
+}

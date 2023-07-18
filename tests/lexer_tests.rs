@@ -82,3 +82,26 @@ fn precidence() {
         res.unwrap().iter().map(|(tok, _)| tok).collect::<Vec<_>>()
     )
 }
+
+#[test]
+fn map_vs_with_mismatch() {
+    let src = "map()map_with_mismatch()";
+
+    let (res, err) = lexer().parse_recovery(src);
+
+    assert_eq!(err.len(), 0);
+
+    let result = vec![
+        &Token::Map,
+        &Token::Ctrl('('),
+        &Token::Ctrl(')'),
+        &Token::MapWithMismatch,
+        &Token::Ctrl('('),
+        &Token::Ctrl(')'),
+    ];
+
+    assert_eq!(
+        result,
+        res.unwrap().iter().map(|(tok, _)| tok).collect::<Vec<_>>()
+    )
+}

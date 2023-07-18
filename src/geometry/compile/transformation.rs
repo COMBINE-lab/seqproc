@@ -1,8 +1,11 @@
 use std::{collections::HashMap, ops::Deref};
 
-use super::utils::*;
+use super::{
+    functions::{compile_fn, CompiledFunction},
+    utils::*,
+};
 
-use crate::parser::{Expr, Function, Spanned};
+use crate::parser::{Expr, Spanned};
 
 pub fn compile_transformation(
     transformation: Spanned<Expr>,
@@ -60,14 +63,14 @@ fn compile(
 
         for expr in read {
             let mut expr = expr;
-            let mut stack: Vec<Spanned<Function>> = Vec::new();
+            let mut stack: Vec<Spanned<CompiledFunction>> = Vec::new();
             let label: Option<Spanned<String>>;
 
             'inner: loop {
                 match expr.0 {
                     Expr::Function(fn_, gp) => {
                         expr = gp.deref().clone();
-                        stack.push(fn_);
+                        stack.push(compile_fn(fn_, expr.clone())?);
                     }
                     Expr::Label(ref l) => {
                         label = Some(l.clone());

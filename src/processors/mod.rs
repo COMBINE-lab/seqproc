@@ -7,6 +7,13 @@ use antisequence::{
 
 use crate::interpret::BoxedReads;
 
+fn get_selector(label: String, attr: String) -> SelectorExpr {
+    if attr.is_empty() {
+        return SelectorExpr::new(label.as_bytes()).unwrap();
+    }
+    SelectorExpr::new(format!("{}.{}", label, attr).as_bytes()).unwrap()
+}
+
 pub fn set(
     read: BoxedReads,
     sel_expr: SelectorExpr,
@@ -18,13 +25,6 @@ pub fn set(
     read.set(sel_expr, label, transform).boxed()
 }
 
-pub fn remove(read: BoxedReads, label: String) -> BoxedReads {
-    let sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
-    let label = Label::new(label.as_bytes()).unwrap();
-
-    read.trim(sel_expr, vec![label]).boxed()
-}
-
 fn cut(
     read: BoxedReads,
     sel_expr: SelectorExpr,
@@ -34,46 +34,62 @@ fn cut(
     read.cut(sel_expr, tr_expr, index).boxed()
 }
 
-pub fn pad(read: BoxedReads, label: String, by: usize) -> BoxedReads {
-    let sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
+pub fn remove(read: BoxedReads, label: String, attr: String) -> BoxedReads {
+    let sel_expr = get_selector(label.clone(), attr);
     let label = Label::new(label.as_bytes()).unwrap();
 
-    read.pad(sel_expr, vec![label], by).boxed()
+    read.trim(sel_expr, vec![label]).boxed()
 }
 
-pub fn truncate(read: BoxedReads, label: String, _by: usize) -> BoxedReads {
-    let _sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
-    let _label = Label::new(label.as_bytes()).unwrap();
+pub fn pad(read: BoxedReads, label: String, attr: String, by: usize) -> BoxedReads {
+    let sel_expr = get_selector(label.clone(), attr);
+    let label = Label::new(label.as_bytes()).unwrap();
 
-    // read.truncate(sel_expr, vec![label], by).boxed()
-    read
+    read.pad(sel_expr, vec![label], LeftEnd(by), b'A').boxed()
 }
 
-pub fn reverse(read: BoxedReads, label: String) -> BoxedReads {
-    let _sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
-    let _label = Label::new(label.as_bytes()).unwrap();
+pub fn truncate(read: BoxedReads, label: String, attr: String, by: usize) -> BoxedReads {
+    let sel_expr = get_selector(label.clone(), attr);
+    let label = Label::new(label.as_bytes()).unwrap();
 
-    // read.rev(sel_expr, vec![label]).boxed()
-    read
+    read.trunc(sel_expr, vec![label], RightEnd(by)).boxed()
 }
 
-pub fn reverse_comp(read: BoxedReads, label: String) -> BoxedReads {
-    let _sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
-    let _label = Label::new(label.as_bytes()).unwrap();
+pub fn reverse(read: BoxedReads, label: String, attr: String) -> BoxedReads {
+    let sel_expr = get_selector(label.clone(), attr);
+    let label = Label::new(label.as_bytes()).unwrap();
 
-    // read.revcomp(sel_expr, vec![label]).boxed()
-    read
+    read.reverse(sel_expr, vec![label]).boxed()
 }
 
-pub fn normalize<B>(read: BoxedReads, label: String, _range: B) -> BoxedReads
+pub fn reverse_comp(read: BoxedReads, label: String, attr: String) -> BoxedReads {
+    let sel_expr = get_selector(label.clone(), attr);
+    let label = Label::new(label.as_bytes()).unwrap();
+
+    read.revcomp(sel_expr, vec![label]).boxed()
+}
+
+pub fn normalize<B>(read: BoxedReads, label: String, attr: String, range: B) -> BoxedReads
 where
     B: RangeBounds<usize> + Send + Sync + 'static,
 {
-    let _sel_expr = SelectorExpr::new(label.as_bytes()).unwrap();
-    let _label = Label::new(label.as_bytes()).unwrap();
+    let sel_expr = get_selector(label.clone(), attr);
+    let label = Label::new(label.as_bytes()).unwrap();
 
-    // read.normalize(sel_expr, vec![label], range).boxed()
-    read
+    read.norm(sel_expr, label, range).boxed()
+}
+
+pub fn map(
+    read: BoxedReads,
+    label: String,
+    attr: String,
+    file: String,
+    mismatch: usize,
+) -> BoxedReads {
+    let sel_expr = get_selector(label.clone(), attr);
+    let tr_expr = TransformExpr::new(format!("{0} -> {0}.mapped", label).as_bytes()).unwrap();
+
+    read.map(sel_expr, tr_expr, file, mismatch).boxed()
 }
 
 fn validate_length<B>(

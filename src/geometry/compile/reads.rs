@@ -1,4 +1,7 @@
-use super::utils::*;
+use super::{
+    functions::{compile_fn, CompiledFunction},
+    utils::*,
+};
 
 use std::{collections::HashMap, ops::Deref};
 
@@ -115,14 +118,15 @@ pub fn compile_reads(
         'outer: for expr in read {
             let mut expr = expr;
             let mut spanned_geom_piece: Option<Spanned<GeometryPiece>> = None;
+            let mut compiled_stack: Vec<Spanned<CompiledFunction>> = Vec::new();
             let mut stack: Vec<Spanned<Function>> = Vec::new();
             let mut label: Option<String> = None;
 
             'inner: loop {
                 match expr.0 {
-                    Expr::Function(fn_, gp) => {
+                    Expr::Function(inner_fn, gp) => {
                         expr = gp.deref().clone();
-                        stack.push(fn_);
+                        stack.push(inner_fn);
                     }
                     Expr::LabeledGeomPiece(l, gp) => {
                         if let Expr::Label((l, span)) = l.deref() {
@@ -141,6 +145,10 @@ pub fn compile_reads(
                         // would have to unpack labeled values to validate at the end
                         expr = gp.deref().clone();
 
+                        for fn_ in stack {
+                            compiled_stack.push(compile_fn(fn_, expr.clone())?)
+                        }
+
                         break 'inner;
                     }
                     Expr::Label((ref l, ref span)) => {
@@ -158,7 +166,21 @@ pub fn compile_reads(
                             label = Some(l.clone());
                             labels.push(l.clone());
                             spanned_geom_piece = Some(inner_expr.expr.clone());
-                            stack = stack
+
+                            for fn_ in stack {
+                                compiled_stack.push(compile_fn(
+                                    fn_,
+                                    (
+                                        Expr::GeomPiece(
+                                            inner_expr.expr.0.type_.clone(),
+                                            inner_expr.expr.0.size.clone(),
+                                        ),
+                                        inner_expr.expr.1.clone(),
+                                    ),
+                                )?)
+                            }
+
+                            compiled_stack = compiled_stack
                                 .clone()
                                 .into_iter()
                                 .chain(inner_expr.stack.clone())
@@ -173,6 +195,13 @@ pub fn compile_reads(
 
                             break 'outer;
                         }
+                    }
+                    Expr::GeomPiece(_, _) => {
+                        for fn_ in stack {
+                            compiled_stack.push(compile_fn(fn_, expr.clone())?)
+                        }
+
+                        break 'inner;
                     }
                     _ => break 'inner,
                 }
@@ -196,7 +225,7 @@ pub fn compile_reads(
 
             let gm = GeometryMeta {
                 expr: spanned_gp,
-                stack,
+                stack: compiled_stack,
             };
 
             if let Err(e) = validate_expr(gm.clone()) {

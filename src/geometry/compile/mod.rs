@@ -1,4 +1,5 @@
 pub mod definitions;
+pub mod functions;
 pub mod reads;
 mod transformation;
 pub mod utils;

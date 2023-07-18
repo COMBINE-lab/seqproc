@@ -15,6 +15,7 @@ pub enum Token {
     Discard,
     ReadSeq,
     FixedSeq,
+    Self_,
     Reverse,
     ReverseComp,
     Truncate,
@@ -22,6 +23,7 @@ pub enum Token {
     Pad,
     Normalize,
     Map,
+    MapWithMismatch,
     Hamming,
     TransformTo,
     Nuc(char),
@@ -54,6 +56,7 @@ impl fmt::Display for Token {
             Pad => write!(f, "Pad"),
             Normalize => write!(f, "Normalize"),
             Map => write!(f, "Map"),
+            MapWithMismatch => write!(f, "MapWithMismatch"),
             Hamming => write!(f, "Hamming"),
             Barcode => write!(f, "Barcode"),
             Umi => write!(f, "UMI"),
@@ -61,6 +64,7 @@ impl fmt::Display for Token {
             ReadSeq => write!(f, "ReadSeq"),
             FixedSeq => write!(f, "FixedSeq"),
             TransformTo => write!(f, "Transform into"),
+            Self_ => write!(f, "Self"),
         }
     }
 }
@@ -100,8 +104,10 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "trunc" => Token::Truncate,
         "pad" => Token::Pad,
         "norm" => Token::Normalize,
+        "map_with_mismatch" => Token::MapWithMismatch,
         "map" => Token::Map,
         "hamming" => Token::Hamming,
+        "self" => Token::Self_,
         "b" => Token::Barcode,
         "u" => Token::Umi,
         "r" => Token::ReadSeq,

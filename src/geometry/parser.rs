@@ -32,7 +32,8 @@ pub enum Function {
     Remove,
     Pad(usize),
     Normalize,
-    Map(String, String),
+    Map(String, Box<Spanned<Expr>>),
+    MapWithMismatch(String, Box<Spanned<Expr>>, usize),
     Hamming(usize),
 }
 
@@ -46,7 +47,14 @@ impl fmt::Display for Function {
             Remove => write!(f, "remove"),
             Pad(n) => write!(f, "pad({}", n),
             Normalize => write!(f, "norm"),
-            Map(p, s) => write!(f, "map({}, {}", p, s),
+            Map(p, b) => {
+                let (s, _) = b.deref();
+                write!(f, "map({}, {}", p, s)
+            }
+            MapWithMismatch(p, b, n) => {
+                let (s, _) = b.deref();
+                write!(f, "map({}, {}, {}", p, s, n)
+            }
             Hamming(n) => write!(f, "hamming({}", n),
         }
     }
@@ -77,6 +85,7 @@ impl fmt::Display for Type {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     Error,
+    Self_,
     Label(Spanned<String>),
     Type(Spanned<Type>),
     GeomPiece(Type, Size),
@@ -97,6 +106,7 @@ impl fmt::Display for Expr {
         use Expr::*;
         match self {
             Error => write!(f, "Error"),
+            Self_ => write!(f, "self"),
             Label((s, _)) => write!(f, "{}", s),
             Type((t, _)) => write!(f, "{}", t),
             GeomPiece(t, s) => write!(f, "{}{}", t, s),
@@ -207,6 +217,8 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .map_with_span(|l, span| Expr::Label((l, span)))
         .labelled("Label");
 
+    let self_ = just(Token::Self_).to(Expr::Self_).labelled("Self");
+
     let range = just(Token::Ctrl('['))
         .ignored()
         .then(
@@ -288,6 +300,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         fixed.clone(),
         fixed_seq.clone(),
         label,
+        self_,
     ));
 
     let transformed_pieces = recursive(|transformed_pieces| {
@@ -350,23 +363,55 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .labelled("Reverse function"),
             just(Token::ReverseComp)
                 .map_with_span(|_, span| (Function::ReverseComp, span))
-                .then(recursive_no_arg)
+                .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
                 .labelled("Reverse Compliment function"),
             just(Token::Map)
                 .map_with_span(|_, span| span)
                 .then(
-                    transformed_pieces
+                    geom_piece
+                        .clone()
                         .then_ignore(just(Token::Ctrl(',')))
                         .then(file)
                         .then_ignore(just(Token::Ctrl(',')))
-                        .then(seq)
+                        .then(
+                            transformed_pieces
+                                .clone()
+                                .map_with_span(|tok, span| (tok, span)),
+                        )
                         .map_with_span(|tok, span| (tok, span))
                         .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
                 )
-                .map(|(fn_span, (((geom_p, path), seq), span))| {
+                .map(|(fn_span, (((geom_p, path), self_expr), span))| {
                     Expr::Function(
-                        (Function::Map(path, seq), fn_span),
+                        (Function::Map(path, Box::new(self_expr)), fn_span),
+                        Box::new((geom_p, span)),
+                    )
+                })
+                .labelled("Map function"),
+            just(Token::MapWithMismatch)
+                .map_with_span(|_, span| span)
+                .then(
+                    geom_piece
+                        .then_ignore(just(Token::Ctrl(',')))
+                        .then(file)
+                        .then_ignore(just(Token::Ctrl(',')))
+                        .then(
+                            transformed_pieces
+                                .clone()
+                                .map_with_span(|tok, span| (tok, span)),
+                        )
+                        .then_ignore(just(Token::Ctrl(',')))
+                        .then(num)
+                        .map_with_span(|tok, span| (tok, span))
+                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
+                )
+                .map(|(fn_span, ((((geom_p, path), self_expr), num), span))| {
+                    Expr::Function(
+                        (
+                            Function::MapWithMismatch(path, Box::new(self_expr), num),
+                            fn_span,
+                        ),
                         Box::new((geom_p, span)),
                     )
                 })
