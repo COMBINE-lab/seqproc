@@ -27,7 +27,13 @@ fn labels(read_label: &mut Vec<String>) -> (String, String) {
 pub type BoxedReads = Box<dyn antisequence::Reads>;
 
 impl CompiledData {
-    pub fn interpret(&self, read: BoxedReads, out1: String, out2: String, additional_args: Vec<String>) -> BoxedReads {
+    pub fn interpret(
+        &self,
+        read: BoxedReads,
+        out1: String,
+        out2: String,
+        additional_args: Vec<String>,
+    ) -> BoxedReads {
         let Self {
             geometry,
             transformation,
@@ -90,7 +96,9 @@ fn interpret_geometry(
         let (_, size, _, _) = gp.unpack();
 
         read = match size {
-            Size::FixedSeq(_) | Size::FixedLen(_) => gp.interpret(read, &mut label, left, right, additional_args.clone()),
+            Size::FixedSeq(_) | Size::FixedLen(_) => {
+                gp.interpret(read, &mut label, left, right, additional_args.clone())
+            }
             Size::RangedLen(_) | Size::UnboundedLen => {
                 // by rules of geometry this should either be None or a sequence
                 if let Some(next) = geometry_iter.next() {
@@ -109,8 +117,16 @@ fn interpret_geometry(
 
 fn parse_additional_args(arg: String, args: Vec<String>) -> String {
     match arg.parse::<usize>() {
-        Ok(n) => args.get(n).unwrap().clone(),
-        _ => arg
+        Ok(n) => args
+            .get(n)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected {n} additional arguments with `--additional` tag. Found only {}.",
+                    args.len()
+                )
+            })
+            .clone(),
+        _ => arg,
     }
 }
 
@@ -186,7 +202,7 @@ fn execute_stack(
                     String::from("not_mapped"),
                     mapped,
                     size.clone(),
-                    additional_args.clone()
+                    additional_args.clone(),
                 )
             }
             CompiledFunction::MapWithMismatch(file, fns, mismatch) => {
@@ -219,7 +235,12 @@ impl GeometryMeta {
         (type_, size, label, stack)
     }
 
-    fn interpret_no_cut(&self, read: BoxedReads, label: &mut Vec<String>, additional_args: Vec<String>,) -> BoxedReads {
+    fn interpret_no_cut(
+        &self,
+        read: BoxedReads,
+        label: &mut Vec<String>,
+        additional_args: Vec<String>,
+    ) -> BoxedReads {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -245,7 +266,14 @@ impl GeometryMeta {
             _ => unreachable!(),
         };
 
-        execute_stack(stack, this_label, String::from(""), read, size, additional_args)
+        execute_stack(
+            stack,
+            this_label,
+            String::from(""),
+            read,
+            size,
+            additional_args,
+        )
     }
 
     fn interpret(
@@ -309,7 +337,14 @@ impl GeometryMeta {
             Size::UnboundedLen => process_unbounded(read, init_label, this_label.clone()),
         };
 
-        execute_stack(stack, this_label, String::from(""), read, size, additional_args)
+        execute_stack(
+            stack,
+            this_label,
+            String::from(""),
+            read,
+            size,
+            additional_args,
+        )
     }
 
     fn interpret_dual(
@@ -371,13 +406,20 @@ impl GeometryMeta {
                     match_type,
                 );
 
-                execute_stack(stack, this_label, String::from(""), read, size, additional_args.clone())
+                execute_stack(
+                    stack,
+                    this_label,
+                    String::from(""),
+                    read,
+                    size,
+                    additional_args.clone(),
+                )
             }
             _ => unreachable!(),
         };
 
         // call interpret for self
         // this is just an unbounded or ranged segment. No cut just set or validate
-        prev.interpret_no_cut(read, &mut left_label, additional_args.clone())
+        prev.interpret_no_cut(read, &mut left_label, additional_args)
     }
 }
