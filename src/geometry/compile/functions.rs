@@ -66,12 +66,11 @@ pub fn compile_fn(
 }
 
 fn compile_inner_expr(
-    expr: Spanned<Expr>,
+    mut expr: Spanned<Expr>,
     parent_expr: Spanned<Expr>,
 ) -> Result<Vec<Spanned<CompiledFunction>>, Error> {
     // if we are here in a map then the expr passed into the expr should be a geom_piece or labeled geom_piece
     // either way we can extract the size and type of it
-    let mut expr = expr.clone();
     let mut stack: Vec<Spanned<CompiledFunction>> = Vec::new();
 
     loop {

@@ -36,23 +36,13 @@ impl CompiledData {
         let mut read = read;
 
         for (i, read_geometry) in geometry.iter().enumerate() {
-            // if i + 1 == 1 {
-                read = interpret_geometry(
-                    read_geometry.to_vec(),
-                    read,
-                    format!("seq{}.", i + 1),
-                    "r",
-                    "l",
-                );
-            // } else {
-            //     read = interpret_geometry(
-            //         read_geometry.to_vec(),
-            //         read,
-            //         format!("seq{}.", i + 1),
-            //         "rr",
-            //         "ll",
-            //     );
-            // }
+            read = interpret_geometry(
+                read_geometry.to_vec(),
+                read,
+                format!("seq{}.", i + 1),
+                "r",
+                "l",
+            );
         }
 
         read = if let Some(trs) = transformation {
@@ -96,7 +86,7 @@ fn interpret_geometry(
 
     while let Some(gp) = geometry_iter.next() {
         let (_, size, _, _) = gp.unpack();
-        
+
         read = match size {
             Size::FixedSeq(_) | Size::FixedLen(_) => gp.interpret(read, &mut label, left, right),
             Size::RangedLen(_) | Size::UnboundedLen => {
@@ -124,7 +114,7 @@ fn execute_stack(
 ) -> BoxedReads {
     let mut read = read;
 
-    let range = if let Size::RangedLen(((a, b), _)) = size.clone() {
+    let range = if let Size::RangedLen(((a, b), _)) = size {
         Some(a..=b)
     } else {
         None
@@ -213,12 +203,7 @@ impl GeometryMeta {
         (type_, size, label, stack)
     }
 
-    fn interpret_no_cut(
-        &self,
-        read: BoxedReads,
-        label: &mut Vec<String>,
-        _left: &'static str,
-    ) -> BoxedReads {
+    fn interpret_no_cut(&self, read: BoxedReads, label: &mut Vec<String>) -> BoxedReads {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -236,7 +221,7 @@ impl GeometryMeta {
 
         // this is only called from `interpret_dual` which is for variable to fixedSeq
         // thus this is only for variable sized segments
-        let read = match size.clone() {
+        let read = match size {
             Size::RangedLen(((a, b), _)) => {
                 process_ranged_len_no_cut(read, this_label.clone(), a..=b)
             }
@@ -375,6 +360,6 @@ impl GeometryMeta {
 
         // call interpret for self
         // this is just an unbounded or ranged segment. No cut just set or validate
-        prev.interpret_no_cut(read, &mut left_label, left)
+        prev.interpret_no_cut(read, &mut left_label)
     }
 }
