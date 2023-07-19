@@ -98,6 +98,7 @@ impl fmt::Display for Type {
 pub enum Expr {
     Error,
     Self_,
+    Argument(usize),
     Label(Spanned<String>),
     Type(Spanned<Type>),
     GeomPiece(Type, Size),
@@ -118,6 +119,7 @@ impl fmt::Display for Expr {
         use Expr::*;
         match self {
             Error => write!(f, "Error"),
+            Argument(n) => write!(f, "argument {n}"),
             Self_ => write!(f, "self"),
             Label((s, _)) => write!(f, "{}", s),
             Type((t, _)) => write!(f, "{}", t),
@@ -208,6 +210,8 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
     let num = select! { Token::Num(n) => n }.labelled("Size Label");
 
     let file = select! { Token::File(f) => f }.labelled("File Path");
+
+    let argument = select! { Token::Arg(n) => n.to_string() }.labelled("Argument");
 
     let piece_type = select! {
         Token::Barcode => Type::Barcode,
@@ -438,7 +442,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                     geom_piece
                         .clone()
                         .then_ignore(just(Token::Ctrl(',')))
-                        .then(file)
+                        .then(file.or(argument))
                         .then_ignore(just(Token::Ctrl(',')))
                         .then(
                             transformed_pieces
@@ -460,7 +464,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .then(
                     geom_piece
                         .then_ignore(just(Token::Ctrl(',')))
-                        .then(file)
+                        .then(file.or(argument))
                         .then_ignore(just(Token::Ctrl(',')))
                         .then(
                             transformed_pieces

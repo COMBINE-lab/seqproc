@@ -105,3 +105,33 @@ fn map_vs_with_mismatch() {
         res.unwrap().iter().map(|(tok, _)| tok).collect::<Vec<_>>()
     )
 }
+
+#[test]
+fn arguments() {
+    let src = "map(f[ATG], $0, self)";
+
+    let (res, err) = lexer().parse_recovery(src);
+    dbg!(&err);
+    assert_eq!(err.len(), 0);
+
+    let result = vec![
+        &Token::Map,
+        &Token::Ctrl('('),
+        &Token::FixedSeq,
+        &Token::Ctrl('['),
+        &Token::A,
+        &Token::T,
+        &Token::G,
+        &Token::Ctrl(']'),
+        &Token::Ctrl(','),
+        &Token::Arg(0),
+        &Token::Ctrl(','),
+        &Token::Self_,
+        &Token::Ctrl(')'),
+    ];
+
+    assert_eq!(
+        result,
+        res.unwrap().iter().map(|(tok, _)| tok).collect::<Vec<_>>()
+    )
+}

@@ -15,7 +15,7 @@ PAD_OUT="$OUT_DIR/pad/pad.fastq"
 PAD_FGDL="$FGDL_DIR/pad.fgdl"
 PAD_EXPECTED="$EXPECTED_DIR/pad.fastq"
 
-cargo run -- -g $PAD_FGDL -1 $PAD_L -2 $PAD_R -o $PAD_OUT -t 6
+cargo run -- -g $PAD_FGDL -1 $PAD_L -2 $PAD_R -o $PAD_OUT -t 6 -a "more" "another" 
 diff $PAD_OUT $PAD_EXPECTED
 
 echo "Test Match"
@@ -37,3 +37,14 @@ REVCOMP_EXPECTED="$EXPECTED_DIR/revcomp.fastq"
 
 cargo run -- -g $REVCOMP_FGDL -1 $REVCOMP_L -2 $REVCOMP_R -o $REVCOMP_OUT -t 6
 diff $REVCOMP_OUT $REVCOMP_EXPECTED
+
+echo "Test Map"
+MAP_L="$IN_DIR/map/map_l.fastq"
+MAP_R="$IN_DIR/map/map_r.fastq"
+MAP_OUT="$OUT_DIR/map/map.fastq"
+MAP_FGDL="$FGDL_DIR/map.fgdl"
+MAP_EXPECTED="$EXPECTED_DIR/map.fastq"
+MAP_FILE="$IN_DIR/map/map.tsv"
+
+cargo run -- -g $MAP_FGDL -1 $MAP_L -2 $MAP_R -o $MAP_OUT -t 6 -a $MAP_FILE
+diff $MAP_OUT $MAP_EXPECTED

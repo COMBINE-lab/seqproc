@@ -35,6 +35,9 @@ pub struct Args {
     /// number of threads to use
     #[arg(short, long, default_value = "1")]
     threads: usize,
+
+    #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
+    additional: Vec<String>,
 }
 
 pub fn interpret(args: Args, compiled_data: CompiledData) {
@@ -45,13 +48,14 @@ pub fn interpret(args: Args, compiled_data: CompiledData) {
         out1,
         out2,
         threads,
+        additional,
     } = args;
 
     let read = iter_fastq2(file1, file2, 256)
         .unwrap_or_else(|e| panic!("{e}"))
         .boxed();
 
-    let read = compiled_data.interpret(read, out1, out2);
+    let read = compiled_data.interpret(read, out1, out2, additional);
 
     read.run_with_threads(threads)
 }

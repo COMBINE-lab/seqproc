@@ -32,7 +32,7 @@ pub enum Token {
     MapWithMismatch,
     Hamming,
     TransformTo,
-    Nuc(char),
+    Arg(usize),
     U,
     G,
     T,
@@ -47,7 +47,6 @@ impl fmt::Display for Token {
             Num(n) => write!(f, "{}", n),
             Ctrl(c) => write!(f, "{}", c),
             Label(s) => write!(f, "{}", s),
-            Nuc(n) => write!(f, "{}", n),
             A => write!(f, "A"),
             T => write!(f, "T"),
             G => write!(f, "G"),
@@ -77,6 +76,7 @@ impl fmt::Display for Token {
             FixedSeq => write!(f, "FixedSeq"),
             TransformTo => write!(f, "Transform into"),
             Self_ => write!(f, "Self"),
+            Arg(n) => write!(f, "argument {n}"),
         }
     }
 }
@@ -100,6 +100,10 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .map(|(_, (f, _))| Token::File(f.into_iter().collect::<String>()));
 
     let transformto = just('-').then(just('>')).to(Token::TransformTo);
+
+    let argument = just('$')
+        .then(text::int(10).from_str().unwrapped())
+        .map(|(_, n)| Token::Arg(n));
 
     let nucs = choice((
         just('A').to(Token::A),
@@ -135,6 +139,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     });
 
     let token = nucs
+        .or(argument)
         .or(ident)
         .or(label)
         .or(transformto)

@@ -89,7 +89,7 @@ pub fn map(
     mismatch: usize,
 ) -> BoxedReads {
     let sel_expr = get_selector(label.clone(), attr);
-    let tr_expr = TransformExpr::new(format!("{0} -> {0}.mapped", label).as_bytes()).unwrap();
+    let tr_expr = TransformExpr::new(format!("{0} -> {0}.not_mapped", label).as_bytes()).unwrap();
 
     read.map(sel_expr, tr_expr, file, mismatch).boxed()
 }
