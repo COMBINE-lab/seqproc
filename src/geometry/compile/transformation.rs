@@ -5,7 +5,7 @@ use super::{
     utils::*,
 };
 
-use crate::parser::{Expr, Spanned};
+use crate::parser::{Expr, Function, Spanned};
 
 pub fn compile_transformation(
     transformation: Spanned<Expr>,
@@ -63,14 +63,15 @@ fn compile(
 
         for expr in read {
             let mut expr = expr;
-            let mut stack: Vec<Spanned<CompiledFunction>> = Vec::new();
+            let mut stack: Vec<Spanned<Function>> = Vec::new();
+            let mut compiled_stack: Vec<Spanned<CompiledFunction>> = Vec::new();
             let label: Option<Spanned<String>>;
 
             'inner: loop {
                 match expr.0 {
                     Expr::Function(fn_, gp) => {
                         expr = gp.deref().clone();
-                        stack.push(compile_fn(fn_, expr.clone())?);
+                        stack.push(fn_);
                     }
                     Expr::Label(ref l) => {
                         label = Some(l.clone());
@@ -91,9 +92,13 @@ fn compile(
             };
 
             let gp = if let Some(gp) = map.get(&label) {
+                for fn_ in stack {
+                    compiled_stack.push(compile_fn(fn_, expr.clone())?)
+                }
+
                 GeometryMeta {
                     expr: gp.expr.clone(),
-                    stack: stack
+                    stack: compiled_stack
                         .clone()
                         .into_iter()
                         .chain(gp.stack.clone())

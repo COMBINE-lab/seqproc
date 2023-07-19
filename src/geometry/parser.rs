@@ -416,7 +416,10 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .map_with_span(|_, span| span)
                 .then(recursive_num_arg)
                 .map(|(fn_span, ((geom_p, num), span))| {
-                    Expr::Function((Function::PadToLeft(num), fn_span), Box::new((geom_p, span)))
+                    Expr::Function(
+                        (Function::PadToLeft(num), fn_span),
+                        Box::new((geom_p, span)),
+                    )
                 })
                 .labelled("Pad To Left function"),
             just(Token::Reverse)

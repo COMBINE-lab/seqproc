@@ -140,7 +140,6 @@ pub fn process_sequence(
     pipeline
         .match_one(sel_expr, tr_expr, sequence, match_type)
         .retain(r_sel_expr)
-        .dbg(sel!())
         .boxed()
 }
 
@@ -210,4 +209,30 @@ pub fn process_unbounded(read: BoxedReads, init_label: String, this_label: Strin
     let cut_read = cut(read, sel_expr.clone(), cut_tr_expr, LeftEnd(0));
 
     set(cut_read, sel_expr, init_label, tr)
+}
+
+pub fn process_ranged_len_no_cut<B>(read: BoxedReads, this_label: String, range: B) -> BoxedReads
+where
+    B: RangeBounds<usize> + Send + Sync + 'static,
+{
+    let len_sel_expr = SelectorExpr::new(this_label.as_bytes()).unwrap();
+    let len_tr_expr =
+        TransformExpr::new(format!("{this_label} -> {this_label}.v_len").as_bytes()).unwrap();
+    let r_sel_expr = SelectorExpr::new(format!("{this_label}.v_len").as_bytes()).unwrap();
+
+    validate_length(read, len_sel_expr, len_tr_expr, r_sel_expr, range)
+}
+
+pub fn process_unbounded_no_cut(
+    read: BoxedReads,
+    init_label: String,
+    this_label: String,
+) -> BoxedReads {
+    // set init_label to this_label
+    // cut left end 0
+    let sel_expr = SelectorExpr::new(init_label.as_bytes()).unwrap();
+
+    let tr = format!("{{{this_label}}}");
+
+    set(read, sel_expr, init_label, tr)
 }

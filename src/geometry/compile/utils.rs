@@ -154,27 +154,29 @@ pub fn validate_composition(
         },
         CompiledFunction::Truncate(by) | CompiledFunction::TruncateLeft(by) => {
             if min <= by && max <= by {
-                return Err(Error{
+                return Err(Error {
                     span: return_type_span,
-                    msg: "Cannot truncate by more than the length of the segment".to_string()
-                })
+                    msg: "Cannot truncate by more than the length of the segment".to_string(),
+                });
             }
 
             match return_type {
                 ReturnType::Void => Err(Error {
                     span: return_type_span,
-                    msg: "Function Truncate and TruncateLeft cannot take void element as an argument"
-                        .to_string(),
+                    msg:
+                        "Function Truncate and TruncateLeft cannot take void element as an argument"
+                            .to_string(),
                 }),
-                _ => Ok((return_type, fn_span))
+                _ => Ok((return_type, fn_span)),
             }
-        },
+        }
         CompiledFunction::TruncateTo(to) | CompiledFunction::TruncateToLeft(to) => {
             if to > max {
                 return Err(Error {
                     span: return_type_span,
-                    msg: "Cannot truncate to a length greater than the elements length.".to_string()
-                })
+                    msg: "Cannot truncate to a length greater than the elements length."
+                        .to_string(),
+                });
             }
 
             match return_type {
@@ -188,7 +190,7 @@ pub fn validate_composition(
                     ),
                 }),
             }
-        },
+        }
         CompiledFunction::Remove => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
@@ -199,17 +201,16 @@ pub fn validate_composition(
         CompiledFunction::Pad(_) | CompiledFunction::PadLeft(_) => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
-                msg: "Function Pad and PadLeft cannot take void element as an argument"
-                    .to_string(),
+                msg: "Function Pad and PadLeft cannot take void element as an argument".to_string(),
             }),
-            _ => Ok((return_type, fn_span))
+            _ => Ok((return_type, fn_span)),
         },
         CompiledFunction::PadTo(to) | CompiledFunction::PadToLeft(to) => {
             if to < max {
                 return Err(Error {
                     span: return_type_span,
-                    msg: "Cannot pad to a length less than the elements length.".to_string()
-                })
+                    msg: "Cannot pad to a length less than the elements length.".to_string(),
+                });
             }
 
             match return_type {
@@ -223,7 +224,7 @@ pub fn validate_composition(
                     ),
                 }),
             }
-        },
+        }
         CompiledFunction::Normalize => match return_type {
             ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
             _ => Err(Error {

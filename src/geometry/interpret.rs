@@ -36,7 +36,23 @@ impl CompiledData {
         let mut read = read;
 
         for (i, read_geometry) in geometry.iter().enumerate() {
-            read = interpret_geometry(read_geometry.to_vec(), read, format!("seq{}.", i + 1));
+            // if i + 1 == 1 {
+                read = interpret_geometry(
+                    read_geometry.to_vec(),
+                    read,
+                    format!("seq{}.", i + 1),
+                    "r",
+                    "l",
+                );
+            // } else {
+            //     read = interpret_geometry(
+            //         read_geometry.to_vec(),
+            //         read,
+            //         format!("seq{}.", i + 1),
+            //         "rr",
+            //         "ll",
+            //     );
+            // }
         }
 
         read = if let Some(trs) = transformation {
@@ -55,6 +71,8 @@ impl CompiledData {
             }
         } else if out1.is_empty() && out2.is_empty() {
             read.collect_fastq1(sel!(), "/dev/null").boxed()
+        } else if out2.is_empty() {
+            read.collect_fastq1(sel!(), out1).boxed()
         } else {
             read.collect_fastq2(sel!(), out1, out2).boxed()
         };
@@ -67,6 +85,8 @@ fn interpret_geometry(
     geometry: Vec<GeometryMeta>,
     read: BoxedReads,
     init_label: String,
+    right: &'static str,
+    left: &'static str,
 ) -> BoxedReads {
     let mut geometry_iter = geometry.into_iter();
 
@@ -76,20 +96,20 @@ fn interpret_geometry(
 
     while let Some(gp) = geometry_iter.next() {
         let (_, size, _, _) = gp.unpack();
-
+        
         read = match size {
-            Size::FixedSeq(_) | Size::FixedLen(_) => gp.interpret(read, &mut label),
+            Size::FixedSeq(_) | Size::FixedLen(_) => gp.interpret(read, &mut label, left, right),
             Size::RangedLen(_) | Size::UnboundedLen => {
                 // by rules of geometry this should either be None or a sequence
                 if let Some(next) = geometry_iter.next() {
-                    next.interpret_dual(gp, read, &mut label)
+                    next.interpret_dual(gp, read, &mut label, right, left)
                 } else {
-                    gp.interpret(read, &mut label)
+                    gp.interpret(read, &mut label, left, right)
                 }
             }
         };
 
-        label.push("_r".to_string())
+        label.push(format!("_{right}"));
     }
 
     read
@@ -118,29 +138,41 @@ fn execute_stack(
 
     for (fn_, _) in stack {
         read = match fn_ {
-            CompiledFunction::Reverse => reverse(read, attr.clone(), label.clone()),
-            CompiledFunction::ReverseComp => reverse_comp(read, attr.clone(), label.clone()),
+            CompiledFunction::Reverse => reverse(read, label.clone(), attr.clone()),
+            CompiledFunction::ReverseComp => reverse_comp(read, label.clone(), attr.clone()),
             CompiledFunction::Truncate(n) => {
                 truncate(read, label.clone(), attr.clone(), RightEnd(n))
             }
             CompiledFunction::TruncateLeft(n) => {
                 truncate(read, label.clone(), attr.clone(), LeftEnd(n))
-            },
-            CompiledFunction::TruncateTo(n) => {
-                truncate(read, label.clone(), attr.clone(), RightEnd(n - length.unwrap()))
-            },
-            CompiledFunction::TruncateToLeft(n) => {
-                truncate(read, label.clone(), attr.clone(), LeftEnd(n - length.unwrap()))
-            },
+            }
+            CompiledFunction::TruncateTo(n) => truncate(
+                read,
+                label.clone(),
+                attr.clone(),
+                RightEnd(n - length.unwrap()),
+            ),
+            CompiledFunction::TruncateToLeft(n) => truncate(
+                read,
+                label.clone(),
+                attr.clone(),
+                LeftEnd(n - length.unwrap()),
+            ),
             CompiledFunction::Remove => remove(read, label.clone(), attr.clone()),
             CompiledFunction::Pad(n) => pad(read, label.clone(), attr.clone(), RightEnd(n)),
             CompiledFunction::PadLeft(n) => pad(read, label.clone(), attr.clone(), LeftEnd(n)),
-            CompiledFunction::PadTo(n) => {
-                pad(read, label.clone(), attr.clone(), RightEnd(n - length.unwrap()))
-            },
-            CompiledFunction::PadToLeft(n) => {
-                pad(read, label.clone(), attr.clone(), LeftEnd(n - length.unwrap()))
-            },
+            CompiledFunction::PadTo(n) => pad(
+                read,
+                label.clone(),
+                attr.clone(),
+                RightEnd(n - length.unwrap()),
+            ),
+            CompiledFunction::PadToLeft(n) => pad(
+                read,
+                label.clone(),
+                attr.clone(),
+                LeftEnd(n - length.unwrap()),
+            ),
             CompiledFunction::Normalize => {
                 normalize(read, label.clone(), attr.clone(), range.clone().unwrap())
             }
@@ -181,7 +213,12 @@ impl GeometryMeta {
         (type_, size, label, stack)
     }
 
-    fn interpret(&self, read: BoxedReads, label: &mut Vec<String>) -> BoxedReads {
+    fn interpret_no_cut(
+        &self,
+        read: BoxedReads,
+        label: &mut Vec<String>,
+        _left: &'static str,
+    ) -> BoxedReads {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -190,9 +227,44 @@ impl GeometryMeta {
         let this_label = if let Some(l) = self_label {
             format!("{seq_name}{l}")
         } else {
-            format!("{seq_name}_l")
+            cur_label
         };
-        let next_label = format!("{cur_label}_r");
+
+        if type_ == Type::Discard {
+            stack.push((CompiledFunction::Remove, 0..1))
+        }
+
+        // this is only called from `interpret_dual` which is for variable to fixedSeq
+        // thus this is only for variable sized segments
+        let read = match size.clone() {
+            Size::RangedLen(((a, b), _)) => {
+                process_ranged_len_no_cut(read, this_label.clone(), a..=b)
+            }
+            Size::UnboundedLen => process_unbounded_no_cut(read, init_label, this_label.clone()),
+            _ => unreachable!(),
+        };
+
+        execute_stack(stack, this_label, String::from(""), read, size)
+    }
+
+    fn interpret(
+        &self,
+        read: BoxedReads,
+        label: &mut Vec<String>,
+        left: &'static str,
+        right: &'static str,
+    ) -> BoxedReads {
+        let (type_, size, self_label, mut stack) = self.unpack();
+
+        let (init_label, cur_label) = labels(label);
+        let seq_name = label.get(0).unwrap();
+
+        let this_label = if let Some(l) = self_label {
+            format!("{seq_name}{l}")
+        } else {
+            format!("{cur_label}_{left}")
+        };
+        let next_label = format!("{cur_label}_{right}");
 
         if type_ == Type::Discard {
             stack.push((CompiledFunction::Remove, 0..1))
@@ -202,9 +274,9 @@ impl GeometryMeta {
         let read = match size.clone() {
             Size::FixedSeq((seq, _)) => {
                 let match_type = if !stack.is_empty() {
-                    match stack.pop().unwrap() {
+                    match stack.last().unwrap() {
                         (CompiledFunction::Hamming(n), _) => {
-                            let dist = Frac(n as f64 / seq.len() as f64);
+                            let dist = Frac(*n as f64 / seq.len() as f64);
                             HammingSearch(dist)
                         }
                         _ => PrefixAln {
@@ -238,7 +310,14 @@ impl GeometryMeta {
         execute_stack(stack, this_label, String::from(""), read, size)
     }
 
-    fn interpret_dual(&self, prev: Self, read: BoxedReads, label: &mut Vec<String>) -> BoxedReads {
+    fn interpret_dual(
+        &self,
+        prev: Self,
+        read: BoxedReads,
+        label: &mut Vec<String>,
+        right: &'static str,
+        left: &'static str,
+    ) -> BoxedReads {
         // unpack label for self
         let (_, size, this_label, mut stack) = self.unpack();
         let (_, _, prev_label, _) = prev.unpack();
@@ -253,15 +332,15 @@ impl GeometryMeta {
             left_label.push(format!("_{l}"));
             format!("{seq_name}_{l}")
         } else {
-            left_label.push("_l".to_string());
-            format!("{cur_label}_l")
+            left_label.push(format!("_{left}"));
+            format!("{cur_label}_{left}")
         };
         let this_label = if let Some(l) = this_label {
             format!("{seq_name}{l}")
         } else {
             format!("{cur_label}_anchor")
         };
-        let next_label = format!("{cur_label}_r");
+        let next_label = format!("{cur_label}_{right}");
 
         let read = match size.clone() {
             Size::FixedSeq((seq, _)) => {
@@ -295,6 +374,7 @@ impl GeometryMeta {
         };
 
         // call interpret for self
-        prev.interpret(read, &mut left_label)
+        // this is just an unbounded or ranged segment. No cut just set or validate
+        prev.interpret_no_cut(read, &mut left_label, left)
     }
 }
