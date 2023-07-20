@@ -28,6 +28,7 @@ pub enum CompiledFunction {
     Normalize,
     Map(String, Vec<Spanned<CompiledFunction>>),
     MapWithMismatch(String, Vec<Spanned<CompiledFunction>>, usize),
+    FilterWithinDist(String, usize),
     Hamming(usize),
 }
 
@@ -59,6 +60,9 @@ pub fn compile_fn(
             path,
             compile_inner_expr(expr.deref().clone(), (parent_expr, expr_span))?,
         ),
+        Function::FilterWithinDist(path, mismatch) => {
+            CompiledFunction::FilterWithinDist(path, mismatch)
+        }
         Function::Hamming(n) => CompiledFunction::Hamming(n),
     };
 

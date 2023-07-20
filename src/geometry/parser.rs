@@ -40,6 +40,7 @@ pub enum Function {
     Normalize,
     Map(String, Box<Spanned<Expr>>),
     MapWithMismatch(String, Box<Spanned<Expr>>, usize),
+    FilterWithinDist(String, usize),
     Hamming(usize),
 }
 
@@ -65,8 +66,9 @@ impl fmt::Display for Function {
             }
             MapWithMismatch(p, b, n) => {
                 let (s, _) = b.deref();
-                write!(f, "map({}, {}, {}", p, s, n)
+                write!(f, "map_with_mismatch({}, {}, {}", p, s, n)
             }
+            FilterWithinDist(p, n) => write!(f, "filter_within_dist({}, {}", p, n),
             Hamming(n) => write!(f, "hamming({}", n),
         }
     }
@@ -463,6 +465,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .map_with_span(|_, span| span)
                 .then(
                     geom_piece
+                        .clone()
                         .then_ignore(just(Token::Ctrl(',')))
                         .then(file.or(argument))
                         .then_ignore(just(Token::Ctrl(',')))
@@ -485,7 +488,25 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                         Box::new((geom_p, span)),
                     )
                 })
-                .labelled("Map function"),
+                .labelled("Map with mismatch function"),
+            just(Token::FilterWithinDist)
+                .map_with_span(|_, span| span)
+                .then(
+                    geom_piece
+                        .then_ignore(just(Token::Ctrl(',')))
+                        .then(file.or(argument))
+                        .then_ignore(just(Token::Ctrl(',')))
+                        .then(num)
+                        .map_with_span(|tok, span| (tok, span))
+                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
+                )
+                .map(|(fn_span, (((geom_p, path), num), span))| {
+                    Expr::Function(
+                        (Function::FilterWithinDist(path, num), fn_span),
+                        Box::new((geom_p, span)),
+                    )
+                })
+                .labelled("Filter within dist function"),
         ))
     })
     .map_with_span(|tok, span| (tok, span));
@@ -518,23 +539,22 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .at_most(2)
         .collect::<Vec<_>>();
 
+    let transform_read = num
+        .map_with_span(|tok, span| (tok, span))
+        .then(
+            transformed_pieces
+                .clone()
+                .repeated()
+                .at_least(1)
+                .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
+        )
+        .map(|(n, read)| Expr::Read(n, read));
+
     let transformation = choice((
         end().map_with_span(|_, span| (None, span)),
         just(Token::TransformTo)
-            .ignore_then(num)
-            .map_with_span(|tok, span| (tok, span))
-            .then(
-                transformed_pieces
-                    .clone()
-                    .repeated()
-                    .at_least(1)
-                    .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
-            )
-            .map(|(n, read)| Expr::Read(n, read))
-            .repeated()
-            .at_least(1)
-            .at_most(2)
-            .map_with_span(|val, span| (Some(Expr::Transform(val)), span)),
+            .then(transform_read.repeated().at_least(1).at_most(2))
+            .map_with_span(|(_, val), span| (Some(Expr::Transform(val)), span)),
     ));
 
     definitions

@@ -247,6 +247,17 @@ pub fn validate_composition(
                 ),
             }),
         },
+        CompiledFunction::FilterWithinDist(..) => match return_type {
+            ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
+            ReturnType::Ranged => Ok((ReturnType::Ranged, fn_span)),
+            _ => Err(Error {
+                span: return_type_span,
+                msg: format!(
+                    "Function Filter can recieve a Ranged or Fixed piece as an argument, found: {}",
+                    return_type
+                ),
+            }),
+        },
         CompiledFunction::Hamming(_) => match return_type {
             ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {

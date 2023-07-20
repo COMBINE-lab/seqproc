@@ -218,6 +218,11 @@ fn execute_stack(
                     additional_args.clone(),
                 )
             }
+            CompiledFunction::FilterWithinDist(file, mismatch) => {
+                let file = parse_additional_args(file, additional_args.clone());
+
+                filter(read, label.clone(), attr.clone(), file, mismatch)
+            }
             CompiledFunction::Hamming(_) => unreachable!(),
         };
     }
@@ -306,7 +311,7 @@ impl GeometryMeta {
                 let match_type = if !stack.is_empty() {
                     match stack.last().unwrap() {
                         (CompiledFunction::Hamming(n), _) => {
-                            let dist = Frac(*n as f64 / seq.len() as f64);
+                            let dist = Frac(1.0 - (*n as f64 / seq.len() as f64));
                             HammingSearch(dist)
                         }
                         _ => PrefixAln {
@@ -387,7 +392,7 @@ impl GeometryMeta {
                 let match_type = if !stack.is_empty() {
                     match stack.pop().unwrap() {
                         (CompiledFunction::Hamming(n), _) => {
-                            let dist = Frac(n as f64 / seq.len() as f64);
+                            let dist = Frac(1.0 - (n as f64 / seq.len() as f64));
                             HammingSearch(dist)
                         }
                         _ => ExactSearch,
