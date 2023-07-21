@@ -152,7 +152,7 @@ fn execute_stack(
         _ => None,
     };
 
-    for (fn_, _) in stack {
+    for (fn_, _) in stack.into_iter().rev() {
         read = match fn_ {
             CompiledFunction::Reverse => reverse(read, label.clone(), attr.clone()),
             CompiledFunction::ReverseComp => reverse_comp(read, label.clone(), attr.clone()),
@@ -372,8 +372,8 @@ impl GeometryMeta {
         let mut left_label = label.clone();
 
         let prev_label = if let Some(l) = prev_label {
-            left_label.push(format!("_{l}"));
-            format!("{seq_name}_{l}")
+            left_label.push(format!("{l}"));
+            format!("{seq_name}{l}")
         } else {
             left_label.push(format!("_{left}"));
             format!("{cur_label}_{left}")

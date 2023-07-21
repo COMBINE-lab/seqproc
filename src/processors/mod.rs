@@ -1,8 +1,4 @@
-use std::{
-    fs::File,
-    io::{BufRead, BufReader},
-    ops::{Bound, RangeBounds},
-};
+use std::ops::{Bound, RangeBounds};
 
 use antisequence::{
     expr::{Label, SelectorExpr, TransformExpr},
@@ -93,27 +89,11 @@ pub fn filter(
     mismatch: usize,
 ) -> BoxedReads {
     let sel_expr = get_selector(label.clone(), attr);
-    let sel_retain_expr = get_selector(label.clone(), "found".to_string());
+    let sel_retain_expr = get_selector(label.clone(), "_f".to_string());
 
-    let tr_expr = TransformExpr::new(format!("{0} -> {0}_f", label).as_bytes()).unwrap();
+    let tr_expr = TransformExpr::new(format!("{0} -> {0}._f", label).as_bytes()).unwrap();
 
-    let file = File::open(filename).expect("no such file");
-    let buf: Vec<String> = BufReader::new(file)
-        .lines()
-        .map(|l| l.expect("Could not parse line"))
-        .collect();
-
-    let patterns = format!(
-        "
-    name: found
-    patterns:
-        - pattern: {}",
-        buf.join("\n        - pattern: ")
-    );
-
-    let dist = Count(buf.first().unwrap().len() - mismatch);
-
-    read.match_any(sel_expr, tr_expr, patterns, Hamming(dist))
+    read.filter(sel_expr, tr_expr, filename, mismatch)
         .retain(sel_retain_expr)
         .boxed()
 }
@@ -173,7 +153,7 @@ pub fn process_sequence(
 
     let sel_expr = SelectorExpr::new(starting_label.as_bytes()).unwrap();
     let r_sel_expr = SelectorExpr::new(this_label.as_bytes()).unwrap();
-
+    println!("{:?}", match_type);
     pipeline
         .match_one(sel_expr, tr_expr, sequence, match_type)
         .retain(r_sel_expr)
