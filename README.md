@@ -18,10 +18,10 @@ ANTISEQUENCE functions to add:
 - [x] normalize
 - [x] pad
 	- [x] left and right
-	- [ ] specify character
+	- [x] specify character
 - [x] trucate
 	- [x] left and right
-	- [ ] specify character
+	- [x] specify character
 - [x] reverse
 - [x] reverse compliment
 - [x] map
