@@ -157,38 +157,36 @@ fn execute_stack(
             CompiledFunction::Reverse => reverse(read, label.clone(), attr.clone()),
             CompiledFunction::ReverseComp => reverse_comp(read, label.clone(), attr.clone()),
             CompiledFunction::Truncate(n) => {
-                truncate(read, label.clone(), attr.clone(), RightEnd(n))
+                truncate_by(read, label.clone(), attr.clone(), RightEnd(n))
             }
             CompiledFunction::TruncateLeft(n) => {
-                truncate(read, label.clone(), attr.clone(), LeftEnd(n))
+                truncate_by(read, label.clone(), attr.clone(), LeftEnd(n))
             }
-            CompiledFunction::TruncateTo(n) => truncate(
+            CompiledFunction::TruncateTo(n) => truncate_to(
                 read,
                 label.clone(),
                 attr.clone(),
                 RightEnd(n - length.unwrap()),
             ),
-            CompiledFunction::TruncateToLeft(n) => truncate(
+            CompiledFunction::TruncateToLeft(n) => truncate_to(
                 read,
                 label.clone(),
                 attr.clone(),
                 LeftEnd(n - length.unwrap()),
             ),
             CompiledFunction::Remove => remove(read, label.clone(), attr.clone()),
-            CompiledFunction::Pad(n) => pad(read, label.clone(), attr.clone(), RightEnd(n)),
-            CompiledFunction::PadLeft(n) => pad(read, label.clone(), attr.clone(), LeftEnd(n)),
-            CompiledFunction::PadTo(n) => pad(
-                read,
-                label.clone(),
-                attr.clone(),
-                RightEnd(n - length.unwrap()),
-            ),
-            CompiledFunction::PadToLeft(n) => pad(
-                read,
-                label.clone(),
-                attr.clone(),
-                LeftEnd(n - length.unwrap()),
-            ),
+            CompiledFunction::Pad(n, nuc) => {
+                pad_by(read, label.clone(), attr.clone(), RightEnd(n), nuc)
+            }
+            CompiledFunction::PadLeft(n, nuc) => {
+                pad_by(read, label.clone(), attr.clone(), LeftEnd(n), nuc)
+            }
+            CompiledFunction::PadTo(n, nuc) => {
+                pad_to(read, label.clone(), attr.clone(), RightEnd(n), nuc)
+            }
+            CompiledFunction::PadToLeft(n, nuc) => {
+                pad_to(read, label.clone(), attr.clone(), LeftEnd(n), nuc)
+            }
             CompiledFunction::Normalize => {
                 normalize(read, label.clone(), attr.clone(), range.clone().unwrap())
             }
@@ -372,7 +370,7 @@ impl GeometryMeta {
         let mut left_label = label.clone();
 
         let prev_label = if let Some(l) = prev_label {
-            left_label.push(format!("{l}"));
+            left_label.push(l.to_string());
             format!("{seq_name}{l}")
         } else {
             left_label.push(format!("_{left}"));

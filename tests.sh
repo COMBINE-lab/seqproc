@@ -5,7 +5,6 @@ OUT_DIR="./tests/test_data/out"
 FGDL_DIR="./tests/fgdl"
 EXPECTED_DIR="./tests/test_data/expected_out"
 DEV_NULL="/dev/null"
-TIME="/usr/bin/time -al"
 
 # ---------- #
 
@@ -16,7 +15,7 @@ PAD_OUT="$OUT_DIR/pad/pad.fastq"
 PAD_FGDL="$FGDL_DIR/pad.fgdl"
 PAD_EXPECTED="$EXPECTED_DIR/pad.fastq"
 
-$TIME cargo run -- -g $PAD_FGDL -1 $PAD_L -2 $PAD_R -o $PAD_OUT -t 6 -a "more" "another" 
+cargo run -- -g $PAD_FGDL -1 $PAD_L -2 $PAD_R -o $PAD_OUT -t 6 -a "more" "another" 
 diff $PAD_OUT $PAD_EXPECTED
 
 echo "Test Match"
@@ -26,7 +25,7 @@ MATCH_OUT="$OUT_DIR/match/match.fastq"
 MATCH_FGDL="$FGDL_DIR/match.fgdl"
 MATCH_EXPECTED="$EXPECTED_DIR/match.fastq"
 
-$TIME cargo run -- -g $MATCH_FGDL -1 $MATCH_L -2 $MATCH_R -o $MATCH_OUT -t 6
+cargo run -- -g $MATCH_FGDL -1 $MATCH_L -2 $MATCH_R -o $MATCH_OUT -t 6
 diff $MATCH_OUT $MATCH_EXPECTED
 
 echo "Test Reverse Compliment"
@@ -36,7 +35,7 @@ REVCOMP_OUT="$OUT_DIR/revcomp/revcomp.fastq"
 REVCOMP_FGDL="$FGDL_DIR/revcomp.fgdl"
 REVCOMP_EXPECTED="$EXPECTED_DIR/revcomp.fastq"
 
-$TIME  cargo run -- -g $REVCOMP_FGDL -1 $REVCOMP_L -2 $REVCOMP_R -o $REVCOMP_OUT -t 6
+cargo run -- -g $REVCOMP_FGDL -1 $REVCOMP_L -2 $REVCOMP_R -o $REVCOMP_OUT -t 6
 diff $REVCOMP_OUT $REVCOMP_EXPECTED
 
 echo "Test Map"
@@ -47,7 +46,7 @@ MAP_FGDL="$FGDL_DIR/map.fgdl"
 MAP_EXPECTED="$EXPECTED_DIR/map.fastq"
 MAP_FILE="$IN_DIR/map/map.tsv"
 
-$TIME cargo run -- -g $MAP_FGDL -1 $MAP_L -2 $MAP_R -o $MAP_OUT -t 6 -a $MAP_FILE
+cargo run -- -g $MAP_FGDL -1 $MAP_L -2 $MAP_R -o $MAP_OUT -t 6 -a $MAP_FILE
 diff $MAP_OUT $MAP_EXPECTED
 
 echo "Test Filter"
@@ -58,5 +57,5 @@ FILTER_FGDL="$FGDL_DIR/filter.fgdl"
 FILTER_EXPECTED="$EXPECTED_DIR/filter.fastq"
 FILTER_FILE="$IN_DIR/filter/filter.txt"
 
-$TIME cargo run -- -g $FILTER_FGDL -1 $FILTER_L -2 $FILTER_R -o $FILTER_OUT -t 6 -a $FILTER_FILE
+cargo run -- -g $FILTER_FGDL -1 $FILTER_L -2 $FILTER_R -o $FILTER_OUT -t 6 -a $FILTER_FILE
 diff $FILTER_OUT $FILTER_EXPECTED

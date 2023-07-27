@@ -41,20 +41,39 @@ pub fn remove(read: BoxedReads, label: String, attr: String) -> BoxedReads {
     read.trim(sel_expr, vec![label]).boxed()
 }
 
-pub fn pad(read: BoxedReads, label: String, attr: String, by: EndIdx) -> BoxedReads {
+pub fn pad_by(read: BoxedReads, label: String, attr: String, by: EndIdx, nuc: char) -> BoxedReads {
     let sel_expr = get_selector(label.clone(), attr);
-    let label = Label::new(label.as_bytes()).unwrap();
+    let a_label = Label::new(label.as_bytes()).unwrap();
 
-    // this is a pad by function
-    read.pad(sel_expr, vec![label], by, b'A').boxed()
+    match by {
+        LeftEnd(n) => read
+            .set(sel_expr, a_label, format!("{{'{nuc}';{n}}}{{{label}}}"))
+            .boxed(),
+        RightEnd(n) => read
+            .set(sel_expr, a_label, format!("{{{label}}}{{'{nuc}';{n}}}"))
+            .boxed(),
+    }
 }
 
-pub fn truncate(read: BoxedReads, label: String, attr: String, by: EndIdx) -> BoxedReads {
+pub fn pad_to(read: BoxedReads, label: String, attr: String, to: EndIdx, nuc: char) -> BoxedReads {
     let sel_expr = get_selector(label.clone(), attr);
     let label = Label::new(label.as_bytes()).unwrap();
 
-    // this is a truncate by function
-    read.trunc(sel_expr, vec![label], by).boxed()
+    read.pad(sel_expr, vec![label], to, nuc as u8).boxed()
+}
+
+pub fn truncate_by(read: BoxedReads, label: String, attr: String, by: EndIdx) -> BoxedReads {
+    let sel_expr = get_selector(label.clone(), attr);
+    let label = Label::new(label.as_bytes()).unwrap();
+
+    read.trunc_by(sel_expr, vec![label], by).boxed()
+}
+
+pub fn truncate_to(read: BoxedReads, label: String, attr: String, to: EndIdx) -> BoxedReads {
+    let sel_expr = get_selector(label.clone(), attr);
+    let label = Label::new(label.as_bytes()).unwrap();
+
+    read.trunc_to(sel_expr, vec![label], to).boxed()
 }
 
 pub fn reverse(read: BoxedReads, label: String, attr: String) -> BoxedReads {
@@ -153,7 +172,7 @@ pub fn process_sequence(
 
     let sel_expr = SelectorExpr::new(starting_label.as_bytes()).unwrap();
     let r_sel_expr = SelectorExpr::new(this_label.as_bytes()).unwrap();
-    println!("{:?}", match_type);
+
     pipeline
         .match_one(sel_expr, tr_expr, sequence, match_type)
         .retain(r_sel_expr)

@@ -182,12 +182,10 @@ pub fn validate_composition(
             match return_type {
                 ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
                 ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
+                ReturnType::Unbounded | ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
                 _ => Err(Error {
                     span: return_type_span,
-                    msg: format!(
-                        "Function TruncateTo and TruncateToLeft must take fixed element an argument, found: {}",
-                        return_type
-                    ),
+                    msg: "Function TruncateTo and TruncateToLeft cannot take void element as an argument".to_string(),
                 }),
             }
         }
@@ -198,14 +196,14 @@ pub fn validate_composition(
             }),
             _ => Ok((ReturnType::Void, fn_span)),
         },
-        CompiledFunction::Pad(_) | CompiledFunction::PadLeft(_) => match return_type {
+        CompiledFunction::Pad(..) | CompiledFunction::PadLeft(..) => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
                 msg: "Function Pad and PadLeft cannot take void element as an argument".to_string(),
             }),
             _ => Ok((return_type, fn_span)),
         },
-        CompiledFunction::PadTo(to) | CompiledFunction::PadToLeft(to) => {
+        CompiledFunction::PadTo(to, ..) | CompiledFunction::PadToLeft(to, ..) => {
             if to < max {
                 return Err(Error {
                     span: return_type_span,
@@ -216,12 +214,11 @@ pub fn validate_composition(
             match return_type {
                 ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
                 ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
+                ReturnType::Unbounded | ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
                 _ => Err(Error {
                     span: return_type_span,
-                    msg: format!(
-                        "Function PadTo and PadToLeft must take fixed element an argument, found: {}",
-                        return_type
-                    ),
+                    msg: "Function PadTo and PadToLeft cannot take a void element as an argument"
+                        .to_string(),
                 }),
             }
         }
