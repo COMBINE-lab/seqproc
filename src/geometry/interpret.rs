@@ -146,12 +146,6 @@ fn execute_stack(
         None
     };
 
-    let length = match size.clone() {
-        Size::FixedLen((n, _)) => Some(n),
-        Size::FixedSeq((seq, _)) => Some(seq.len()),
-        _ => None,
-    };
-
     for (fn_, _) in stack.into_iter().rev() {
         read = match fn_ {
             CompiledFunction::Reverse => reverse(read, label.clone(), attr.clone()),
@@ -166,13 +160,13 @@ fn execute_stack(
                 read,
                 label.clone(),
                 attr.clone(),
-                RightEnd(n - length.unwrap()),
+                RightEnd(n),
             ),
             CompiledFunction::TruncateToLeft(n) => truncate_to(
                 read,
                 label.clone(),
                 attr.clone(),
-                LeftEnd(n - length.unwrap()),
+                LeftEnd(n),
             ),
             CompiledFunction::Remove => remove(read, label.clone(), attr.clone()),
             CompiledFunction::Pad(n, nuc) => {
