@@ -17,3 +17,5 @@ chumsky="0.9.2"
 ariadne = "0.1.5"
 clap = { version = "4.2.1", features = ["derive"] }
 antisequence = { git = "https://github.com/noahcape/ANTISEQUENCE/", branch='my_dev' }
+anyhow = "1.0"
+tempfile = "3.5.0"

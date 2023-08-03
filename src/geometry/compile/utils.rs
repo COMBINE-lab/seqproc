@@ -5,7 +5,9 @@ use crate::{
     parser::{Size, Spanned, Type},
 };
 
-use super::functions::CompiledFunction;
+use antisequence::normalize_reads::log4_roundup;
+
+use super::functions::{ChangeAs, CompiledFunction};
 
 pub type Geometry = Vec<Vec<(Interval, usize)>>;
 
@@ -71,11 +73,105 @@ pub struct GeometryMeta {
     pub stack: Vec<Spanned<CompiledFunction>>,
 }
 
+impl GeometryMeta {
+    pub fn is_complex(&self) -> bool {
+        self.expr.0.is_complex()
+    }
+
+    pub fn get_label(&self) -> Option<String> {
+        self.expr.0.label.clone()
+    }
+
+    // show normalize when seen, then at the end if something is still variable then normalize
+    pub fn get_simplified_description_string(&self) -> String {
+        if self.expr.0.is_seq() {
+            return String::from("");
+        }
+
+        let mut size: Option<Size> = Some(self.expr.0.clone().size);
+
+        for (n, change_as) in self
+            .stack
+            .iter()
+            .map(|(f, _)| f.clone().get_change_in_len())
+        {
+            size = match change_as {
+                ChangeAs::TO => Some(size.unwrap().update_size_to(n)),
+                ChangeAs::ADD => Some(size.unwrap().update_size_add(n)),
+                ChangeAs::SUB => Some(size.unwrap().update_size_to(n)),
+                ChangeAs::REMOVE => None,
+            }
+        }
+
+        match size {
+            Some(s) => self
+                .expr
+                .0
+                .get_simplified_description_string(s.get_normalized()),
+            None => String::from(""),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GeometryPiece {
     pub type_: Type,
     pub size: Size,
     pub label: Option<String>,
+}
+
+impl Size {
+    pub fn update_size_to(&self, n: usize) -> Self {
+        Size::FixedLen((n, 0..1))
+    }
+
+    pub fn update_size_add(self, n: usize) -> Self {
+        match self {
+            Size::FixedLen((l, s)) => Size::FixedLen((n + l, s)),
+            Size::RangedLen(((a, b), s)) => Size::RangedLen(((a + n, b + n), s)),
+            _ => self,
+        }
+    }
+
+    pub fn update_size_sub(self, n: usize) -> Self {
+        match self {
+            Size::FixedLen((l, s)) => Size::FixedLen((l - n, s)),
+            _ => self,
+        }
+    }
+
+    pub fn get_normalized(self) -> Self {
+        match self {
+            Size::RangedLen(((a, b), s)) => Size::FixedLen((b + log4_roundup(b - a + 1), s)),
+            _ => self,
+        }
+    }
+}
+
+impl GeometryPiece {
+    pub fn is_complex(&self) -> bool {
+        matches!(self.size, Size::RangedLen(..) | Size::FixedSeq(..))
+    }
+
+    pub fn is_seq(&self) -> bool {
+        matches!(self.size, Size::FixedSeq(..))
+    }
+
+    pub fn get_simplified_description_string(&self, size: Size) -> String {
+        let type_ = match self.type_ {
+            Type::Barcode => "b",
+            Type::Umi => "u",
+            Type::Discard => "x",
+            Type::ReadSeq => "r",
+            _ => unreachable!(),
+        };
+
+        match size {
+            Size::FixedLen((n, ..)) => format!("{type_}[{n}]"),
+            Size::UnboundedLen => format!("{type_}:"),
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl fmt::Display for GeometryMeta {
@@ -196,6 +292,7 @@ pub fn validate_composition(
             }),
             _ => Ok((ReturnType::Void, fn_span)),
         },
+        // TODO: should this only take fixed length segments as to lead to a known ending length
         CompiledFunction::Pad(..) | CompiledFunction::PadLeft(..) => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,

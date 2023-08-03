@@ -156,18 +156,12 @@ fn execute_stack(
             CompiledFunction::TruncateLeft(n) => {
                 truncate_by(read, label.clone(), attr.clone(), LeftEnd(n))
             }
-            CompiledFunction::TruncateTo(n) => truncate_to(
-                read,
-                label.clone(),
-                attr.clone(),
-                RightEnd(n),
-            ),
-            CompiledFunction::TruncateToLeft(n) => truncate_to(
-                read,
-                label.clone(),
-                attr.clone(),
-                LeftEnd(n),
-            ),
+            CompiledFunction::TruncateTo(n) => {
+                truncate_to(read, label.clone(), attr.clone(), RightEnd(n))
+            }
+            CompiledFunction::TruncateToLeft(n) => {
+                truncate_to(read, label.clone(), attr.clone(), LeftEnd(n))
+            }
             CompiledFunction::Remove => remove(read, label.clone(), attr.clone()),
             CompiledFunction::Pad(n, nuc) => {
                 pad_by(read, label.clone(), attr.clone(), RightEnd(n), nuc)
