@@ -4,8 +4,6 @@ pub mod reads;
 mod transformation;
 pub mod utils;
 
-use definitions::compile_definitions;
-use reads::compile_reads;
 use transformation::compile_transformation;
 use utils::Error;
 
@@ -14,7 +12,8 @@ use std::{collections::HashMap, ops::Deref};
 use crate::parser::Expr;
 
 use self::{
-    reads::standardize_geometry,
+    definitions::compile_definitions_with_args,
+    reads::{compile_reads_with_args, standardize_geometry},
     transformation::label_transformation,
     utils::{GeometryMeta, Interval, Transformation},
 };
@@ -86,12 +85,20 @@ impl CompiledData {
     }
 }
 
-// this should be more of a compile and also should return a kind of
 pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
+    _compile(expr, vec![])
+}
+
+pub fn compile_with_args(expr: Expr, additional_args: Vec<String>) -> Result<CompiledData, Error> {
+    _compile(expr, additional_args)
+}
+
+// this should be more of a compile and also should return a kind of
+fn _compile(expr: Expr, additional_args: Vec<String>) -> Result<CompiledData, Error> {
     if let Expr::Description(d, r, t) = expr {
         // validate defintion block
         let mut map = if let Some(expr) = d.deref() {
-            let def_res = compile_definitions(expr.clone());
+            let def_res = compile_definitions_with_args(expr.clone(), additional_args.clone());
 
             if let Err(e) = def_res {
                 return Err(e);
@@ -102,7 +109,7 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
             HashMap::new()
         };
 
-        let validate_read_res = compile_reads(r, &mut map);
+        let validate_read_res = compile_reads_with_args(r, &mut map, additional_args.clone());
 
         let (mut map, geometry) = if let Ok(cd) = validate_read_res {
             cd
@@ -112,7 +119,11 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
 
         // this needs a bit more thought
         let compiled_transformation = if let (Some(transform), span) = t.deref() {
-            let res = compile_transformation((transform.clone(), span.clone()), &mut map);
+            let res = compile_transformation(
+                (transform.clone(), span.clone()),
+                &mut map,
+                additional_args,
+            );
 
             if let Err(e) = res {
                 return Err(e);

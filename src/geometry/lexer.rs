@@ -8,6 +8,7 @@ pub enum Token {
     Num(usize),
     Ctrl(char),
     Label(String),
+    InlineLabel(String),
     File(String),
     Special(char),
     Barcode,
@@ -48,6 +49,7 @@ impl fmt::Display for Token {
             Num(n) => write!(f, "{}", n),
             Ctrl(c) => write!(f, "{}", c),
             Label(s) => write!(f, "{}", s),
+            InlineLabel(s) => write!(f, "{}", s),
             A => write!(f, "A"),
             T => write!(f, "T"),
             G => write!(f, "G"),
@@ -88,10 +90,10 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
 
     let ctrl = one_of("()[]{},").map(Token::Ctrl);
 
-    let label = just('<')
+    let inline_label = just('<')
         .ignore_then(text::ident())
         .then_ignore(just('>'))
-        .map(Token::Label);
+        .map(Token::InlineLabel);
 
     let special = one_of(":-=").map(Token::Special);
 
@@ -144,7 +146,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     let token = nucs
         .or(argument)
         .or(ident)
-        .or(label)
+        .or(inline_label)
         .or(transformto)
         .or(int)
         .or(ctrl)

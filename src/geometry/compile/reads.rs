@@ -90,10 +90,26 @@ pub fn standardize_geometry(
     std_geom
 }
 
-// this should take both reads and parse them. Allowing for combined label_map
+pub fn compile_reads_with_args(
+    exprs: Spanned<Vec<Expr>>,
+    map: &mut HashMap<String, GeometryMeta>,
+    additional_args: Vec<String>,
+) -> Result<(HashMap<String, GeometryMeta>, Geometry), Error> {
+    _compile_reads(exprs, map, additional_args)
+}
+
 pub fn compile_reads(
     exprs: Spanned<Vec<Expr>>,
     map: &mut HashMap<String, GeometryMeta>,
+) -> Result<(HashMap<String, GeometryMeta>, Geometry), Error> {
+    _compile_reads(exprs, map, vec![])
+}
+
+// this should take both reads and parse them. Allowing for combined label_map
+fn _compile_reads(
+    exprs: Spanned<Vec<Expr>>,
+    map: &mut HashMap<String, GeometryMeta>,
+    additional_args: Vec<String>,
 ) -> Result<(HashMap<String, GeometryMeta>, Geometry), Error> {
     let mut err: Option<Error> = None;
     let mut geometry: Geometry = Vec::new();
@@ -146,7 +162,11 @@ pub fn compile_reads(
                         expr = gp.deref().clone();
 
                         for fn_ in stack {
-                            compiled_stack.push(compile_fn(fn_, expr.clone())?)
+                            compiled_stack.push(compile_fn(
+                                fn_,
+                                expr.clone(),
+                                additional_args.clone(),
+                            )?)
                         }
 
                         break 'inner;
@@ -177,6 +197,7 @@ pub fn compile_reads(
                                         ),
                                         inner_expr.expr.1.clone(),
                                     ),
+                                    additional_args.clone(),
                                 )?)
                             }
 
@@ -198,7 +219,11 @@ pub fn compile_reads(
                     }
                     Expr::GeomPiece(_, _) => {
                         for fn_ in stack {
-                            compiled_stack.push(compile_fn(fn_, expr.clone())?)
+                            compiled_stack.push(compile_fn(
+                                fn_,
+                                expr.clone(),
+                                additional_args.clone(),
+                            )?)
                         }
 
                         break 'inner;

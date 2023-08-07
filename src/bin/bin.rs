@@ -2,7 +2,7 @@ use clap::{arg, Parser as cParser};
 
 use seqproc::{
     error::handle_errors,
-    execute::{compile_geom, interpret},
+    execute::{compile_geom_with_args, interpret},
 };
 
 /// General puprose sequence preprocessor
@@ -41,7 +41,7 @@ fn main() {
 
     let geom = std::fs::read_to_string(args.geom.clone()).unwrap();
 
-    let compiled_fgdl = compile_geom(geom.clone());
+    let compiled_fgdl = compile_geom_with_args(geom.clone(), args.additional);
 
     match compiled_fgdl {
         Ok(geom) => interpret(
@@ -50,7 +50,6 @@ fn main() {
             args.out1,
             args.out2,
             args.threads,
-            args.additional,
             geom,
         ),
         Err(e) => handle_errors(e, geom),

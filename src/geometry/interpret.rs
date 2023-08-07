@@ -27,13 +27,7 @@ fn labels(read_label: &mut Vec<String>) -> (String, String) {
 pub type BoxedReads = Box<dyn antisequence::Reads>;
 
 impl CompiledData {
-    pub fn interpret(
-        &self,
-        read: BoxedReads,
-        out1: String,
-        out2: String,
-        additional_args: Vec<String>,
-    ) -> BoxedReads {
+    pub fn interpret(&self, read: BoxedReads, out1: String, out2: String) -> BoxedReads {
         let Self {
             geometry,
             transformation,
@@ -48,7 +42,6 @@ impl CompiledData {
                 format!("seq{}.", i + 1),
                 "r",
                 "l",
-                additional_args.clone(),
             );
         }
 
@@ -84,7 +77,6 @@ fn interpret_geometry(
     init_label: String,
     right: &'static str,
     left: &'static str,
-    additional_args: Vec<String>,
 ) -> BoxedReads {
     let mut geometry_iter = geometry.into_iter();
 
@@ -96,15 +88,13 @@ fn interpret_geometry(
         let (_, size, _, _) = gp.unpack();
 
         read = match size {
-            Size::FixedSeq(_) | Size::FixedLen(_) => {
-                gp.interpret(read, &mut label, left, right, additional_args.clone())
-            }
+            Size::FixedSeq(_) | Size::FixedLen(_) => gp.interpret(read, &mut label, left, right),
             Size::RangedLen(_) | Size::UnboundedLen => {
                 // by rules of geometry this should either be None or a sequence
                 if let Some(next) = geometry_iter.next() {
-                    next.interpret_dual(gp, read, &mut label, right, left, additional_args.clone())
+                    next.interpret_dual(gp, read, &mut label, right, left)
                 } else {
-                    gp.interpret(read, &mut label, left, right, additional_args.clone())
+                    gp.interpret(read, &mut label, left, right)
                 }
             }
         };
@@ -115,28 +105,12 @@ fn interpret_geometry(
     read
 }
 
-fn parse_additional_args(arg: String, args: Vec<String>) -> String {
-    match arg.parse::<usize>() {
-        Ok(n) => args
-            .get(n)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Expected {n} additional arguments with `--additional` tag. Found only {}.",
-                    args.len()
-                )
-            })
-            .clone(),
-        _ => arg,
-    }
-}
-
 fn execute_stack(
     stack: Vec<Spanned<CompiledFunction>>,
     label: String,
     attr: String,
     read: BoxedReads,
     size: Size,
-    additional_args: Vec<String>,
 ) -> BoxedReads {
     let mut read = read;
 
@@ -179,8 +153,6 @@ fn execute_stack(
                 normalize(read, label.clone(), attr.clone(), range.clone().unwrap())
             }
             CompiledFunction::Map(file, fns) => {
-                let file = parse_additional_args(file, additional_args.clone());
-
                 let mapped = map(read, label.clone(), attr.clone(), file, 0);
                 execute_stack(
                     fns,
@@ -188,12 +160,9 @@ fn execute_stack(
                     String::from("not_mapped"),
                     mapped,
                     size.clone(),
-                    additional_args.clone(),
                 )
             }
             CompiledFunction::MapWithMismatch(file, fns, mismatch) => {
-                let file = parse_additional_args(file, additional_args.clone());
-
                 let mapped = map(read, label.clone(), attr.clone(), file, mismatch);
                 execute_stack(
                     fns,
@@ -201,12 +170,9 @@ fn execute_stack(
                     String::from("mapped"),
                     mapped,
                     size.clone(),
-                    additional_args.clone(),
                 )
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
-                let file = parse_additional_args(file, additional_args.clone());
-
                 filter(read, label.clone(), attr.clone(), file, mismatch)
             }
             CompiledFunction::Hamming(_) => unreachable!(),
@@ -226,12 +192,7 @@ impl GeometryMeta {
         (type_, size, label, stack)
     }
 
-    fn interpret_no_cut(
-        &self,
-        read: BoxedReads,
-        label: &mut Vec<String>,
-        additional_args: Vec<String>,
-    ) -> BoxedReads {
+    fn interpret_no_cut(&self, read: BoxedReads, label: &mut Vec<String>) -> BoxedReads {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -257,14 +218,7 @@ impl GeometryMeta {
             _ => unreachable!(),
         };
 
-        execute_stack(
-            stack,
-            this_label,
-            String::from(""),
-            read,
-            size,
-            additional_args,
-        )
+        execute_stack(stack, this_label, String::from(""), read, size)
     }
 
     fn interpret(
@@ -273,7 +227,6 @@ impl GeometryMeta {
         label: &mut Vec<String>,
         left: &'static str,
         right: &'static str,
-        additional_args: Vec<String>,
     ) -> BoxedReads {
         let (type_, size, self_label, mut stack) = self.unpack();
 
@@ -328,14 +281,7 @@ impl GeometryMeta {
             Size::UnboundedLen => process_unbounded(read, init_label, this_label.clone()),
         };
 
-        execute_stack(
-            stack,
-            this_label,
-            String::from(""),
-            read,
-            size,
-            additional_args,
-        )
+        execute_stack(stack, this_label, String::from(""), read, size)
     }
 
     fn interpret_dual(
@@ -345,7 +291,6 @@ impl GeometryMeta {
         label: &mut Vec<String>,
         right: &'static str,
         left: &'static str,
-        additional_args: Vec<String>,
     ) -> BoxedReads {
         // unpack label for self
         let (_, size, this_label, mut stack) = self.unpack();
@@ -397,20 +342,13 @@ impl GeometryMeta {
                     match_type,
                 );
 
-                execute_stack(
-                    stack,
-                    this_label,
-                    String::from(""),
-                    read,
-                    size,
-                    additional_args.clone(),
-                )
+                execute_stack(stack, this_label, String::from(""), read, size)
             }
             _ => unreachable!(),
         };
 
         // call interpret for self
         // this is just an unbounded or ranged segment. No cut just set or validate
-        prev.interpret_no_cut(read, &mut left_label, additional_args)
+        prev.interpret_no_cut(read, &mut left_label)
     }
 }

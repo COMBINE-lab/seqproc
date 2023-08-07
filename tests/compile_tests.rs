@@ -55,29 +55,6 @@ fn fail_norm() {
 }
 
 #[test]
-fn fail_composition() {
-    let src = "1{trunc_to(rev(r:), 1)}2{r:}";
-
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
-
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
-    };
-
-    let res = compile_reads(res.clone(), &mut HashMap::new());
-
-    assert_eq!(false, res.is_ok());
-}
-
-#[test]
 fn fail_remove() {
     let src = "1{rev(remove(r:))}2{r:}";
 
@@ -191,7 +168,7 @@ brc = b[1-4]
 #[test]
 fn label_replacement() {
     let src = "test = r: 
-    1{pad_to(<test>, 5)}2{r:}";
+    1{pad_to(<test>, 5, 'A')}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -221,7 +198,7 @@ fn label_replacement() {
 #[test]
 fn no_variable() {
     let src = "testing = r: 
-    1{pad(<test>, 5)}2{r:}";
+    1{pad(<test>, 5, 'A')}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -250,7 +227,7 @@ fn no_variable() {
 
 #[test]
 fn expr_unwrap() {
-    let src = "1{pad(norm(b[9-10]), 1)remove(f[CAGAGC])u[8]remove(b[10])}2{r:}";
+    let src = "1{pad(norm(b[9-10]), 1, 'A')remove(f[CAGAGC])u[8]remove(b[10])}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -302,7 +279,7 @@ brc = b[10]
 fn def_block_fail() {
     let src = "
 brc = b[10]
-brc1 = pad(<brc>, 1)
+brc1 = pad(<brc>, 1, 'A')
 1{<brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -334,7 +311,7 @@ brc1 = pad(<brc>, 1)
 fn compile_description() {
     let src = "
 brc = b[10]
-umi = pad(u[10], 1)
+umi = pad(u[10], 1, A)
 1{<brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -378,7 +355,7 @@ umi = pad(u[10], 1)
 fn fail_label_composition() {
     let src = "
 brc = remove(trunc(b[10], 3))
-1{pad(<brc>, 1)}2{r:}";
+1{pad(<brc>, 1, 'A')}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -458,7 +435,7 @@ fn transform_update_map() {
 brc = b[10]
 umi = norm(u[9-11])
 test = r:
-1{pad(<brc>, 1)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
+1{pad(<brc>, 1, 'A')f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
  -> 1{<brc>remove(<read1>)remove(<umi>)<read>}
 ";
     let (res, _) = lexer().parse_recovery(src);
@@ -481,8 +458,8 @@ fn stack_orientation() {
     let src = "
 brc = b[10]
 umi = norm(u[9-11])
-1{pad(<brc>, 1)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
- -> 1{<brc>remove(<read1>)remove(pad(<umi>, 1))<read>}
+1{pad(<brc>, 1, 'A')f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
+ -> 1{<brc>remove(<read1>)remove(pad(<umi>, 1, 'A'))<read>}
 ";
     let (res, _) = lexer().parse_recovery(src);
 
@@ -570,6 +547,19 @@ fn test_simplified_geom_with_transformation() {
 #[test]
 fn test_desc_with_remove() {
     let geom = String::from("1{b[9-10]f[CAGAGC]remove(u[8])b[10]}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[10]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_simplified_geom_from_def() {
+    let geom = String::from("brc = b[9-10] 1{<brc>f[CAGAGC]remove(u[8])b[10]}2{r:}");
 
     let res = compile_geom(geom);
 

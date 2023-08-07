@@ -56,9 +56,25 @@ impl CompiledFunction {
     }
 }
 
+fn parse_additional_args(arg: String, args: Vec<String>) -> String {
+    match arg.parse::<usize>() {
+        Ok(n) => args
+            .get(n)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected {n} additional arguments with `--additional` tag. Found only {}.",
+                    args.len()
+                )
+            })
+            .clone(),
+        _ => arg,
+    }
+}
+
 pub fn compile_fn(
     fn_: Spanned<Function>,
     parent_expr: Spanned<Expr>,
+    additional_args: Vec<String>,
 ) -> Result<Spanned<CompiledFunction>, Error> {
     let (fn_, span) = fn_;
     let (parent_expr, expr_span) = parent_expr;
@@ -75,16 +91,34 @@ pub fn compile_fn(
         Function::PadTo(n, nuc) => CompiledFunction::PadTo(n, nuc),
         Function::PadToLeft(n, nuc) => CompiledFunction::PadToLeft(n, nuc),
         Function::Normalize => CompiledFunction::Normalize,
-        Function::MapWithMismatch(path, expr, mismatch) => CompiledFunction::MapWithMismatch(
-            path,
-            compile_inner_expr(expr.deref().clone(), (parent_expr, expr_span))?,
-            mismatch,
-        ),
-        Function::Map(path, expr) => CompiledFunction::Map(
-            path,
-            compile_inner_expr(expr.deref().clone(), (parent_expr, expr_span))?,
-        ),
-        Function::FilterWithinDist(path, mismatch) => {
+        Function::MapWithMismatch(arg, expr, mismatch) => {
+            let path = parse_additional_args(arg, additional_args.clone());
+
+            CompiledFunction::MapWithMismatch(
+                path,
+                compile_inner_expr(
+                    expr.deref().clone(),
+                    (parent_expr, expr_span),
+                    additional_args,
+                )?,
+                mismatch,
+            )
+        }
+        Function::Map(arg, expr) => {
+            let path = parse_additional_args(arg, additional_args.clone());
+
+            CompiledFunction::Map(
+                path,
+                compile_inner_expr(
+                    expr.deref().clone(),
+                    (parent_expr, expr_span),
+                    additional_args,
+                )?,
+            )
+        }
+        Function::FilterWithinDist(arg, mismatch) => {
+            let path = parse_additional_args(arg, additional_args);
+
             CompiledFunction::FilterWithinDist(path, mismatch)
         }
         Function::Hamming(n) => CompiledFunction::Hamming(n),
@@ -96,6 +130,7 @@ pub fn compile_fn(
 fn compile_inner_expr(
     mut expr: Spanned<Expr>,
     parent_expr: Spanned<Expr>,
+    additional_args: Vec<String>,
 ) -> Result<Vec<Spanned<CompiledFunction>>, Error> {
     // if we are here in a map then the expr passed into the expr should be a geom_piece or labeled geom_piece
     // either way we can extract the size and type of it
@@ -106,7 +141,7 @@ fn compile_inner_expr(
             Expr::Self_ => break,
             Expr::Function(inner_fn, inner_expr) => {
                 expr = inner_expr.deref().clone();
-                let inner_fn = compile_fn(inner_fn.clone(), expr.clone());
+                let inner_fn = compile_fn(inner_fn.clone(), expr.clone(), additional_args.clone());
                 if inner_fn.is_ok() {
                     stack.push(inner_fn.ok().unwrap());
                 } else {

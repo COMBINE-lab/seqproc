@@ -6,7 +6,7 @@ use chumsky::{prelude::Simple, Parser, Stream};
 use tempfile::tempdir;
 
 use crate::{
-    compile::{compile, CompiledData},
+    compile::{compile_with_args, CompiledData},
     lexer,
     parser::parser,
 };
@@ -31,11 +31,13 @@ pub fn read_pairs_to_file(
     out1: String,
     out2: String,
     threads: usize,
-    additional_args: Vec<String>,
 ) -> Result<SeqprocStats> {
-    interpret(in1, in2, out1, out2, threads, additional_args, compiled_data);
+    interpret(in1, in2, out1, out2, threads, compiled_data);
 
-    Ok(SeqprocStats { total_fragments: 0, failed_parsing: 0 })
+    Ok(SeqprocStats {
+        total_fragments: 0,
+        failed_parsing: 0,
+    })
 }
 
 pub fn read_pairs_to_fifo(
@@ -47,7 +49,7 @@ pub fn read_pairs_to_fifo(
 
     let tmp_dir = tempdir()?;
     let r1_fifo = tmp_dir.path().join("r1.pipe");
-    let r2_fifo = tmp_dir.path().join("r2.pipe"); 
+    let r2_fifo = tmp_dir.path().join("r2.pipe");
 
     // todo: create the fifos
 
@@ -78,19 +80,32 @@ pub fn interpret(
     out1: String,
     out2: String,
     threads: usize,
-    additional_args: Vec<String>,
     compiled_data: CompiledData,
 ) {
     let read = iter_fastq2(file1, file2, 256)
         .unwrap_or_else(|e| panic!("{e}"))
         .boxed();
 
-    let read = compiled_data.interpret(read, out1, out2, additional_args);
+    let read = compiled_data.interpret(read, out1, out2);
 
     read.run_with_threads(threads)
 }
 
 pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
+    _compile_geom(geom, vec![])
+}
+
+pub fn compile_geom_with_args(
+    geom: String,
+    additional_args: Vec<String>,
+) -> Result<CompiledData, Vec<Simple<String>>> {
+    _compile_geom(geom, additional_args)
+}
+
+fn _compile_geom(
+    geom: String,
+    additional_args: Vec<String>,
+) -> Result<CompiledData, Vec<Simple<String>>> {
     let (tokens, mut errs) = lexer::lexer().parse_recovery(geom.clone());
 
     let parse_errs = if let Some(tokens) = &tokens {
@@ -100,7 +115,7 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
         ));
 
         if let Some((ast, _)) = &ast {
-            let res = compile(ast.clone());
+            let res = compile_with_args(ast.clone(), additional_args);
 
             if let Err(e) = res {
                 errs.push(Simple::custom(e.span, e.msg));

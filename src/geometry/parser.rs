@@ -209,6 +209,9 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
 
     let ident = select! { Token::Label(ident) => ident }.labelled("Piece Label");
 
+    let inline_ident =
+        select! { Token::InlineLabel(ident) => ident }.labelled("Inline Piece Label");
+
     let num = select! { Token::Num(n) => n }.labelled("Size Label");
 
     let file = select! { Token::File(f) => f }.labelled("File Path");
@@ -231,9 +234,9 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         Token::C => 'C',
     };
 
-    let label = ident
+    let inline_label = inline_ident
         .map_with_span(|l, span| Expr::Label((l, span)))
-        .labelled("Label");
+        .labelled("Inline Label");
 
     let self_ = just(Token::Self_).to(Expr::Self_).labelled("Self");
 
@@ -260,7 +263,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .labelled("Nucleotide String");
 
     let unbounded = piece_type
-        .then(label.or_not())
+        .then(inline_label.or_not())
         .then_ignore(just(Token::Special(':')))
         .map_with_span(|(type_, label), span| {
             let expr = Expr::GeomPiece(type_, Size::UnboundedLen);
@@ -273,7 +276,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .labelled("Unbounded Segment");
 
     let ranged = piece_type
-        .then(label.or_not())
+        .then(inline_label.or_not())
         .then(range)
         .map_with_span(|((type_, label), (_, range)), span| {
             let expr = Expr::GeomPiece(type_, range);
@@ -286,7 +289,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .labelled("Ranged Segment");
 
     let fixed = piece_type
-        .then(label.or_not())
+        .then(inline_label.or_not())
         .then(fixed_len)
         .map_with_span(|((type_, label), len), span| {
             let expr = Expr::GeomPiece(type_, len);
@@ -300,7 +303,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
 
     let fixed_seq = just(Token::FixedSeq)
         .to(Type::FixedSeq)
-        .then(label.or_not())
+        .then(inline_label.or_not())
         .then(nucstr)
         .map_with_span(|((type_, label), nucs), span| {
             let expr = Expr::GeomPiece(type_, nucs);
@@ -317,7 +320,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         ranged.clone(),
         fixed.clone(),
         fixed_seq.clone(),
-        label,
+        inline_label,
         self_,
     ));
 

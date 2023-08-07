@@ -8,7 +8,11 @@ use std::{collections::HashMap, ops::Deref};
 use crate::parser::{Expr, Spanned};
 
 // validate definitions there should be no labels, just labeled geom peices and functions
-fn validate_definition(expr: Spanned<Expr>, label: String) -> Result<GeometryMeta, Error> {
+fn validate_definition(
+    expr: Spanned<Expr>,
+    label: String,
+    additional_args: Vec<String>,
+) -> Result<GeometryMeta, Error> {
     let mut stack: Vec<Spanned<CompiledFunction>> = vec![];
     let mut expr = expr;
 
@@ -17,7 +21,8 @@ fn validate_definition(expr: Spanned<Expr>, label: String) -> Result<GeometryMet
             Expr::Function(fn_, gp) => {
                 // parse the function and validate it
                 expr = gp.deref().clone();
-                stack.push(compile_fn(fn_, expr.clone())?); // here is where we can compile the functions
+                stack.push(compile_fn(fn_, expr.clone(), additional_args.clone())?);
+                // here is where we can compile the functions
             }
             Expr::Label(_) => {
                 return Err(Error {
@@ -48,6 +53,20 @@ fn validate_definition(expr: Spanned<Expr>, label: String) -> Result<GeometryMet
 }
 
 pub fn compile_definitions(expr: Spanned<Expr>) -> Result<HashMap<String, GeometryMeta>, Error> {
+    _compile_definitions(expr, vec![])
+}
+
+pub fn compile_definitions_with_args(
+    expr: Spanned<Expr>,
+    additional_args: Vec<String>,
+) -> Result<HashMap<String, GeometryMeta>, Error> {
+    _compile_definitions(expr, additional_args)
+}
+
+fn _compile_definitions(
+    expr: Spanned<Expr>,
+    additional_args: Vec<String>,
+) -> Result<HashMap<String, GeometryMeta>, Error> {
     let (expr, expr_span) = expr;
 
     if let Expr::Definitions(defs) = expr {
@@ -61,7 +80,7 @@ pub fn compile_definitions(expr: Spanned<Expr>) -> Result<HashMap<String, Geomet
                 let label = label.deref().clone();
 
                 if let Expr::Label((l, span)) = label {
-                    let res = validate_definition(expr.clone(), l.clone());
+                    let res = validate_definition(expr.clone(), l.clone(), additional_args.clone());
                     if let Err(e) = res {
                         err = Some(e);
                         break;
