@@ -2,13 +2,13 @@ use std::{collections::HashMap, ops::Deref};
 
 use chumsky::{prelude::*, Stream};
 use seqproc::{
-    compile::{compile, definitions::compile_definitions, reads::compile_reads},
+    compile::{compile, definitions::compile_definitions, reads::compile_reads, utils::Error},
     lexer::lexer,
     parser::{parser, Expr},
 };
 
 #[test]
-fn no_err() {
+fn no_err() -> Result<(), Error> {
     let src = "1{remove(hamming(f[CAG], 1))}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -25,9 +25,9 @@ fn no_err() {
         unreachable!()
     };
 
-    let res = compile_reads(res, &mut HashMap::new());
+    compile_reads(res, &mut HashMap::new())?;
 
-    assert!(res.is_ok());
+    Ok(())
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn discard_as_void() {
 }
 
 #[test]
-fn ok_definition() {
+fn ok_definition() -> Result<(), Error> {
     let src = "
 brc = b[10]
 brc1 = b[1-4]
@@ -149,10 +149,11 @@ brc1 = b[1-4]
         panic!("No definitions in {}", src)
     };
 
-    let def_map = compile_definitions(res.clone());
+    let def_map = compile_definitions(res.clone())?;
 
-    assert!(def_map.is_ok());
-    assert_eq!(2, def_map.unwrap().len())
+    assert_eq!(2, def_map.len());
+
+    Ok(())
 }
 
 #[test]
@@ -248,7 +249,7 @@ fn no_variable() {
 }
 
 #[test]
-fn expr_unwrap() {
+fn expr_unwrap() -> Result<(), Error> {
     let src = "1{pad(norm(b[9-10]), 1, A)remove(f[CAGAGC])u[8]remove(b[10])}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -261,9 +262,9 @@ fn expr_unwrap() {
 
     let desc = res.clone().unwrap().0;
 
-    let res = compile(desc);
+    compile(desc)?;
 
-    assert!(res.is_ok());
+    Ok(())
 }
 
 #[test]
@@ -330,7 +331,7 @@ brc1 = pad(<brc>, 1, A)
 }
 
 #[test]
-fn compile_description() {
+fn compile_description() -> Result<(), Error> {
     let src = "
 brc = b[10]
 umi = pad(u[10], 1, A)
@@ -346,9 +347,9 @@ umi = pad(u[10], 1, A)
 
     let desc = res.clone().unwrap().0;
 
-    let res = compile(desc);
+    compile(desc)?;
 
-    assert!(res.is_ok())
+    Ok(())
 }
 
 #[test]
@@ -395,7 +396,7 @@ brc = remove(trunc(b[10], 3))
 }
 
 #[test]
-fn valid_geom() {
+fn valid_geom() -> Result<(), Error> {
     let src = "1{b<brc1>[9-11]remove(f[CAGAGC])u<umi>[8]b<brc2>[10]}2{r<read>:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -408,9 +409,9 @@ fn valid_geom() {
 
     let desc = res.clone().unwrap().0;
 
-    let res = compile(desc);
+    compile(desc)?;
 
-    assert!(res.is_ok())
+    Ok(())
 }
 
 #[test]
@@ -452,7 +453,7 @@ fn invalid_geom_two() {
 }
 
 #[test]
-fn transform_update_map() {
+fn transform_update_map() -> Result<(), Error> {
     let src = "
 brc = b[10]
 umi = norm(u[9-11])
@@ -470,13 +471,13 @@ test = r:
 
     let desc = res.clone().unwrap().0;
 
-    let res = compile(desc);
+    compile(desc)?;
 
-    assert!(res.is_ok())
+    Ok(())
 }
 
 #[test]
-fn stack_orientation() {
+fn stack_orientation() -> Result<(), Error> {
     let src = "
 brc = b[10]
 umi = norm(u[9-11])
@@ -493,13 +494,13 @@ umi = norm(u[9-11])
 
     let desc = res.clone().unwrap().0;
 
-    let res = compile(desc);
+    compile(desc)?;
 
-    assert!(res.is_ok())
+    Ok(())
 }
 
 #[test]
-fn compile_map_arguments() {
+fn compile_map_arguments() -> Result<(), Error> {
     let src = "1{map(b[10-11], \"file\", norm(self))}2{r<read>:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -512,13 +513,13 @@ fn compile_map_arguments() {
 
     let desc = res.clone().unwrap().0;
 
-    let res = compile(desc);
+    compile(desc)?;
 
-    assert!(res.is_ok())
+    Ok(())
 }
 
 #[test]
-fn compile_map_arguments_with_label() {
+fn compile_map_arguments_with_label() -> Result<(), Error> {
     let src = "
 brc = b[10-11]    
 1{map(<brc>>, \"file\", norm(self))}2{r<read>:}";
@@ -533,7 +534,7 @@ brc = b[10-11]
 
     let desc = res.clone().unwrap().0;
 
-    let res = compile(desc);
+    compile(desc)?;
 
-    assert!(res.is_ok())
+    Ok(())
 }

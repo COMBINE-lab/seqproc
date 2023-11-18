@@ -15,7 +15,12 @@ name = "seqproc"
 path = "src/bin/bin.rs"
 
 [dependencies]
-chumsky = "0.9.3"
-ariadne = "0.3.0"
-clap = { version = "4.4.8", features = ["derive"] }
 antisequence = { git = "https://github.com/noahcape/ANTISEQUENCE/", branch = 'my_dev' }
+ariadne = "0.3.0"
+chumsky = "0.9.3"
+clap = { version = "4.4.8", features = ["derive"] }
+
+[dev-dependencies]
+assert_cmd = "2.0.12"
+similar-asserts = "1.5.0"
+tempdir = "0.3.7"

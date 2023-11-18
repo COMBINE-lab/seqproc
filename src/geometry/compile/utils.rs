@@ -49,6 +49,8 @@ impl fmt::Display for Error {
     }
 }
 
+impl std::error::Error for Error {}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Interval {
     Named(String),

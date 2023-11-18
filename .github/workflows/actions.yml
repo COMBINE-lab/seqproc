@@ -39,7 +39,7 @@ jobs:
         run: cargo clippy --all --all-targets
 
       - name: test
-        run: cargo test --all --all-targets
+        run: cargo test --all --all-targets --no-fail-fast
 
       - name: doc
         run: cargo doc --all
