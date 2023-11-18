@@ -27,7 +27,7 @@ fn no_err() {
 
     let res = compile_reads(res, &mut HashMap::new());
 
-    assert_eq!(true, res.is_ok());
+    assert!(res.is_ok());
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn fail_norm() {
 
     let res = compile_reads(res.clone(), &mut HashMap::new());
 
-    assert_eq!(false, res.is_ok());
+    assert!(res.is_err());
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn pass_composition() {
 
     let res = compile_reads(res.clone(), &mut HashMap::new());
 
-    assert_eq!(true, res.is_ok());
+    assert!(res.is_ok());
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn fail_remove() {
 
     let res = compile_reads(res.clone(), &mut HashMap::new());
 
-    assert_eq!(false, res.is_ok());
+    assert!(res.is_err());
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn discard_as_void() {
 
     let res = compile_reads(res.clone(), &mut HashMap::new());
 
-    assert_eq!(false, res.is_ok());
+    assert!(res.is_err());
 }
 
 #[test]
@@ -146,7 +146,7 @@ brc1 = b[1-4]
     let res = if let Some(def) = res.deref() {
         def
     } else {
-        panic!("No definitions in {}", src.clone())
+        panic!("No definitions in {}", src)
     };
 
     let def_map = compile_definitions(res.clone());
@@ -179,7 +179,7 @@ brc = b[1-4]
     let res = if let Some(def) = res.deref() {
         def
     } else {
-        panic!("No definitions in {}", src.clone())
+        panic!("No definitions in {}", src)
     };
 
     let def_map = compile_definitions(res.clone());
@@ -214,7 +214,7 @@ fn label_replacement() {
 
     let res = compile_reads(reads, &mut def_map);
 
-    assert_eq!(false, res.is_ok());
+    assert!(res.is_err());
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn no_variable() {
 
     let res = compile_reads(reads, &mut def_map);
 
-    assert_eq!(false, res.is_ok());
+    assert!(res.is_err());
 }
 
 #[test]
@@ -263,7 +263,7 @@ fn expr_unwrap() {
 
     let res = compile(desc);
 
-    assert_eq!(true, res.is_ok());
+    assert!(res.is_ok());
 }
 
 #[test]
@@ -294,7 +294,7 @@ brc = b[10]
 
     let res = compile_reads(reads, &mut def_map);
 
-    assert_eq!(false, res.is_ok());
+    assert!(res.is_err());
 }
 
 #[test]
@@ -321,7 +321,7 @@ brc1 = pad(<brc>, 1, A)
     let res = if let Some(def) = res.deref() {
         def
     } else {
-        panic!("No definitions in {}", src.clone())
+        panic!("No definitions in {}", src)
     };
 
     let def_map = compile_definitions(res.clone());

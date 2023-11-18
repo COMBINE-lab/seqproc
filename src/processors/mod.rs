@@ -205,9 +205,7 @@ where
         TransformExpr::new(format!("{this_label} -> {this_label}.v_len").as_bytes()).unwrap();
     let r_sel_expr = SelectorExpr::new(format!("{this_label}.v_len").as_bytes()).unwrap();
 
-    let val_len_read = validate_length(cut_read, len_sel_expr, len_tr_expr, r_sel_expr, range);
-
-    val_len_read
+    validate_length(cut_read, len_sel_expr, len_tr_expr, r_sel_expr, range) as _
 }
 
 pub fn process_fixed_len(
