@@ -3,7 +3,8 @@ use std::ops::Deref;
 use chumsky::{prelude::*, Stream};
 use seqproc::{
     lexer::lexer,
-    parser::{parser, Expr, Function, Size, Type},
+    parser::{parser, Expr, Function, IntervalKind, IntervalShape},
+    Nucleotide,
 };
 
 #[test]
@@ -24,7 +25,7 @@ fn definition() {
             Expr::LabeledGeomPiece(
                 Box::new(Expr::Label(("brc".to_string(), 0..3))),
                 Box::new((
-                    Expr::GeomPiece(Type::Barcode, Size::FixedLen((10, 8..10))),
+                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen((10, 8..10))),
                     6..11,
                 )),
             ),
@@ -261,7 +262,10 @@ fn labeled_unbounded() {
         vec![(
             Expr::LabeledGeomPiece(
                 Box::new(Expr::Label(("barcode".to_string(), 3..12))),
-                Box::new((Expr::GeomPiece(Type::Barcode, Size::UnboundedLen), 2..13)),
+                Box::new((
+                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::UnboundedLen),
+                    2..13,
+                )),
             ),
             2..13,
         )],
@@ -296,7 +300,10 @@ fn ranged() {
     let expected_res = Expr::Read(
         (1, 0..1),
         vec![(
-            Expr::GeomPiece(Type::Barcode, Size::RangedLen(((10, 11), 4..9))),
+            Expr::GeomPiece(
+                IntervalKind::Barcode,
+                IntervalShape::RangedLen(((10, 11), 4..9)),
+            ),
             2..10,
         )],
     );
@@ -330,7 +337,7 @@ fn fixed() {
     let expected_res = Expr::Read(
         (1, 0..1),
         vec![(
-            Expr::GeomPiece(Type::ReadSeq, Size::FixedLen((10, 4..6))),
+            Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::FixedLen((10, 4..6))),
             2..7,
         )],
     );
@@ -364,7 +371,19 @@ fn fixed_seq() {
     let expected_res = Expr::Read(
         (1, 0..1),
         vec![(
-            Expr::GeomPiece(Type::FixedSeq, Size::FixedSeq(("GATCU".to_string(), 4..9))),
+            Expr::GeomPiece(
+                IntervalKind::FixedSeq,
+                IntervalShape::FixedSeq((
+                    vec![
+                        Nucleotide::G,
+                        Nucleotide::A,
+                        Nucleotide::C,
+                        Nucleotide::T,
+                        Nucleotide::U,
+                    ],
+                    4..9,
+                )),
+            ),
             2..10,
         )],
     );

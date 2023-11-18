@@ -1,43 +1,99 @@
+//! Defines the lexer for EFGDL.
+
 use chumsky::prelude::*;
-use std::{fmt, ops::Range};
+use std::{
+    fmt::{self, Write},
+    ops::Range,
+};
 
 pub type Span = Range<usize>;
 
+/// A token produced by the EFGDL lexer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Token {
+    /// A numeric literal.
     Num(usize),
-    Ctrl(char),
+    /// `(`.
+    LParen,
+    /// `)`.
+    RParen,
+    /// `[`.
+    LBracket,
+    /// `]`.
+    RBracket,
+    /// `{`.
+    LBrace,
+    /// `}`.
+    RBrace,
+    /// `,`.
+    Comma,
+    /// `<label_text>`.
     Label(String),
+    /// `"file_path"`.
     File(String),
-    Special(char),
+    /// `=`.
+    Equals,
+    /// `-`.
+    Dash,
+    /// `:`.
+    Colon,
+    /// `b`.
     Barcode,
+    /// `u`.
     Umi,
+    /// `x`.
     Discard,
+    /// `r`.
     ReadSeq,
+    /// `f`.
     FixedSeq,
+    /// `self`.
     Self_,
+    /// `rev`.
     Reverse,
+    /// `revcomp`.
     ReverseComp,
+    /// `trunc`.
     Truncate,
+    /// `trunc_left`.
     TruncateLeft,
+    /// `trunc_to`.
     TruncateTo,
+    /// `trunc_to_left`.
     TruncateToLeft,
+    /// `remove`.
     Remove,
+    /// `pad`.
     Pad,
+    /// `pad_left`.
     PadLeft,
+    /// `pad_to`.
     PadTo,
+    /// `pad_to_left`.
     PadToLeft,
+    /// `norm`.
     Normalize,
+    /// `norm`.
     Map,
+    /// `map_with_mismatch`.
     MapWithMismatch,
+    /// `filter_within_dist`.
     FilterWithinDist,
+    /// `hamming`.
     Hamming,
+    /// `->`.
     TransformTo,
+    /// `$n`, where `n` is a numeric literal.
     Arg(usize),
+    /// Nucleotide `U`.
     U,
+    /// Nucleotide `G`.
     G,
+    /// Nucleotide `T`.
     T,
+    /// Nucleotide `C`.
     C,
+    /// Nucleotide `A`.
     A,
 }
 
@@ -46,54 +102,75 @@ impl fmt::Display for Token {
         use Token::*;
         match self {
             Num(n) => write!(f, "{}", n),
-            Ctrl(c) => write!(f, "{}", c),
-            Label(s) => write!(f, "{}", s),
-            A => write!(f, "A"),
-            T => write!(f, "T"),
-            G => write!(f, "G"),
-            C => write!(f, "C"),
-            U => write!(f, "U"),
-            File(p) => write!(f, "{}", p),
-            Special(s) => write!(f, "{}", s),
-            Reverse => write!(f, "Reverse"),
-            ReverseComp => write!(f, "ReverseComp"),
-            Truncate => write!(f, "Truncate"),
-            TruncateLeft => write!(f, "TruncateLeft"),
-            TruncateTo => write!(f, "TruncateTo"),
-            TruncateToLeft => write!(f, "TruncateToLeft"),
-            Remove => write!(f, "Remove"),
-            Pad => write!(f, "Pad"),
-            PadLeft => write!(f, "PadLeft"),
-            PadTo => write!(f, "PadTo"),
-            PadToLeft => write!(f, "PadToLeft"),
-            Normalize => write!(f, "Normalize"),
-            Map => write!(f, "Map"),
-            MapWithMismatch => write!(f, "MapWithMismatch"),
-            FilterWithinDist => write!(f, "FilterWithinDist"),
-            Hamming => write!(f, "Hamming"),
-            Barcode => write!(f, "Barcode"),
-            Umi => write!(f, "UMI"),
-            Discard => write!(f, "Discard"),
-            ReadSeq => write!(f, "ReadSeq"),
-            FixedSeq => write!(f, "FixedSeq"),
-            TransformTo => write!(f, "Transform into"),
-            Self_ => write!(f, "Self"),
-            Arg(n) => write!(f, "argument {n}"),
+            LParen => f.write_char('('),
+            RParen => f.write_char(')'),
+            LBracket => f.write_char('['),
+            RBracket => f.write_char(']'),
+            LBrace => f.write_char('{'),
+            RBrace => f.write_char('}'),
+            Comma => f.write_char(','),
+            Label(s) => write!(f, "<{s}>"),
+            A => f.write_char('A'),
+            T => f.write_char('T'),
+            G => f.write_char('G'),
+            C => f.write_char('C'),
+            U => f.write_char('U'),
+            File(p) => write!(f, "\"{p}\""),
+            Equals => f.write_char('='),
+            Dash => f.write_char('-'),
+            Colon => f.write_char(':'),
+            Reverse => f.write_str("rev"),
+            ReverseComp => f.write_str("revcomp"),
+            Truncate => f.write_str("trunc"),
+            TruncateLeft => f.write_str("trunc_left"),
+            TruncateTo => f.write_str("trunc_to"),
+            TruncateToLeft => f.write_str("trunc_to_left"),
+            Remove => f.write_str("remove"),
+            Pad => f.write_str("pad"),
+            PadLeft => f.write_str("pad_left"),
+            PadTo => f.write_str("pad_to"),
+            PadToLeft => f.write_str("pad_to_left"),
+            Normalize => f.write_str("norm"),
+            Map => f.write_str("map"),
+            MapWithMismatch => f.write_str("map_with_mismatch"),
+            FilterWithinDist => f.write_str("filter_within_dist"),
+            Hamming => f.write_str("hamming"),
+            Barcode => f.write_char('b'),
+            Umi => f.write_char('u'),
+            Discard => f.write_char('x'),
+            ReadSeq => f.write_char('r'),
+            FixedSeq => f.write_char('f'),
+            TransformTo => f.write_str("->"),
+            Self_ => f.write_str("self"),
+            Arg(n) => write!(f, "${n}"),
         }
     }
 }
 
+/// Returns a lexer for EFGDL.
 pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     let int = text::int(10).from_str().unwrapped().map(Token::Num);
 
-    let ctrl = one_of("()[]{},").map(Token::Ctrl);
+    let ctrl = choice((
+        just('(').to(Token::LParen),
+        just(')').to(Token::RParen),
+        just('[').to(Token::LBracket),
+        just(']').to(Token::RBracket),
+        just('{').to(Token::LBrace),
+        just('}').to(Token::RBrace),
+        just(',').to(Token::Comma),
+    ));
 
     let label = just('<')
         .ignore_then(text::ident())
         .then_ignore(just('>'))
         .map(Token::Label);
 
-    let special = one_of(":-=").map(Token::Special);
+    let special = choice((
+        just('=').to(Token::Equals),
+        just('-').to(Token::Dash),
+        just(':').to(Token::Colon),
+    ));
 
     let file = just('"')
         .ignored()

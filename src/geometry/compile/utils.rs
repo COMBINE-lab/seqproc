@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{
     lexer::Span,
-    parser::{Size, Spanned, Type},
+    parser::{IntervalKind, IntervalShape, Spanned},
 };
 
 use super::functions::CompiledFunction;
@@ -75,8 +75,8 @@ pub struct GeometryMeta {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GeometryPiece {
-    pub type_: Type,
-    pub size: Size,
+    pub type_: IntervalKind,
+    pub size: IntervalShape,
     pub label: Option<String>,
 }
 
@@ -102,14 +102,14 @@ pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
     let (expr, expr_span) = gp.clone().expr;
 
     let expr_type = {
-        if let Type::Discard = expr.type_ {
+        if let IntervalKind::Discard = expr.type_ {
             ReturnType::Void
         } else {
             match expr.size {
-                Size::FixedSeq(_) => ReturnType::FixedSeq,
-                Size::FixedLen(_) => ReturnType::FixedLen,
-                Size::RangedLen(_) => ReturnType::Ranged,
-                Size::UnboundedLen => ReturnType::Unbounded,
+                IntervalShape::FixedSeq(_) => ReturnType::FixedSeq,
+                IntervalShape::FixedLen(_) => ReturnType::FixedLen,
+                IntervalShape::RangedLen(_) => ReturnType::Ranged,
+                IntervalShape::UnboundedLen => ReturnType::Unbounded,
             }
         }
     };
@@ -126,16 +126,16 @@ pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
 pub fn validate_composition(
     fn_: Spanned<CompiledFunction>,
     return_type: Spanned<ReturnType>,
-    size: Size,
+    size: IntervalShape,
 ) -> Result<Spanned<ReturnType>, Error> {
     let (fn_, fn_span) = fn_;
     let (return_type, return_type_span) = return_type;
 
     let (min, max) = match size {
-        Size::FixedSeq((seq, _)) => (0, seq.len()),
-        Size::FixedLen((n, _)) => (0, n),
-        Size::RangedLen(((a, b), _)) => (a, b),
-        Size::UnboundedLen => (100, 100),
+        IntervalShape::FixedSeq((seq, _)) => (0, seq.len()),
+        IntervalShape::FixedLen((n, _)) => (0, n),
+        IntervalShape::RangedLen(((a, b), _)) => (a, b),
+        IntervalShape::UnboundedLen => (100, 100),
     };
 
     match fn_ {

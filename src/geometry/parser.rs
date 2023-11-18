@@ -1,42 +1,77 @@
-use crate::lexer::{Span, Token};
+//! Defines the parser for EFGDL.
+
+use crate::{
+    lexer::{Span, Token},
+    Nucleotide,
+};
 use chumsky::prelude::*;
-use std::{fmt, ops::Deref};
+use std::{
+    fmt::{self, Write},
+    ops::Deref,
+};
 
 pub type Spanned<T> = (T, Span);
 
+/// The length of a nucleotide interval,
+/// and whether it must match a specific sequence.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Size {
-    FixedSeq(Spanned<String>),
+pub enum IntervalShape {
+    /// Interval matches this sequence exactly.
+    FixedSeq(Spanned<Vec<Nucleotide>>),
+    /// Interval length is exactly this value.
     FixedLen(Spanned<usize>),
+    /// Interval length is within this range (inclusive).
     RangedLen(Spanned<(usize, usize)>),
+    /// Interval can be of any length.
     UnboundedLen,
 }
 
-impl fmt::Display for Size {
+impl fmt::Display for IntervalShape {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use Size::*;
+        use IntervalShape::*;
         match self {
             FixedLen((n, _)) => write!(f, "[{}]", n),
-            FixedSeq((s, _)) => write!(f, "[{}]", s),
+            FixedSeq((s, _)) => {
+                f.write_char('[')?;
+                for nuc in s {
+                    write!(f, "{nuc}")?;
+                }
+                f.write_char(']')
+            }
             RangedLen(((a, b), _)) => write!(f, "[{}-{}]", a, b),
-            UnboundedLen => write!(f, ":"),
+            UnboundedLen => f.write_char(':'),
         }
     }
 }
 
+/// An invocation of an [EFDGL transformation][1].
+///
+/// [1]: https://efgdl-spec.readthedocs.io/en/latest/transformations.html
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Function {
+    /// `rev(I)`
     Reverse,
+    /// `revcomp(I)`
     ReverseComp,
+    /// `trunc(I, n)``
     Truncate(usize),
+    /// `trunc_left(I, n)`
     TruncateLeft(usize),
+    /// `trunc_to(I, n)`
     TruncateTo(usize),
+    /// `trunc_to_left(I, n)`
     TruncateToLeft(usize),
+    /// `remove`
     Remove,
-    Pad(usize, char),
-    PadLeft(usize, char),
-    PadTo(usize, char),
-    PadToLeft(usize, char),
+    /// `pad(I, n, nuc)`
+    Pad(usize, Nucleotide),
+    /// `pad_left(I, n, nuc)`
+    PadLeft(usize, Nucleotide),
+    /// `pad_to(I, n, nuc)`
+    PadTo(usize, Nucleotide),
+    /// `pad_to_left(I, n, nuc)`
+    PadToLeft(usize, Nucleotide),
+    /// `norm(I)`
     Normalize,
     Map(String, Box<Spanned<Expr>>),
     MapWithMismatch(String, Box<Spanned<Expr>>, usize),
@@ -74,8 +109,9 @@ impl fmt::Display for Function {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Type {
+/// https://efgdl-spec.readthedocs.io/en/latest/intervals.html
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IntervalKind {
     Barcode,
     Umi,
     Discard,
@@ -83,9 +119,9 @@ pub enum Type {
     FixedSeq,
 }
 
-impl fmt::Display for Type {
+impl fmt::Display for IntervalKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use Type::*;
+        use IntervalKind::*;
         match self {
             Barcode => write!(f, "Barcode"),
             Umi => write!(f, "Umi"),
@@ -102,8 +138,8 @@ pub enum Expr {
     Self_,
     Argument(usize),
     Label(Spanned<String>),
-    Type(Spanned<Type>),
-    GeomPiece(Type, Size),
+    Type(Spanned<IntervalKind>),
+    GeomPiece(IntervalKind, IntervalShape),
     LabeledGeomPiece(Box<Self>, Box<Spanned<Self>>),
     Function(Spanned<Function>, Box<Spanned<Self>>),
     Read(Spanned<usize>, Vec<Spanned<Self>>),
@@ -216,19 +252,19 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
     let argument = select! { Token::Arg(n) => n.to_string() }.labelled("Argument");
 
     let piece_type = select! {
-        Token::Barcode => Type::Barcode,
-        Token::Umi => Type::Umi,
-        Token::Discard => Type::Discard,
-        Token::ReadSeq => Type::ReadSeq,
+        Token::Barcode => IntervalKind::Barcode,
+        Token::Umi => IntervalKind::Umi,
+        Token::Discard => IntervalKind::Discard,
+        Token::ReadSeq => IntervalKind::ReadSeq,
     }
     .labelled("Piece Type");
 
     let nuc = select! {
-        Token::U => 'U',
-        Token::A => 'A',
-        Token::T => 'T',
-        Token::G => 'G',
-        Token::C => 'C',
+        Token::U => Nucleotide::U,
+        Token::A => Nucleotide::A,
+        Token::T => Nucleotide::T,
+        Token::G => Nucleotide::G,
+        Token::C => Nucleotide::C,
     };
 
     let label = ident
@@ -237,33 +273,33 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
 
     let self_ = just(Token::Self_).to(Expr::Self_).labelled("Self");
 
-    let range = just(Token::Ctrl('['))
+    let range = just(Token::LBracket)
         .ignored()
         .then(
-            num.then_ignore(just(Token::Special('-')))
+            num.then_ignore(just(Token::Dash))
                 .then(num)
-                .map_with_span(|(a, b), span| Size::RangedLen(((a, b), span)))
-                .then_ignore(just(Token::Ctrl(']'))),
+                .map_with_span(|(a, b), span| IntervalShape::RangedLen(((a, b), span)))
+                .then_ignore(just(Token::RBracket)),
         )
         .labelled("Range");
 
-    let fixed_len = just(Token::Ctrl('['))
-        .ignore_then(num.map_with_span(|n, span| Size::FixedLen((n, span))))
-        .then_ignore(just(Token::Ctrl(']')))
+    let fixed_len = just(Token::LBracket)
+        .ignore_then(num.map_with_span(|n, span| IntervalShape::FixedLen((n, span))))
+        .then_ignore(just(Token::RBracket))
         .labelled("Fixed Length");
 
-    let seq = nuc.repeated().collect::<String>();
+    let seq = nuc.repeated().collect::<Vec<_>>();
 
-    let nucstr = just(Token::Ctrl('['))
-        .ignore_then(seq.map_with_span(|nucstr, span| Size::FixedSeq((nucstr, span))))
-        .then_ignore(just(Token::Ctrl(']')))
+    let nucstr = just(Token::LBracket)
+        .ignore_then(seq.map_with_span(|nucstr, span| IntervalShape::FixedSeq((nucstr, span))))
+        .then_ignore(just(Token::RBracket))
         .labelled("Nucleotide String");
 
     let unbounded = piece_type
         .then(label.or_not())
-        .then_ignore(just(Token::Special(':')))
+        .then_ignore(just(Token::Colon))
         .map_with_span(|(type_, label), span| {
-            let expr = Expr::GeomPiece(type_, Size::UnboundedLen);
+            let expr = Expr::GeomPiece(type_, IntervalShape::UnboundedLen);
             if let Some(label) = label {
                 Expr::LabeledGeomPiece(Box::new(label), Box::new((expr, span)))
             } else {
@@ -299,7 +335,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
         .labelled("Fixed Length Segment");
 
     let fixed_seq = just(Token::FixedSeq)
-        .to(Type::FixedSeq)
+        .to(IntervalKind::FixedSeq)
         .then(label.or_not())
         .then(nucstr)
         .map_with_span(|((type_, label), nucs), span| {
@@ -324,31 +360,31 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
     let transformed_pieces = recursive(|transformed_pieces| {
         let recursive_num_arg = transformed_pieces
             .clone()
-            .then_ignore(just(Token::Ctrl(',')))
+            .then_ignore(just(Token::Comma))
             .then(num)
             .map_with_span(|tok, span| (tok, span))
-            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
+            .delimited_by(just(Token::LParen), just(Token::RParen));
 
         let recursive_num_nuc_args = transformed_pieces
             .clone()
-            .then_ignore(just(Token::Ctrl(',')))
+            .then_ignore(just(Token::Comma))
             .then(num)
-            .then_ignore(just(Token::Ctrl(',')))
+            .then_ignore(just(Token::Comma))
             .then(nuc)
             .map_with_span(|tok, span| (tok, span))
-            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
+            .delimited_by(just(Token::LParen), just(Token::RParen));
 
         let num_arg = geom_piece
             .clone()
-            .then_ignore(just(Token::Ctrl(',')))
+            .then_ignore(just(Token::Comma))
             .then(num)
             .map_with_span(|tok, span| (tok, span))
-            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
+            .delimited_by(just(Token::LParen), just(Token::RParen));
 
         let recursive_no_arg = transformed_pieces
             .clone()
             .map_with_span(|tok, span| (tok, span))
-            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
+            .delimited_by(just(Token::LParen), just(Token::RParen));
 
         choice((
             geom_piece.clone(),
@@ -458,16 +494,16 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .then(
                     geom_piece
                         .clone()
-                        .then_ignore(just(Token::Ctrl(',')))
+                        .then_ignore(just(Token::Comma))
                         .then(file.or(argument))
-                        .then_ignore(just(Token::Ctrl(',')))
+                        .then_ignore(just(Token::Comma))
                         .then(
                             transformed_pieces
                                 .clone()
                                 .map_with_span(|tok, span| (tok, span)),
                         )
                         .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
+                        .delimited_by(just(Token::LParen), just(Token::RParen)),
                 )
                 .map(|(fn_span, (((geom_p, path), self_expr), span))| {
                     Expr::Function(
@@ -481,18 +517,18 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .then(
                     geom_piece
                         .clone()
-                        .then_ignore(just(Token::Ctrl(',')))
+                        .then_ignore(just(Token::Comma))
                         .then(file.or(argument))
-                        .then_ignore(just(Token::Ctrl(',')))
+                        .then_ignore(just(Token::Comma))
                         .then(
                             transformed_pieces
                                 .clone()
                                 .map_with_span(|tok, span| (tok, span)),
                         )
-                        .then_ignore(just(Token::Ctrl(',')))
+                        .then_ignore(just(Token::Comma))
                         .then(num)
                         .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
+                        .delimited_by(just(Token::LParen), just(Token::RParen)),
                 )
                 .map(|(fn_span, ((((geom_p, path), self_expr), num), span))| {
                     Expr::Function(
@@ -508,12 +544,12 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .map_with_span(|_, span| span)
                 .then(
                     geom_piece
-                        .then_ignore(just(Token::Ctrl(',')))
+                        .then_ignore(just(Token::Comma))
                         .then(file.or(argument))
-                        .then_ignore(just(Token::Ctrl(',')))
+                        .then_ignore(just(Token::Comma))
                         .then(num)
                         .map_with_span(|tok, span| (tok, span))
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
+                        .delimited_by(just(Token::LParen), just(Token::RParen)),
                 )
                 .map(|(fn_span, (((geom_p, path), num), span))| {
                     Expr::Function(
@@ -528,7 +564,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
 
     let definitions = ident
         .map_with_span(|tok, span| Expr::Label((tok, span)))
-        .then_ignore(just(Token::Special('=')))
+        .then_ignore(just(Token::Equals))
         .then(transformed_pieces.clone())
         .map_with_span(|(label, geom_p), span| {
             (
@@ -546,7 +582,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .clone()
                 .repeated()
                 .at_least(1)
-                .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
         .map(|(n, read)| Expr::Read(n, read))
         .repeated()
@@ -561,7 +597,7 @@ pub fn parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Cl
                 .clone()
                 .repeated()
                 .at_least(1)
-                .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
         .map(|(n, read)| Expr::Read(n, read));
 
