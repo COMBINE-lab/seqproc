@@ -63,10 +63,16 @@ fn transformation() {
     let (res, parser_err) =
         parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    let expected_res = Expr::Transform(vec![Expr::Read(
-        (1, 13..17),
-        vec![(Expr::Label(("t".to_string(), 18..21)), 18..21)],
-    )]);
+    let expected_res = Expr::Transform(vec![
+        Expr::Read(
+            (1, 16..17),
+            vec![(Expr::Label(("t".to_string(), 18..21)), 18..21)],
+        ),
+        Expr::Read(
+            (2, 22..23),
+            vec![(Expr::GeomPiece(Type::ReadSeq, Size::UnboundedLen), 24..26)]
+        )    
+    ]);
 
     let res = if let Expr::Description(_d, _r, t) = res.clone().unwrap().0 {
         t

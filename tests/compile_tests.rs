@@ -54,7 +54,7 @@ fn fail_norm() {
 }
 
 #[test]
-fn fail_composition() {
+fn pass_composition() {
     let src = "1{trunc_to(rev(r:), 1)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -73,7 +73,7 @@ fn fail_composition() {
 
     let res = compile_reads(res.clone(), &mut HashMap::new());
 
-    assert_eq!(false, res.is_ok());
+    assert_eq!(true, res.is_ok());
 }
 
 #[test]
@@ -190,7 +190,7 @@ brc = b[1-4]
 #[test]
 fn label_replacement() {
     let src = "test = r: 
-    1{pad_to(<test>, 5)}2{r:}";
+    1{pad_to(<test>, 5, A)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -220,7 +220,7 @@ fn label_replacement() {
 #[test]
 fn no_variable() {
     let src = "testing = r: 
-    1{pad(<test>, 5)}2{r:}";
+    1{pad(<test>, 5, A)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -249,7 +249,7 @@ fn no_variable() {
 
 #[test]
 fn expr_unwrap() {
-    let src = "1{pad(norm(b[9-10]), 1)remove(f[CAGAGC])u[8]remove(b[10])}2{r:}";
+    let src = "1{pad(norm(b[9-10]), 1, A)remove(f[CAGAGC])u[8]remove(b[10])}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -301,7 +301,7 @@ brc = b[10]
 fn def_block_fail() {
     let src = "
 brc = b[10]
-brc1 = pad(<brc>, 1)
+brc1 = pad(<brc>, 1, A)
 1{<brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -333,7 +333,7 @@ brc1 = pad(<brc>, 1)
 fn compile_description() {
     let src = "
 brc = b[10]
-umi = pad(u[10], 1)
+umi = pad(u[10], 1, A)
 1{<brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -355,7 +355,7 @@ umi = pad(u[10], 1)
 fn fail_description() {
     let src = "
 brc = b[10]
-umi = pad(u[10], 1)
+umi = pad(u[10], 1, A)
 1{<brc><brc>}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
@@ -377,7 +377,7 @@ umi = pad(u[10], 1)
 fn fail_label_composition() {
     let src = "
 brc = remove(trunc(b[10], 3))
-1{pad(<brc>, 1)}2{r:}";
+1{pad(<brc>, 1, A)}2{r:}";
 
     let (res, _) = lexer().parse_recovery(src);
 
@@ -457,7 +457,7 @@ fn transform_update_map() {
 brc = b[10]
 umi = norm(u[9-11])
 test = r:
-1{pad(<brc>, 1)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
+1{pad(<brc>, 1, A)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
  -> 1{<brc>remove(<read1>)remove(<umi>)<read>}
 ";
     let (res, _) = lexer().parse_recovery(src);
@@ -480,8 +480,8 @@ fn stack_orientation() {
     let src = "
 brc = b[10]
 umi = norm(u[9-11])
-1{pad(<brc>, 1)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
- -> 1{<brc>remove(<read1>)remove(pad(<umi>, 1))<read>}
+1{pad(<brc>, 1, A)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
+ -> 1{<brc>remove(<read1>)remove(pad(<umi>, 1, A))<read>}
 ";
     let (res, _) = lexer().parse_recovery(src);
 
