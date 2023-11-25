@@ -71,8 +71,11 @@ fn transformation() {
         ),
         Expr::Read(
             (2, 22..23),
-            vec![(Expr::GeomPiece(Type::ReadSeq, Size::UnboundedLen), 24..26)]
-        )    
+            vec![(
+                Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::UnboundedLen),
+                24..26,
+            )],
+        ),
     ]);
 
     let res = if let Expr::Description(_d, _r, t) = res.clone().unwrap().0 {
@@ -357,7 +360,7 @@ fn fixed() {
 
 #[test]
 fn fixed_seq() {
-    let src = "1{f[GATCU]}2{r:}";
+    let src = "1{f[GACTU]}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 

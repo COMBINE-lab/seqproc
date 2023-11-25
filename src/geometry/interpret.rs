@@ -177,14 +177,7 @@ fn execute_stack(
                 let file = parse_additional_args(file, additional_args);
 
                 let mapped = map(read, label, attr, file, mismatch);
-                execute_stack(
-                    fns,
-                    label,
-                    "mapped",
-                    mapped,
-                    size.clone(),
-                    additional_args,
-                )
+                execute_stack(fns, label, "mapped", mapped, size.clone(), additional_args)
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
                 let file = parse_additional_args(file, additional_args);

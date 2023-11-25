@@ -109,7 +109,7 @@ impl fmt::Display for Function {
     }
 }
 
-/// https://efgdl-spec.readthedocs.io/en/latest/intervals.html
+/// <https://efgdl-spec.readthedocs.io/en/latest/intervals.html>
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IntervalKind {
     Barcode,
