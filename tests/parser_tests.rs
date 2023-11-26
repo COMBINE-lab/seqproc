@@ -3,7 +3,8 @@ use std::ops::Deref;
 use chumsky::{prelude::*, Stream};
 use seqproc::{
     lexer::lexer,
-    parser::{parser, Expr, Function, Size, Type},
+    parser::{parser, Expr, Function, IntervalKind, IntervalShape},
+    Nucleotide,
 };
 
 #[test]
@@ -24,7 +25,7 @@ fn definition() {
             Expr::LabeledGeomPiece(
                 Box::new(Expr::Label(("brc".to_string(), 0..3))),
                 Box::new((
-                    Expr::GeomPiece(Type::Barcode, Size::FixedLen((10, 8..10))),
+                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen((10, 8..10))),
                     6..11,
                 )),
             ),
@@ -42,7 +43,7 @@ fn definition() {
     let res = if let Some(def) = res.deref() {
         def
     } else {
-        panic!("No definitions in {}", src.clone())
+        panic!("No definitions in {}", src)
     };
 
     assert_eq!(0, lex_err.len());
@@ -70,8 +71,11 @@ fn transformation() {
         ),
         Expr::Read(
             (2, 22..23),
-            vec![(Expr::GeomPiece(Type::ReadSeq, Size::UnboundedLen), 24..26)]
-        )    
+            vec![(
+                Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::UnboundedLen),
+                24..26,
+            )],
+        ),
     ]);
 
     let res = if let Expr::Description(_d, _r, t) = res.clone().unwrap().0 {
@@ -83,7 +87,7 @@ fn transformation() {
     let res = if let (Some(trans), _) = res.deref() {
         trans
     } else {
-        panic!("No transformation in {}", src.clone())
+        panic!("No transformation in {}", src)
     };
 
     assert_eq!(0, lex_err.len());
@@ -261,7 +265,10 @@ fn labeled_unbounded() {
         vec![(
             Expr::LabeledGeomPiece(
                 Box::new(Expr::Label(("barcode".to_string(), 3..12))),
-                Box::new((Expr::GeomPiece(Type::Barcode, Size::UnboundedLen), 2..13)),
+                Box::new((
+                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::UnboundedLen),
+                    2..13,
+                )),
             ),
             2..13,
         )],
@@ -296,7 +303,10 @@ fn ranged() {
     let expected_res = Expr::Read(
         (1, 0..1),
         vec![(
-            Expr::GeomPiece(Type::Barcode, Size::RangedLen(((10, 11), 4..9))),
+            Expr::GeomPiece(
+                IntervalKind::Barcode,
+                IntervalShape::RangedLen(((10, 11), 4..9)),
+            ),
             2..10,
         )],
     );
@@ -330,7 +340,7 @@ fn fixed() {
     let expected_res = Expr::Read(
         (1, 0..1),
         vec![(
-            Expr::GeomPiece(Type::ReadSeq, Size::FixedLen((10, 4..6))),
+            Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::FixedLen((10, 4..6))),
             2..7,
         )],
     );
@@ -350,7 +360,7 @@ fn fixed() {
 
 #[test]
 fn fixed_seq() {
-    let src = "1{f[GATCU]}2{r:}";
+    let src = "1{f[GACTU]}2{r:}";
 
     let (res, lex_err) = lexer().parse_recovery(src);
 
@@ -364,7 +374,19 @@ fn fixed_seq() {
     let expected_res = Expr::Read(
         (1, 0..1),
         vec![(
-            Expr::GeomPiece(Type::FixedSeq, Size::FixedSeq(("GATCU".to_string(), 4..9))),
+            Expr::GeomPiece(
+                IntervalKind::FixedSeq,
+                IntervalShape::FixedSeq((
+                    vec![
+                        Nucleotide::G,
+                        Nucleotide::A,
+                        Nucleotide::C,
+                        Nucleotide::T,
+                        Nucleotide::U,
+                    ],
+                    4..9,
+                )),
+            ),
             2..10,
         )],
     );

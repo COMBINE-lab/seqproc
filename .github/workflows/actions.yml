@@ -1,0 +1,45 @@
+name: Run tests
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+  schedule:
+    - cron: "0 0 15 * 1/1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+      CARGO_NET_RETRY: 10
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+      RUSTFLAGS: -D warnings
+      RUSTDOCFLAGS: -D warnings
+      RUSTUP_MAX_RETRIES: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          target: x86_64-unknown-linux-gnu
+          toolchain: stable
+
+      - name: fmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --all --all-targets
+
+      - name: test
+        run: cargo test --all --all-targets --no-fail-fast
+
+      - name: doc
+        run: cargo doc --all

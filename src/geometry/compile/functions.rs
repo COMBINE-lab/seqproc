@@ -1,14 +1,15 @@
-/*
-   Compile functions read from parser
-   This is specifically for map as this point
-   but in the future when functions can accept
-   expressions with label references a seperate
-   place for this to happen will be useful
-*/
+//! Compile functions read from parser
+//! This is specifically for map as this point
+//! but in the future when functions can accept
+//! expressions with label references a seperate
+//! place for this to happen will be useful
 
 use std::ops::Deref;
 
-use crate::parser::{Expr, Function, Spanned};
+use crate::{
+    parser::{Expr, Function, Spanned},
+    Nucleotide,
+};
 
 use super::utils::{validate_expr, Error, GeometryMeta, GeometryPiece};
 
@@ -21,10 +22,10 @@ pub enum CompiledFunction {
     TruncateTo(usize),
     TruncateToLeft(usize),
     Remove,
-    Pad(usize, char),
-    PadLeft(usize, char),
-    PadTo(usize, char),
-    PadToLeft(usize, char),
+    Pad(usize, Nucleotide),
+    PadLeft(usize, Nucleotide),
+    PadTo(usize, Nucleotide),
+    PadToLeft(usize, Nucleotide),
     Normalize,
     Map(String, Vec<Spanned<CompiledFunction>>),
     MapWithMismatch(String, Vec<Spanned<CompiledFunction>>, usize),

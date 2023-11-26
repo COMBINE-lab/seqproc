@@ -2,6 +2,8 @@
 name = "seqproc"
 version = "0.1.0"
 edition = "2021"
+license = "BSD-3-Clause"
+repository = "https://github.com/COMBINE-lab/seqproc"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -13,7 +15,12 @@ name = "seqproc"
 path = "src/bin/bin.rs"
 
 [dependencies]
-chumsky="0.9.2"
-ariadne = "0.1.5"
-clap = { version = "4.2.1", features = ["derive"] }
-antisequence = { git = "https://github.com/noahcape/ANTISEQUENCE/", branch='my_dev' }
+antisequence = { git = "https://github.com/noahcape/ANTISEQUENCE/", branch = 'my_dev' }
+ariadne = "0.3.0"
+chumsky = "0.9.3"
+clap = { version = "4.4.8", features = ["derive"] }
+
+[dev-dependencies]
+assert_cmd = "2.0.12"
+similar-asserts = "1.5.0"
+tempdir = "0.3.7"

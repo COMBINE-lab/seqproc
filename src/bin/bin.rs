@@ -1,7 +1,7 @@
 use antisequence::{iter_fastq2, Reads};
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::{prelude::*, Stream};
-use clap::{arg, Parser as cParser};
+use clap::{arg, Parser as ClapParser};
 
 use seqproc::{
     compile::{compile, CompiledData},
@@ -10,7 +10,7 @@ use seqproc::{
 };
 
 /// General puprose sequence preprocessor
-#[derive(Debug, cParser)]
+#[derive(Debug, ClapParser)]
 pub struct Args {
     /// FGDL string
     #[arg(short, long)]
@@ -55,7 +55,7 @@ pub fn interpret(args: Args, compiled_data: CompiledData) {
         .unwrap_or_else(|e| panic!("{e}"))
         .boxed();
 
-    let read = compiled_data.interpret(read, out1, out2, additional);
+    let read = compiled_data.interpret(read, &out1, &out2, &additional);
 
     read.run_with_threads(threads)
 }

@@ -5,7 +5,7 @@ use super::{
 
 use std::{collections::HashMap, ops::Deref};
 
-use crate::parser::{Expr, Function, Size, Spanned};
+use crate::parser::{Expr, Function, IntervalShape, Spanned};
 
 pub fn validate_geometry(
     map: HashMap<String, GeometryMeta>,
@@ -34,10 +34,10 @@ pub fn validate_geometry(
         let (gp, span) = gm.expr.clone();
 
         let type_ = match gp.size {
-            Size::FixedSeq(_) => ReturnType::FixedSeq,
-            Size::FixedLen(_) => ReturnType::FixedLen,
-            Size::RangedLen(_) => ReturnType::Ranged,
-            Size::UnboundedLen => ReturnType::Unbounded,
+            IntervalShape::FixedSeq(_) => ReturnType::FixedSeq,
+            IntervalShape::FixedLen(_) => ReturnType::FixedLen,
+            IntervalShape::RangedLen(_) => ReturnType::Ranged,
+            IntervalShape::UnboundedLen => ReturnType::Unbounded,
         };
 
         if !expect_next.contains(&type_) {
@@ -172,7 +172,7 @@ pub fn compile_reads(
                                     fn_,
                                     (
                                         Expr::GeomPiece(
-                                            inner_expr.expr.0.type_.clone(),
+                                            inner_expr.expr.0.type_,
                                             inner_expr.expr.0.size.clone(),
                                         ),
                                         inner_expr.expr.1.clone(),

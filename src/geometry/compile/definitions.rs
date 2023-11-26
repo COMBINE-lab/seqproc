@@ -8,7 +8,7 @@ use std::{collections::HashMap, ops::Deref};
 use crate::parser::{Expr, Spanned};
 
 // validate definitions there should be no labels, just labeled geom peices and functions
-fn validate_definition(expr: Spanned<Expr>, label: String) -> Result<GeometryMeta, Error> {
+fn validate_definition(expr: Spanned<Expr>, label: &str) -> Result<GeometryMeta, Error> {
     let mut stack: Vec<Spanned<CompiledFunction>> = vec![];
     let mut expr = expr;
 
@@ -34,7 +34,7 @@ fn validate_definition(expr: Spanned<Expr>, label: String) -> Result<GeometryMet
             GeometryPiece {
                 type_,
                 size,
-                label: Some(label),
+                label: Some(label.to_owned()),
             },
             span,
         )
@@ -61,7 +61,7 @@ pub fn compile_definitions(expr: Spanned<Expr>) -> Result<HashMap<String, Geomet
                 let label = label.deref().clone();
 
                 if let Expr::Label((l, span)) = label {
-                    let res = validate_definition(expr.clone(), l.clone());
+                    let res = validate_definition(expr.clone(), &l);
                     if let Err(e) = res {
                         err = Some(e);
                         break;

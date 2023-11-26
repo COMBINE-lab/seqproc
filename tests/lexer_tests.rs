@@ -24,11 +24,11 @@ fn tokens() {
     assert_eq!(
         vec![
             (Token::Label("bc1".to_string()), 0..3),
-            (Token::Special('='), 4..5),
+            (Token::Equals, 4..5),
             (Token::Barcode, 6..7),
-            (Token::Ctrl('['), 7..8),
+            (Token::LBracket, 7..8),
             (Token::Num(10), 8..10),
-            (Token::Ctrl(']'), 10..11),
+            (Token::RBracket, 10..11),
         ],
         lexer().parse(src).unwrap()
     )
@@ -66,15 +66,15 @@ fn precidence() {
 
     let result = vec![
         &Token::Barcode,
-        &Token::Ctrl('['),
+        &Token::LBracket,
         &Token::Num(1),
-        &Token::Special('-'),
+        &Token::Dash,
         &Token::Num(2),
-        &Token::Ctrl(']'),
+        &Token::RBracket,
         &Token::TransformTo,
         &Token::Num(1),
-        &Token::Ctrl('{'),
-        &Token::Ctrl('}'),
+        &Token::LBrace,
+        &Token::RBrace,
     ];
 
     assert_eq!(
@@ -93,11 +93,11 @@ fn map_vs_with_mismatch() {
 
     let result = vec![
         &Token::Map,
-        &Token::Ctrl('('),
-        &Token::Ctrl(')'),
+        &Token::LParen,
+        &Token::RParen,
         &Token::MapWithMismatch,
-        &Token::Ctrl('('),
-        &Token::Ctrl(')'),
+        &Token::LParen,
+        &Token::RParen,
     ];
 
     assert_eq!(
@@ -116,18 +116,18 @@ fn arguments() {
 
     let result = vec![
         &Token::Map,
-        &Token::Ctrl('('),
+        &Token::LParen,
         &Token::FixedSeq,
-        &Token::Ctrl('['),
+        &Token::LBracket,
         &Token::A,
         &Token::T,
         &Token::G,
-        &Token::Ctrl(']'),
-        &Token::Ctrl(','),
+        &Token::RBracket,
+        &Token::Comma,
         &Token::Arg(0),
-        &Token::Ctrl(','),
+        &Token::Comma,
         &Token::Self_,
-        &Token::Ctrl(')'),
+        &Token::RParen,
     ];
 
     assert_eq!(
