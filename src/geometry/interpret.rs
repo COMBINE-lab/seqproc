@@ -217,7 +217,7 @@ impl GeometryMeta {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
-        let seq_name = label.get(0).unwrap();
+        let seq_name = label.first().unwrap();
 
         let this_label = if let Some(l) = self_label {
             format!("{seq_name}{l}")
@@ -253,7 +253,7 @@ impl GeometryMeta {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
-        let seq_name = label.get(0).unwrap();
+        let seq_name = label.first().unwrap();
 
         let this_label = if let Some(l) = self_label {
             format!("{seq_name}{l}")
@@ -321,7 +321,7 @@ impl GeometryMeta {
         // execute the processing for next
 
         let (init_label, cur_label) = labels(label);
-        let seq_name = label.get(0).unwrap();
+        let seq_name = label.first().unwrap();
 
         let mut left_label = label.to_owned();
 
