@@ -20,13 +20,11 @@ pub fn validate_geometry(
     let mut iter = geom.iter();
 
     loop {
-        let next = iter.next();
-
-        if next.is_none() {
+        let Some(next) = iter.next() else {
             break;
-        }
+        };
 
-        let gm = match next.unwrap() {
+        let gm = match next {
             (Interval::Named(l), _) => map.get(l).unwrap(),
             (Interval::Temporary(gp_), _) => gp_,
         };
