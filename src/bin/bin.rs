@@ -63,9 +63,9 @@ pub fn interpret(args: Args, compiled_data: CompiledData) {
 fn main() {
     let args: Args = Args::parse();
 
-    let geom = std::fs::read_to_string(args.geom.clone()).unwrap();
+    let geom = std::fs::read_to_string(&args.geom).unwrap();
 
-    let (tokens, mut errs) = lexer::lexer().parse_recovery(geom.clone());
+    let (tokens, mut errs) = lexer::lexer().parse_recovery(&*geom);
 
     let parse_errs = if let Some(tokens) = &tokens {
         let (ast, parse_errs) = parser().parse_recovery(Stream::from_iter(

@@ -43,7 +43,7 @@ impl CompiledData {
 
         for (i, read_geometry) in geometry.iter().enumerate() {
             read = interpret_geometry(
-                read_geometry.to_vec(),
+                read_geometry,
                 read,
                 &format!("seq{}.", i + 1),
                 "r",
@@ -79,14 +79,14 @@ impl CompiledData {
 }
 
 fn interpret_geometry(
-    geometry: Vec<GeometryMeta>,
+    geometry: &[GeometryMeta],
     read: BoxedReads,
     init_label: &str,
     right: &str,
     left: &str,
     additional_args: &[String],
 ) -> BoxedReads {
-    let mut geometry_iter = geometry.into_iter();
+    let mut geometry_iter = geometry.iter();
 
     let mut read = read;
 
@@ -308,7 +308,7 @@ impl GeometryMeta {
 
     fn interpret_dual(
         &self,
-        prev: Self,
+        prev: &Self,
         read: BoxedReads,
         label: &[String],
         right: &str,

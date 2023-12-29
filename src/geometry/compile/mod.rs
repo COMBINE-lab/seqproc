@@ -81,7 +81,7 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
             .collect::<Vec<_>>();
 
         if let Some((transformation, map)) = compiled_transformation {
-            let transformation = label_transformation(transformation, numbered_labels);
+            let transformation = label_transformation(transformation, &numbered_labels);
 
             let geometry = standardize_geometry(&mut map.clone(), geometry);
 

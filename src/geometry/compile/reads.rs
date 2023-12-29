@@ -8,8 +8,8 @@ use std::{collections::HashMap, ops::Deref};
 use crate::parser::{Expr, Function, IntervalShape, Spanned};
 
 pub fn validate_geometry(
-    map: HashMap<String, GeometryMeta>,
-    geom: Vec<(Interval, usize)>,
+    map: &HashMap<String, GeometryMeta>,
+    geom: &[(Interval, usize)],
 ) -> Result<(), Error> {
     let mut expect_next = vec![
         ReturnType::FixedLen,
@@ -17,16 +17,11 @@ pub fn validate_geometry(
         ReturnType::Unbounded,
         ReturnType::Ranged,
     ];
-    let mut iter = geom.iter();
 
-    loop {
-        let Some(next) = iter.next() else {
-            break;
-        };
-
-        let gm = match next {
-            (Interval::Named(l), _) => map.get(l).unwrap(),
-            (Interval::Temporary(gp_), _) => gp_,
+    for (interval, _) in geom {
+        let gm = match interval {
+            Interval::Named(l) => map.get(l).unwrap(),
+            Interval::Temporary(gp_) => gp_,
         };
 
         let (gp, span) = gm.expr.clone();
@@ -239,7 +234,7 @@ pub fn compile_reads(
             }
         }
 
-        if let Err(e) = validate_geometry(map.clone(), read_geom.clone()) {
+        if let Err(e) = validate_geometry(map, &read_geom) {
             err = Some(e);
             break 'outer_outer;
         }
