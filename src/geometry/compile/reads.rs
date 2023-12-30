@@ -221,7 +221,7 @@ pub fn compile_reads(
                 stack: compiled_stack,
             };
 
-            if let Err(e) = validate_expr(gm.clone()) {
+            if let Err(e) = gm.validate_expr() {
                 err = Some(e);
                 break 'outer;
             }

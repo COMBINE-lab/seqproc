@@ -111,7 +111,7 @@ fn compile(
                 });
             };
 
-            validate_expr(gp.clone())?;
+            gp.validate_expr()?;
 
             map.insert(label.clone(), gp);
 

@@ -11,7 +11,7 @@ use crate::{
     Nucleotide,
 };
 
-use super::utils::{validate_expr, Error, GeometryMeta, GeometryPiece};
+use super::utils::{Error, GeometryMeta, GeometryPiece};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CompiledFunction {
@@ -130,11 +130,13 @@ fn compile_inner_expr(
         }
     };
 
-    // check this and return esult from this function
-    validate_expr(GeometryMeta {
+    // check this and return result from this function
+    let gm = GeometryMeta {
         expr: (geom_piece, expr.1),
-        stack: stack.clone(),
-    })?;
+        stack,
+    };
 
-    Ok(stack)
+    gm.validate_expr()?;
+
+    Ok(gm.stack)
 }

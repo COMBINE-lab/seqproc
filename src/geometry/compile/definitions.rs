@@ -44,7 +44,7 @@ fn validate_definition(expr: Spanned<Expr>, label: &str) -> Result<GeometryMeta,
 
     let gp = GeometryMeta { expr: gp, stack };
 
-    validate_expr(gp)
+    gp.validate_expr().map(|()| gp)
 }
 
 pub fn compile_definitions(expr: Spanned<Expr>) -> Result<HashMap<String, GeometryMeta>, Error> {

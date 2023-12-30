@@ -11,7 +11,7 @@ pub type Geometry = Vec<Vec<(Interval, usize)>>;
 
 pub type Transformation = Vec<Vec<String>>;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ReturnType {
     Ranged,
     FixedLen,
@@ -92,53 +92,46 @@ impl fmt::Display for GeometryPiece {
     }
 }
 
-pub fn validate_expr(gp: GeometryMeta) -> Result<GeometryMeta, Error> {
-    gp_return_type(gp.clone())?;
+impl GeometryMeta {
+    pub fn validate_expr(&self) -> Result<(), Error> {
+        let (expr, expr_span) = &self.expr;
 
-    Ok(gp)
-}
-
-pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
-    let (expr, expr_span) = gp.clone().expr;
-
-    let expr_type = {
-        if let IntervalKind::Discard = expr.type_ {
-            ReturnType::Void
-        } else {
-            match expr.size {
-                IntervalShape::FixedSeq(_) => ReturnType::FixedSeq,
-                IntervalShape::FixedLen(_) => ReturnType::FixedLen,
-                IntervalShape::RangedLen(_) => ReturnType::Ranged,
-                IntervalShape::UnboundedLen => ReturnType::Unbounded,
+        let expr_type = {
+            if let IntervalKind::Discard = expr.type_ {
+                ReturnType::Void
+            } else {
+                match expr.size {
+                    IntervalShape::FixedSeq(_) => ReturnType::FixedSeq,
+                    IntervalShape::FixedLen(_) => ReturnType::FixedLen,
+                    IntervalShape::RangedLen(_) => ReturnType::Ranged,
+                    IntervalShape::UnboundedLen => ReturnType::Unbounded,
+                }
             }
+        };
+
+        let mut return_type = (expr_type, expr_span.clone());
+
+        for (fn_, span) in self.stack.iter().rev() {
+            return_type = validate_composition((fn_, span.clone()), return_type, &expr.size)?;
         }
-    };
 
-    let mut return_type = (expr_type, expr_span);
-
-    for fn_ in gp.stack.into_iter().rev() {
-        return_type = validate_composition(fn_, return_type, expr.clone().size)?;
+        Ok(())
     }
-
-    Ok(return_type.0)
 }
 
 pub fn validate_composition(
-    fn_: Spanned<CompiledFunction>,
-    return_type: Spanned<ReturnType>,
-    size: IntervalShape,
+    (fn_, fn_span): Spanned<&CompiledFunction>,
+    (return_type, return_type_span): Spanned<ReturnType>,
+    size: &IntervalShape,
 ) -> Result<Spanned<ReturnType>, Error> {
-    let (fn_, fn_span) = fn_;
-    let (return_type, return_type_span) = return_type;
-
     let (min, max) = match size {
         IntervalShape::FixedSeq((seq, _)) => (0, seq.len()),
-        IntervalShape::FixedLen((n, _)) => (0, n),
-        IntervalShape::RangedLen(((a, b), _)) => (a, b),
+        &IntervalShape::FixedLen((n, _)) => (0, n),
+        &IntervalShape::RangedLen(((a, b), _)) => (a, b),
         IntervalShape::UnboundedLen => (100, 100),
     };
 
-    match fn_ {
+    match *fn_ {
         CompiledFunction::ReverseComp => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
