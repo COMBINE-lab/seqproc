@@ -38,9 +38,7 @@ impl fmt::Display for IntervalShape {
     }
 }
 
-/// An invocation of an [EFDGL transformation][1].
-///
-/// [1]: https://efgdl-spec.readthedocs.io/en/latest/transformations.html
+/// An invocation of an [EFDGL transformation](https://efgdl-spec.readthedocs.io/en/latest/transformations.html).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Function {
     /// `rev(I)`
@@ -67,9 +65,13 @@ pub enum Function {
     PadToLeft(usize, Nucleotide),
     /// `norm(I)`
     Normalize,
+    /// `map(I, A, F)`
     Map(String, S<Box<Expr>>),
+    /// `map_with_mismatch(I, A, F, n)`
     MapWithMismatch(String, S<Box<Expr>>, usize),
+    /// `map_with_mismatch(I, A, F, n)`
     FilterWithinDist(String, usize),
+    /// `hamming(F, n)`
     Hamming(usize),
 }
 
@@ -128,11 +130,8 @@ impl fmt::Display for IntervalKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
-    Error,
     Self_,
-    Argument(usize),
     Label(S<String>),
-    Type(S<IntervalKind>),
     GeomPiece(IntervalKind, IntervalShape),
     LabeledGeomPiece(Box<Self>, S<Box<Self>>),
     Function(S<Function>, S<Box<Self>>),
@@ -146,11 +145,8 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Expr::*;
         match self {
-            Error => write!(f, "Error"),
-            Argument(n) => write!(f, "argument {n}"),
             Self_ => write!(f, "self"),
             Label(S(s, _)) => write!(f, "{s}"),
-            Type(S(t, _)) => write!(f, "{t}"),
             GeomPiece(t, s) => write!(f, "{t}{s}"),
             LabeledGeomPiece(l, box_) => {
                 let S(expr, _) = box_;
