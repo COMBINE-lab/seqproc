@@ -27,7 +27,7 @@ impl fmt::Display for IntervalShape {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use IntervalShape::*;
         match self {
-            FixedLen(S(n, _)) => write!(f, "[{}]", n),
+            FixedLen(S(n, _)) => write!(f, "[{n}]"),
             FixedSeq(S(s, _)) => {
                 f.write_char('[')?;
                 for nuc in s {
@@ -35,7 +35,7 @@ impl fmt::Display for IntervalShape {
                 }
                 f.write_char(']')
             }
-            RangedLen(S((a, b), _)) => write!(f, "[{}-{}]", a, b),
+            RangedLen(S((a, b), _)) => write!(f, "[{a}-{b}]"),
             UnboundedLen => f.write_char(':'),
         }
     }
@@ -82,26 +82,26 @@ impl fmt::Display for Function {
         match self {
             Reverse => write!(f, "rev"),
             ReverseComp => write!(f, "revcomp"),
-            Truncate(n) => write!(f, "trunc({}", n),
-            TruncateLeft(n) => write!(f, "trunc_left({}", n),
-            TruncateTo(n) => write!(f, "trunc_to({}", n),
-            TruncateToLeft(n) => write!(f, "trunc_to_left({}", n),
+            Truncate(n) => write!(f, "trunc({n}"),
+            TruncateLeft(n) => write!(f, "trunc_left({n}"),
+            TruncateTo(n) => write!(f, "trunc_to({n}"),
+            TruncateToLeft(n) => write!(f, "trunc_to_left({n}"),
             Remove => write!(f, "remove"),
-            Pad(n, nuc) => write!(f, "pad({}, {}", n, nuc),
-            PadLeft(n, nuc) => write!(f, "pad_left({}, {}", n, nuc),
-            PadTo(n, nuc) => write!(f, "pad_to({}, {}", n, nuc),
-            PadToLeft(n, nuc) => write!(f, "pad_to_left({}, {}", n, nuc),
+            Pad(n, nuc) => write!(f, "pad({n}, {nuc}"),
+            PadLeft(n, nuc) => write!(f, "pad_left({n}, {nuc}"),
+            PadTo(n, nuc) => write!(f, "pad_to({n}, {nuc}"),
+            PadToLeft(n, nuc) => write!(f, "pad_to_left({n}, {nuc}"),
             Normalize => write!(f, "norm"),
             Map(p, b) => {
                 let S(s, _) = b.deref();
-                write!(f, "map({}, {}", p, s)
+                write!(f, "map({p}, {s}")
             }
             MapWithMismatch(p, b, n) => {
                 let S(s, _) = b.deref();
-                write!(f, "map_with_mismatch({}, {}, {}", p, s, n)
+                write!(f, "map_with_mismatch({p}, {s}, {n}")
             }
-            FilterWithinDist(p, n) => write!(f, "filter_within_dist({}, {}", p, n),
-            Hamming(n) => write!(f, "hamming({}", n),
+            FilterWithinDist(p, n) => write!(f, "filter_within_dist({p}, {n}"),
+            Hamming(n) => write!(f, "hamming({n}"),
         }
     }
 }
@@ -152,17 +152,17 @@ impl fmt::Display for Expr {
             Error => write!(f, "Error"),
             Argument(n) => write!(f, "argument {n}"),
             Self_ => write!(f, "self"),
-            Label(S(s, _)) => write!(f, "{}", s),
-            Type(S(t, _)) => write!(f, "{}", t),
-            GeomPiece(t, s) => write!(f, "{}{}", t, s),
+            Label(S(s, _)) => write!(f, "{s}"),
+            Type(S(t, _)) => write!(f, "{t}"),
+            GeomPiece(t, s) => write!(f, "{t}{s}"),
             LabeledGeomPiece(l, box_) => {
                 let S(expr, _) = box_.deref();
 
-                write!(f, "{}={}", l, expr)
+                write!(f, "{l}={expr}")
             }
             Function(S(fn_, _), box_) => {
                 let S(expr, _) = box_.deref();
-                write!(f, "{}({}))", fn_, expr)
+                write!(f, "{fn_}({expr}))")
             }
             Read(S(n, _), exprs) => write!(
                 f,
@@ -193,13 +193,13 @@ impl fmt::Display for Expr {
             ),
             Description(d, r, t) => {
                 let d_w = if let Some(S(d, _)) = d.deref() {
-                    Some(format!("{}", d))
+                    Some(format!("{d}"))
                 } else {
                     None
                 };
 
                 let t_w = if let S(Some(t), _) = t.deref() {
-                    Some(format!("{}", t))
+                    Some(format!("{t}"))
                 } else {
                     None
                 };
@@ -214,12 +214,12 @@ impl fmt::Display for Expr {
 
                 if let Some(d_s) = d_w {
                     if let Some(t_s) = t_w {
-                        write!(f, "{}\n{}\n{}", d_s, r_w, t_s)
+                        write!(f, "{d_s}\n{r_w}\n{t_s}")
                     } else {
-                        write!(f, "{}\n{}", d_s, r_w)
+                        write!(f, "{d_s}\n{r_w}")
                     }
                 } else {
-                    write!(f, "{}", r_w)
+                    write!(f, "{r_w}")
                 }
             }
         }

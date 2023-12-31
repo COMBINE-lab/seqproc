@@ -146,7 +146,7 @@ brc1 = b[1-4]
     let res = if let Some(def) = res.deref() {
         def
     } else {
-        panic!("No definitions in {}", src)
+        panic!("No definitions in {src}")
     };
 
     let def_map = compile_definitions(res.clone())?;
@@ -180,7 +180,7 @@ brc = b[1-4]
     let res = if let Some(def) = res.deref() {
         def
     } else {
-        panic!("No definitions in {}", src)
+        panic!("No definitions in {src}")
     };
 
     let def_map = compile_definitions(res.clone());
@@ -322,7 +322,7 @@ brc1 = pad(<brc>, 1, A)
     let res = if let Some(def) = res.deref() {
         def
     } else {
-        panic!("No definitions in {}", src)
+        panic!("No definitions in {src}")
     };
 
     let def_map = compile_definitions(res.clone());

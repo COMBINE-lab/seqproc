@@ -11,7 +11,7 @@ fn get_selector(label: &str, attr: &str) -> SelectorExpr {
     if attr.is_empty() {
         return SelectorExpr::new(label.as_bytes()).unwrap();
     }
-    SelectorExpr::new(format!("{}.{}", label, attr).as_bytes()).unwrap()
+    SelectorExpr::new(format!("{label}.{attr}").as_bytes()).unwrap()
 }
 
 pub fn set(read: BoxedReads, sel_expr: SelectorExpr, label: &str, transform: &str) -> BoxedReads {
@@ -117,7 +117,7 @@ pub fn filter(
     let sel_expr = get_selector(label, attr);
     let sel_retain_expr = get_selector(label, "_f");
 
-    let tr_expr = TransformExpr::new(format!("{0} -> {0}._f", label).as_bytes()).unwrap();
+    let tr_expr = TransformExpr::new(format!("{label} -> {label}._f").as_bytes()).unwrap();
 
     read.filter(sel_expr, tr_expr, filename, mismatch)
         .retain(sel_retain_expr)
@@ -126,7 +126,7 @@ pub fn filter(
 
 pub fn map(read: BoxedReads, label: &str, attr: &str, file: String, mismatch: usize) -> BoxedReads {
     let sel_expr = get_selector(label, attr);
-    let tr_expr = TransformExpr::new(format!("{0} -> {0}.not_mapped", label).as_bytes()).unwrap();
+    let tr_expr = TransformExpr::new(format!("{label} -> {label}.not_mapped").as_bytes()).unwrap();
 
     read.map(sel_expr, tr_expr, file, mismatch).boxed()
 }
@@ -156,16 +156,12 @@ pub fn process_sequence(
     match_type: iter::MatchType,
 ) -> Box<dyn Reads> {
     let tr_expr = match match_type {
-        PrefixAln { .. } => TransformExpr::new(
-            format!("{} -> {}, {}", starting_label, this_label, next_label).as_bytes(),
-        )
-        .unwrap(),
+        PrefixAln { .. } => {
+            TransformExpr::new(format!("{starting_label} -> {this_label}, {next_label}").as_bytes())
+                .unwrap()
+        }
         ExactSearch | HammingSearch(_) => TransformExpr::new(
-            format!(
-                "{} -> {}, {}, {}",
-                starting_label, prev_label, this_label, next_label
-            )
-            .as_bytes(),
+            format!("{starting_label} -> {prev_label}, {this_label}, {next_label}").as_bytes(),
         )
         .unwrap(),
         _ => unreachable!(),

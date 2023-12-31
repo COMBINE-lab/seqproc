@@ -43,7 +43,7 @@ fn definition() {
     let res = if let Some(def) = res.deref() {
         def
     } else {
-        panic!("No definitions in {}", src)
+        panic!("No definitions in {src}")
     };
 
     assert_eq!(0, lex_err.len());
@@ -87,7 +87,7 @@ fn transformation() {
     let res = if let S(Some(trans), _) = res.deref() {
         trans
     } else {
-        panic!("No transformation in {}", src)
+        panic!("No transformation in {src}")
     };
 
     assert_eq!(0, lex_err.len());

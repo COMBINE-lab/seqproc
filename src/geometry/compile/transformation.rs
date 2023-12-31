@@ -56,7 +56,7 @@ fn compile(
             _ => {
                 return Err(Error {
                     span,
-                    msg: format!("Expected a Read found {}", read),
+                    msg: format!("Expected a Read found {read}"),
                 });
             }
         };
@@ -109,7 +109,7 @@ fn compile(
             } else {
                 return Err(Error {
                     span: label_span,
-                    msg: format!("Variable with name \"{}\" found", label),
+                    msg: format!("Variable with name \"{label}\" found"),
                 });
             };
 
@@ -150,7 +150,7 @@ pub fn label_transformation(
         for l in t {
             let num = find_num(&l, numbered_labels);
 
-            inner_transformation.push(format!("seq{num}.{}", l));
+            inner_transformation.push(format!("seq{num}.{l}"));
         }
 
         numbered_transformation.push(inner_transformation);

@@ -71,8 +71,7 @@ pub fn compile_definitions(
                             // span labels
                             span,
                             msg: format!(
-                                "Repeated label in definition block: \"{}\" already defined",
-                                l
+                                "Repeated label in definition block: \"{l}\" already defined"
                             ),
                         });
                         break;
@@ -80,7 +79,7 @@ pub fn compile_definitions(
                 } else {
                     err = Some(Error {
                         span: def_span,
-                        msg: format!("Expected a Labeled Geometry piece, found: {}", def),
+                        msg: format!("Expected a Labeled Geometry piece, found: {def}"),
                     })
                 }
             }
@@ -94,7 +93,7 @@ pub fn compile_definitions(
     } else {
         Err(Error {
             span: expr_span,
-            msg: format!("Expected a definition block, found: {}", expr),
+            msg: format!("Expected a definition block, found: {expr}"),
         })
     }
 }

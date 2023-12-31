@@ -122,7 +122,7 @@ fn compile_inner_expr(
         } else {
             return Err(Error {
                 span,
-                msg: format!("Expected geometry peice found: {}", expr),
+                msg: format!("Expected geometry peice found: {expr}"),
             });
         }
     };

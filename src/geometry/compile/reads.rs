@@ -38,10 +38,7 @@ pub fn validate_geometry(
         if !expect_next.contains(&type_) {
             return Err(Error {
                 span,
-                msg: format!(
-                    "Ambiguous Geometry: expected {:?}, found: {}",
-                    expect_next, type_
-                ),
+                msg: format!("Ambiguous Geometry: expected {expect_next:?}, found: {type_}"),
             });
         }
 
@@ -105,7 +102,7 @@ pub fn compile_reads(
         } else {
             return Err(Error {
                 span,
-                msg: format!("Expected a Read found {}", read),
+                msg: format!("Expected a Read found {read}"),
             });
         };
 
@@ -128,7 +125,7 @@ pub fn compile_reads(
                             if labels.contains(l) || map.clone().contains_key(l) {
                                 err = Some(Error {
                                     span: span.clone(),
-                                    msg: format!("Variable: {}, already defined above.", l),
+                                    msg: format!("Variable: {l}, already defined above."),
                                 });
 
                                 break 'outer;
@@ -151,8 +148,7 @@ pub fn compile_reads(
                             err = Some(Error {
                                 span: span.clone(),
                                 msg: format!(
-                                    "`{}` has already been used. Cannot use same variable more than once.",
-                                    l
+                                    "`{l}` has already been used. Cannot use same variable more than once."
                                 ),
                             });
 
@@ -185,7 +181,7 @@ pub fn compile_reads(
                         } else {
                             err = Some(Error {
                                 span: span.clone(),
-                                msg: format!("No variable declared with label: {}", l),
+                                msg: format!("No variable declared with label: {l}"),
                             });
 
                             break 'outer;

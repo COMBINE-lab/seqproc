@@ -98,7 +98,7 @@ impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Token::*;
         match self {
-            Num(n) => write!(f, "{}", n),
+            Num(n) => write!(f, "{n}"),
             LParen => f.write_char('('),
             RParen => f.write_char(')'),
             LBracket => f.write_char('['),

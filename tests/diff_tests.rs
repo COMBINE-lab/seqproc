@@ -34,11 +34,11 @@ fn run_tests() -> Result<(), Box<dyn Error>> {
     for entry in in_dir_path.read_dir()? {
         let entry = entry?;
         let entry_name = &*entry.file_name().into_string().unwrap();
-        let fgdl = &*fgdl_dir_path.join(format!("{}.fgdl", entry_name));
-        let in_1 = &*entry.path().join(format!("{}_l.fastq", entry_name));
-        let in_2 = &*entry.path().join(format!("{}_r.fastq", entry_name));
-        let out = &*out_dir.path().join(format!("{}.fastq", entry_name));
-        let expected_out = &*expected_out_dir_path.join(format!("{}.fastq", entry_name));
+        let fgdl = &*fgdl_dir_path.join(format!("{entry_name}.fgdl"));
+        let in_1 = &*entry.path().join(format!("{entry_name}_l.fastq"));
+        let in_2 = &*entry.path().join(format!("{entry_name}_r.fastq"));
+        let out = &*out_dir.path().join(format!("{entry_name}.fastq"));
+        let expected_out = &*expected_out_dir_path.join(format!("{entry_name}.fastq"));
 
         let in_dir_entries = entry.path().read_dir()?;
         let in_dir_entries: Vec<DirEntry> = in_dir_entries.collect::<Result<_, _>>()?;
@@ -88,7 +88,7 @@ fn run_tests() -> Result<(), Box<dyn Error>> {
         eprintln!("Running `{}`", cmd_str.to_string_lossy());
 
         let status = cmd.status()?;
-        eprintln!("Status: {}", status);
+        eprintln!("Status: {status}");
         let output = fs::read(out)?;
         let expected = fs::read(expected_out)?;
         if output == expected {

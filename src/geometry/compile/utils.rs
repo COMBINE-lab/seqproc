@@ -61,8 +61,8 @@ impl fmt::Display for Interval {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Interval::*;
         match self {
-            Named(s) => write!(f, "Label: {}", s),
-            Temporary(gp) => write!(f, "{}", gp),
+            Named(s) => write!(f, "Label: {s}"),
+            Temporary(gp) => write!(f, "{gp}"),
         }
     }
 }
@@ -222,8 +222,7 @@ pub fn validate_composition(
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
-                    "Function Normalize must take ranged element an argument, found: {}",
-                    return_type
+                    "Function Normalize must take ranged element an argument, found: {return_type}"
                 ),
             }),
         },
@@ -234,8 +233,7 @@ pub fn validate_composition(
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
-                    "Function Map can recieve a Ranged or Fixed piece as an argument, found: {}",
-                    return_type
+                    "Function Map can recieve a Ranged or Fixed piece as an argument, found: {return_type}"
                 ),
             }),
         },
@@ -245,8 +243,7 @@ pub fn validate_composition(
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
-                    "Function Filter can recieve a Ranged or Fixed piece as an argument, found: {}",
-                    return_type
+                    "Function Filter can recieve a Ranged or Fixed piece as an argument, found: {return_type}"
                 ),
             }),
         },
@@ -255,8 +252,7 @@ pub fn validate_composition(
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
-                    "Function Hamming must take Sequence element an argument, found: {}",
-                    return_type
+                    "Function Hamming must take Sequence element an argument, found: {return_type}"
                 ),
             }),
         },
