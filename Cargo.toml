@@ -24,3 +24,9 @@ clap = { version = "4.4.8", features = ["derive"] }
 assert_cmd = "2.0.12"
 similar-asserts = "1.5.0"
 tempdir = "0.3.7"
+
+[lints.rust]
+rust_2018_idioms = "warn"
+
+[lints.clippy]
+semicolon_if_nothing_returned = "warn"

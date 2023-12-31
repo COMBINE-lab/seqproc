@@ -21,7 +21,7 @@ pub enum ReturnType {
 }
 
 impl fmt::Display for ReturnType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ReturnType::*;
         match self {
             Ranged => write!(f, "Ranged"),
@@ -40,7 +40,7 @@ pub struct Error {
 }
 
 impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "Error: {}, at {}-{}",
@@ -58,7 +58,7 @@ pub enum Interval {
 }
 
 impl fmt::Display for Interval {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Interval::*;
         match self {
             Named(s) => write!(f, "Label: {s}"),
@@ -81,13 +81,13 @@ pub struct GeometryPiece {
 }
 
 impl fmt::Display for GeometryMeta {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Geometry Meta: {}, {:?}", self.expr.0, self.stack)
     }
 }
 
 impl fmt::Display for GeometryPiece {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}: {}, {}", self.label, self.type_, self.size)
     }
 }

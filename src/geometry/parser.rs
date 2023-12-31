@@ -24,7 +24,7 @@ pub enum IntervalShape {
 }
 
 impl fmt::Display for IntervalShape {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use IntervalShape::*;
         match self {
             FixedLen(S(n, _)) => write!(f, "[{n}]"),
@@ -77,7 +77,7 @@ pub enum Function {
 }
 
 impl fmt::Display for Function {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Function::*;
         match self {
             Reverse => write!(f, "rev"),
@@ -117,7 +117,7 @@ pub enum IntervalKind {
 }
 
 impl fmt::Display for IntervalKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use IntervalKind::*;
         match self {
             Barcode => write!(f, "Barcode"),
@@ -146,7 +146,7 @@ pub enum Expr {
 }
 
 impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Expr::*;
         match self {
             Error => write!(f, "Error"),
