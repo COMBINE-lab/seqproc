@@ -11,7 +11,7 @@ use utils::Error;
 
 use std::{collections::HashMap, ops::Deref};
 
-use crate::parser::Expr;
+use crate::{parser::Expr, S};
 
 use self::{
     reads::standardize_geometry,
@@ -50,8 +50,8 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
         };
 
         // this needs a bit more thought
-        let compiled_transformation = if let (Some(transform), span) = t.deref() {
-            let res = compile_transformation((transform.clone(), span.clone()), &mut map);
+        let compiled_transformation = if let S(Some(transform), span) = t.deref() {
+            let res = compile_transformation(S(transform.clone(), span.clone()), &mut map);
 
             if let Err(e) = res {
                 return Err(e);

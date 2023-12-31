@@ -4,7 +4,7 @@ use chumsky::{prelude::*, Stream};
 use seqproc::{
     lexer::lexer,
     parser::{parser, Expr, Function, IntervalKind, IntervalShape},
-    Nucleotide,
+    Nucleotide, S,
 };
 
 #[test]
@@ -20,12 +20,12 @@ fn definition() {
     let (res, parser_err) =
         parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    let expected_res = (
-        Expr::Definitions(vec![(
+    let expected_res = S(
+        Expr::Definitions(vec![S(
             Expr::LabeledGeomPiece(
-                Box::new(Expr::Label(("brc".to_string(), 0..3))),
-                Box::new((
-                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen((10, 8..10))),
+                Box::new(Expr::Label(S("brc".to_string(), 0..3))),
+                Box::new(S(
+                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen(S(10, 8..10))),
                     6..11,
                 )),
             ),
@@ -66,12 +66,12 @@ fn transformation() {
 
     let expected_res = Expr::Transform(vec![
         Expr::Read(
-            (1, 16..17),
-            vec![(Expr::Label(("t".to_string(), 18..21)), 18..21)],
+            S(1, 16..17),
+            vec![S(Expr::Label(S("t".to_string(), 18..21)), 18..21)],
         ),
         Expr::Read(
-            (2, 22..23),
-            vec![(
+            S(2, 22..23),
+            vec![S(
                 Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::UnboundedLen),
                 24..26,
             )],
@@ -84,7 +84,7 @@ fn transformation() {
         unreachable!()
     };
 
-    let res = if let (Some(trans), _) = res.deref() {
+    let res = if let S(Some(trans), _) = res.deref() {
         trans
     } else {
         panic!("No transformation in {}", src)
@@ -130,11 +130,11 @@ fn hamming() {
         parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+        S(1, 0..1),
+        vec![S(
             Expr::Function(
-                (Function::Hamming(1), 2..9),
-                Box::new((Expr::Label(("brc".to_string(), 10..15)), 10..18)),
+                S(Function::Hamming(1), 2..9),
+                Box::new(S(Expr::Label(S("brc".to_string(), 10..15)), 10..18)),
             ),
             2..19,
         )],
@@ -165,11 +165,11 @@ fn remove() {
         parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+        S(1, 0..1),
+        vec![S(
             Expr::Function(
-                (Function::Remove, 2..8),
-                Box::new((Expr::Label(("brc".to_string(), 9..14)), 9..14)),
+                S(Function::Remove, 2..8),
+                Box::new(S(Expr::Label(S("brc".to_string(), 9..14)), 9..14)),
             ),
             2..15,
         )],
@@ -218,14 +218,14 @@ fn nested() {
         parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+        S(1, 0..1),
+        vec![S(
             Expr::Function(
-                (Function::Reverse, 2..5),
-                Box::new((
+                S(Function::Reverse, 2..5),
+                Box::new(S(
                     Expr::Function(
-                        (Function::Normalize, 6..10),
-                        Box::new((Expr::Label(("brc".to_string(), 11..16)), 11..16)),
+                        S(Function::Normalize, 6..10),
+                        Box::new(S(Expr::Label(S("brc".to_string(), 11..16)), 11..16)),
                     ),
                     6..17,
                 )),
@@ -261,11 +261,11 @@ fn labeled_unbounded() {
         parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+        S(1, 0..1),
+        vec![S(
             Expr::LabeledGeomPiece(
-                Box::new(Expr::Label(("barcode".to_string(), 3..12))),
-                Box::new((
+                Box::new(Expr::Label(S("barcode".to_string(), 3..12))),
+                Box::new(S(
                     Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::UnboundedLen),
                     2..13,
                 )),
@@ -301,11 +301,11 @@ fn ranged() {
         parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+        S(1, 0..1),
+        vec![S(
             Expr::GeomPiece(
                 IntervalKind::Barcode,
-                IntervalShape::RangedLen(((10, 11), 4..9)),
+                IntervalShape::RangedLen(S((10, 11), 4..9)),
             ),
             2..10,
         )],
@@ -338,9 +338,9 @@ fn fixed() {
         parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
-            Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::FixedLen((10, 4..6))),
+        S(1, 0..1),
+        vec![S(
+            Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::FixedLen(S(10, 4..6))),
             2..7,
         )],
     );
@@ -372,11 +372,11 @@ fn fixed_seq() {
         parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+        S(1, 0..1),
+        vec![S(
             Expr::GeomPiece(
                 IntervalKind::FixedSeq,
-                IntervalShape::FixedSeq((
+                IntervalShape::FixedSeq(S(
                     vec![
                         Nucleotide::G,
                         Nucleotide::A,

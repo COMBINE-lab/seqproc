@@ -1,11 +1,13 @@
-use super::{
-    functions::{compile_fn, CompiledFunction},
-    utils::*,
-};
-
 use std::{collections::HashMap, ops::Deref};
 
-use crate::parser::{Expr, Function, IntervalShape, Spanned};
+use crate::{
+    compile::{
+        functions::{compile_fn, CompiledFunction},
+        utils::*,
+    },
+    parser::{Expr, Function, IntervalShape},
+    S,
+};
 
 pub fn validate_geometry(
     map: &HashMap<String, GeometryMeta>,
@@ -24,7 +26,7 @@ pub fn validate_geometry(
             Interval::Temporary(gp_) => gp_,
         };
 
-        let (gp, span) = gm.expr.clone();
+        let S(gp, span) = gm.expr.clone();
 
         let type_ = match gp.size {
             IntervalShape::FixedSeq(_) => ReturnType::FixedSeq,
@@ -85,7 +87,7 @@ pub fn standardize_geometry(
 
 // this should take both reads and parse them. Allowing for combined label_map
 pub fn compile_reads(
-    exprs: Spanned<Vec<Expr>>,
+    exprs: S<Vec<Expr>>,
     map: &mut HashMap<String, GeometryMeta>,
 ) -> Result<(HashMap<String, GeometryMeta>, Geometry), Error> {
     let mut err: Option<Error> = None;
@@ -95,10 +97,10 @@ pub fn compile_reads(
     // create a vector of labels which have already been used. help with errors
     // labels and span!
 
-    let (exprs, span) = exprs;
+    let S(exprs, span) = exprs;
 
     'outer_outer: for read in exprs {
-        let (read, num) = if let Expr::Read((num, _), read) = read {
+        let (read, num) = if let Expr::Read(S(num, _), read) = read {
             (read, num)
         } else {
             return Err(Error {
@@ -110,9 +112,9 @@ pub fn compile_reads(
         let mut read_geom: Vec<(Interval, usize)> = Vec::new();
         'outer: for expr in read {
             let mut expr = expr;
-            let mut spanned_geom_piece: Option<Spanned<GeometryPiece>> = None;
-            let mut compiled_stack: Vec<Spanned<CompiledFunction>> = Vec::new();
-            let mut stack: Vec<Spanned<Function>> = Vec::new();
+            let mut spanned_geom_piece: Option<S<GeometryPiece>> = None;
+            let mut compiled_stack: Vec<S<CompiledFunction>> = Vec::new();
+            let mut stack: Vec<S<Function>> = Vec::new();
             let mut label: Option<String> = None;
 
             'inner: loop {
@@ -122,7 +124,7 @@ pub fn compile_reads(
                         stack.push(inner_fn);
                     }
                     Expr::LabeledGeomPiece(l, gp) => {
-                        if let Expr::Label((l, span)) = l.deref() {
+                        if let Expr::Label(S(l, span)) = l.deref() {
                             if labels.contains(l) || map.clone().contains_key(l) {
                                 err = Some(Error {
                                     span: span.clone(),
@@ -144,7 +146,7 @@ pub fn compile_reads(
 
                         break 'inner;
                     }
-                    Expr::Label((ref l, ref span)) => {
+                    Expr::Label(S(ref l, ref span)) => {
                         if labels.contains(l) {
                             err = Some(Error {
                                 span: span.clone(),
@@ -163,7 +165,7 @@ pub fn compile_reads(
                             for fn_ in stack {
                                 compiled_stack.push(compile_fn(
                                     fn_,
-                                    (
+                                    S(
                                         Expr::GeomPiece(
                                             inner_expr.expr.0.type_,
                                             inner_expr.expr.0.size.clone(),
@@ -203,8 +205,8 @@ pub fn compile_reads(
             // if spanned geom piece is set then expr should not matter
             let spanned_gp = if let Some(spanned_gp) = spanned_geom_piece {
                 spanned_gp
-            } else if let (Expr::GeomPiece(type_, size), span) = expr {
-                (
+            } else if let S(Expr::GeomPiece(type_, size), span) = expr {
+                S(
                     GeometryPiece {
                         type_,
                         size,

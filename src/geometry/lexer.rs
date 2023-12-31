@@ -1,12 +1,9 @@
 //! Defines the lexer for EFGDL.
+use std::fmt::{self, Write};
 
 use chumsky::prelude::*;
-use std::{
-    fmt::{self, Write},
-    ops::Range,
-};
 
-pub type Span = Range<usize>;
+use super::Span;
 
 /// A token produced by the EFGDL lexer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

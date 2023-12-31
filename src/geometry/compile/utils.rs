@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::{
-    lexer::Span,
-    parser::{IntervalKind, IntervalShape, Spanned},
+    parser::{IntervalKind, IntervalShape},
+    Span, S,
 };
 
 use super::functions::CompiledFunction;
@@ -69,8 +69,8 @@ impl fmt::Display for Interval {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GeometryMeta {
-    pub expr: Spanned<GeometryPiece>,
-    pub stack: Vec<Spanned<CompiledFunction>>,
+    pub expr: S<GeometryPiece>,
+    pub stack: Vec<S<CompiledFunction>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -94,7 +94,7 @@ impl fmt::Display for GeometryPiece {
 
 impl GeometryMeta {
     pub fn validate_expr(&self) -> Result<(), Error> {
-        let (expr, expr_span) = &self.expr;
+        let S(expr, expr_span) = &self.expr;
 
         let expr_type = {
             if let IntervalKind::Discard = expr.type_ {
@@ -109,10 +109,10 @@ impl GeometryMeta {
             }
         };
 
-        let mut return_type = (expr_type, expr_span.clone());
+        let mut return_type = S(expr_type, expr_span.clone());
 
-        for (fn_, span) in self.stack.iter().rev() {
-            return_type = validate_composition((fn_, span.clone()), return_type, &expr.size)?;
+        for S(fn_, span) in self.stack.iter().rev() {
+            return_type = validate_composition(S(fn_, span.clone()), return_type, &expr.size)?;
         }
 
         Ok(())
@@ -120,14 +120,14 @@ impl GeometryMeta {
 }
 
 pub fn validate_composition(
-    (fn_, fn_span): Spanned<&CompiledFunction>,
-    (return_type, return_type_span): Spanned<ReturnType>,
+    S(fn_, fn_span): S<&CompiledFunction>,
+    S(return_type, return_type_span): S<ReturnType>,
     size: &IntervalShape,
-) -> Result<Spanned<ReturnType>, Error> {
+) -> Result<S<ReturnType>, Error> {
     let (min, max) = match size {
-        IntervalShape::FixedSeq((seq, _)) => (0, seq.len()),
-        &IntervalShape::FixedLen((n, _)) => (0, n),
-        &IntervalShape::RangedLen(((a, b), _)) => (a, b),
+        IntervalShape::FixedSeq(S(seq, _)) => (0, seq.len()),
+        &IntervalShape::FixedLen(S(n, _)) => (0, n),
+        &IntervalShape::RangedLen(S((a, b), _)) => (a, b),
         IntervalShape::UnboundedLen => (100, 100),
     };
 
@@ -138,14 +138,14 @@ pub fn validate_composition(
                 msg: "Function Reverse Complement cannot take void element as an argument"
                     .to_string(),
             }),
-            _ => Ok((return_type, fn_span)),
+            _ => Ok(S(return_type, fn_span)),
         },
         CompiledFunction::Reverse => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
                 msg: "Function Reverse cannot take void element as an argument".to_string(),
             }),
-            _ => Ok((return_type, fn_span)),
+            _ => Ok(S(return_type, fn_span)),
         },
         CompiledFunction::Truncate(by) | CompiledFunction::TruncateLeft(by) => {
             if min <= by && max <= by {
@@ -162,7 +162,7 @@ pub fn validate_composition(
                         "Function Truncate and TruncateLeft cannot take void element as an argument"
                             .to_string(),
                 }),
-                _ => Ok((return_type, fn_span)),
+                _ => Ok(S(return_type, fn_span)),
             }
         }
         CompiledFunction::TruncateTo(to) | CompiledFunction::TruncateToLeft(to) => {
@@ -175,9 +175,9 @@ pub fn validate_composition(
             }
 
             match return_type {
-                ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
-                ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
-                ReturnType::Unbounded | ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+                ReturnType::Unbounded | ReturnType::Ranged => Ok(S(ReturnType::FixedLen, fn_span)),
                 _ => Err(Error {
                     span: return_type_span,
                     msg: "Function TruncateTo and TruncateToLeft cannot take void element as an argument".to_string(),
@@ -189,14 +189,14 @@ pub fn validate_composition(
                 span: return_type_span,
                 msg: "Function Remove cannot recieve a void element as an argument".to_string(),
             }),
-            _ => Ok((ReturnType::Void, fn_span)),
+            _ => Ok(S(ReturnType::Void, fn_span)),
         },
         CompiledFunction::Pad(..) | CompiledFunction::PadLeft(..) => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
                 msg: "Function Pad and PadLeft cannot take void element as an argument".to_string(),
             }),
-            _ => Ok((return_type, fn_span)),
+            _ => Ok(S(return_type, fn_span)),
         },
         CompiledFunction::PadTo(to, ..) | CompiledFunction::PadToLeft(to, ..) => {
             if to < max {
@@ -207,9 +207,9 @@ pub fn validate_composition(
             }
 
             match return_type {
-                ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
-                ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
-                ReturnType::Unbounded | ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+                ReturnType::Unbounded | ReturnType::Ranged => Ok(S(ReturnType::FixedLen, fn_span)),
                 _ => Err(Error {
                     span: return_type_span,
                     msg: "Function PadTo and PadToLeft cannot take a void element as an argument"
@@ -218,7 +218,7 @@ pub fn validate_composition(
             }
         }
         CompiledFunction::Normalize => match return_type {
-            ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
+            ReturnType::Ranged => Ok(S(ReturnType::FixedLen, fn_span)),
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
@@ -229,7 +229,7 @@ pub fn validate_composition(
         },
         CompiledFunction::Map(..) | CompiledFunction::MapWithMismatch(..) => match return_type {
             ReturnType::Ranged | ReturnType::FixedLen | ReturnType::FixedSeq => {
-                Ok((ReturnType::FixedLen, fn_span))
+                Ok(S(ReturnType::FixedLen, fn_span))
             }
             _ => Err(Error {
                 span: return_type_span,
@@ -240,8 +240,8 @@ pub fn validate_composition(
             }),
         },
         CompiledFunction::FilterWithinDist(..) => match return_type {
-            ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
-            ReturnType::Ranged => Ok((ReturnType::Ranged, fn_span)),
+            ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
+            ReturnType::Ranged => Ok(S(ReturnType::Ranged, fn_span)),
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
@@ -251,7 +251,7 @@ pub fn validate_composition(
             }),
         },
         CompiledFunction::Hamming(_) => match return_type {
-            ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
+            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(

@@ -1,24 +1,26 @@
 use std::{collections::HashMap, ops::Deref};
 
-use super::{
-    functions::{compile_fn, CompiledFunction},
-    utils::*,
+use crate::{
+    compile::{
+        functions::{compile_fn, CompiledFunction},
+        utils::*,
+    },
+    parser::{Expr, Function},
+    S,
 };
 
-use crate::parser::{Expr, Function, Spanned};
-
 pub fn compile_transformation(
-    transformation: Spanned<Expr>,
+    transformation: S<Expr>,
     map: &mut HashMap<String, GeometryMeta>,
 ) -> Result<(Transformation, &mut HashMap<String, GeometryMeta>), Error> {
-    let (expr, span) = transformation;
+    let S(expr, span) = transformation;
 
     let exprs = if let Expr::Transform(exprs) = expr {
         exprs
     } else {
         return Err(Error {
             span,
-            msg: format!("Expected a transformation expression found: {}", expr),
+            msg: format!("Expected a transformation expression found: {expr}"),
         });
     };
 
@@ -31,7 +33,7 @@ pub fn compile_transformation(
 
        Lets see if we can make this a bit cleaner
     */
-    compile((exprs, span), map)
+    compile(S(exprs, span), map)
 }
 
 /*
@@ -41,16 +43,16 @@ pub fn compile_transformation(
    Return the new map and a list of labels which represents the final transformation
 */
 fn compile(
-    exprs: Spanned<Vec<Expr>>,
+    exprs: S<Vec<Expr>>,
     map: &mut HashMap<String, GeometryMeta>,
 ) -> Result<(Transformation, &mut HashMap<String, GeometryMeta>), Error> {
     let mut transformation: Transformation = Vec::new();
 
-    let (exprs, span) = exprs;
+    let S(exprs, span) = exprs;
 
     for read in exprs {
         let read = match read {
-            Expr::Read((_num, _), read) => read,
+            Expr::Read(S(_num, _), read) => read,
             _ => {
                 return Err(Error {
                     span,
@@ -63,9 +65,9 @@ fn compile(
 
         for expr in read {
             let mut expr = expr;
-            let mut stack: Vec<Spanned<Function>> = Vec::new();
-            let mut compiled_stack: Vec<Spanned<CompiledFunction>> = Vec::new();
-            let label: Option<Spanned<String>>;
+            let mut stack: Vec<S<Function>> = Vec::new();
+            let mut compiled_stack: Vec<S<CompiledFunction>> = Vec::new();
+            let label: Option<S<String>>;
 
             'inner: loop {
                 match expr.0 {
@@ -81,7 +83,7 @@ fn compile(
                 }
             }
 
-            let (label, label_span) = if let Some(l) = label {
+            let S(label, label_span) = if let Some(l) = label {
                 l
             } else {
                 return Err(Error {

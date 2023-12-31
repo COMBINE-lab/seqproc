@@ -7,6 +7,7 @@ use seqproc::{
     compile::{compile, CompiledData},
     lexer,
     parser::parser,
+    S,
 };
 
 /// General puprose sequence preprocessor
@@ -73,7 +74,7 @@ fn main() {
             tokens.clone().into_iter(),
         ));
 
-        if let Some((ast, _)) = &ast {
+        if let Some(S(ast, _)) = &ast {
             let res = compile(ast.clone());
 
             if let Err(e) = res {

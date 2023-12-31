@@ -7,11 +7,10 @@
 use std::ops::Deref;
 
 use crate::{
-    parser::{Expr, Function, Spanned},
-    Nucleotide,
+    compile::utils::{Error, GeometryMeta, GeometryPiece},
+    parser::{Expr, Function},
+    Nucleotide, S,
 };
-
-use super::utils::{Error, GeometryMeta, GeometryPiece};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CompiledFunction {
@@ -27,18 +26,16 @@ pub enum CompiledFunction {
     PadTo(usize, Nucleotide),
     PadToLeft(usize, Nucleotide),
     Normalize,
-    Map(String, Vec<Spanned<CompiledFunction>>),
-    MapWithMismatch(String, Vec<Spanned<CompiledFunction>>, usize),
+    Map(String, Vec<S<CompiledFunction>>),
+    MapWithMismatch(String, Vec<S<CompiledFunction>>, usize),
     FilterWithinDist(String, usize),
     Hamming(usize),
 }
 
 pub fn compile_fn(
-    fn_: Spanned<Function>,
-    parent_expr: Spanned<Expr>,
-) -> Result<Spanned<CompiledFunction>, Error> {
-    let (fn_, span) = fn_;
-    let (parent_expr, expr_span) = parent_expr;
+    S(fn_, span): S<Function>,
+    S(parent_expr, expr_span): S<Expr>,
+) -> Result<S<CompiledFunction>, Error> {
     let comp_fn = match fn_ {
         Function::Reverse => CompiledFunction::Reverse,
         Function::ReverseComp => CompiledFunction::ReverseComp,
@@ -54,12 +51,12 @@ pub fn compile_fn(
         Function::Normalize => CompiledFunction::Normalize,
         Function::MapWithMismatch(path, expr, mismatch) => CompiledFunction::MapWithMismatch(
             path,
-            compile_inner_expr(expr.deref().clone(), (parent_expr, expr_span))?,
+            compile_inner_expr(expr.deref().clone(), S(parent_expr, expr_span))?,
             mismatch,
         ),
         Function::Map(path, expr) => CompiledFunction::Map(
             path,
-            compile_inner_expr(expr.deref().clone(), (parent_expr, expr_span))?,
+            compile_inner_expr(expr.deref().clone(), S(parent_expr, expr_span))?,
         ),
         Function::FilterWithinDist(path, mismatch) => {
             CompiledFunction::FilterWithinDist(path, mismatch)
@@ -67,16 +64,16 @@ pub fn compile_fn(
         Function::Hamming(n) => CompiledFunction::Hamming(n),
     };
 
-    Ok((comp_fn, span))
+    Ok(S(comp_fn, span))
 }
 
 fn compile_inner_expr(
-    mut expr: Spanned<Expr>,
-    parent_expr: Spanned<Expr>,
-) -> Result<Vec<Spanned<CompiledFunction>>, Error> {
+    mut expr: S<Expr>,
+    parent_expr: S<Expr>,
+) -> Result<Vec<S<CompiledFunction>>, Error> {
     // if we are here in a map then the expr passed into the expr should be a geom_piece or labeled geom_piece
     // either way we can extract the size and type of it
-    let mut stack: Vec<Spanned<CompiledFunction>> = Vec::new();
+    let mut stack: Vec<S<CompiledFunction>> = Vec::new();
 
     loop {
         match expr.0 {
@@ -103,11 +100,11 @@ fn compile_inner_expr(
     }
 
     let geom_piece = {
-        let (mut expr, span) = parent_expr;
+        let S(mut expr, span) = parent_expr;
         loop {
             match expr {
                 Expr::LabeledGeomPiece(_, b) => {
-                    let (gp, _) = b.deref();
+                    let S(gp, _) = b.deref();
                     expr = gp.clone();
                 }
                 Expr::GeomPiece(_, _) => break,
@@ -132,7 +129,7 @@ fn compile_inner_expr(
 
     // check this and return result from this function
     let gm = GeometryMeta {
-        expr: (geom_piece, expr.1),
+        expr: S(geom_piece, expr.1),
         stack,
     };
 
