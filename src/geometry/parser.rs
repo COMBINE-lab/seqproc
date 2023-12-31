@@ -53,7 +53,7 @@ pub enum Function {
     TruncateTo(usize),
     /// `trunc_to_left(I, n)`
     TruncateToLeft(usize),
-    /// `remove`
+    /// `remove(I)`
     Remove,
     /// `pad(I, n, nuc)`
     Pad(usize, Nucleotide),
@@ -75,32 +75,32 @@ pub enum Function {
     Hamming(usize),
 }
 
-impl fmt::Display for Function {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Function {
+    /// `first` is a formatted representation of the first argment to the function call
+    fn fmt(&self, f: &mut fmt::Formatter<'_>, first: fmt::Arguments<'_>) -> fmt::Result {
         use Function::*;
         match self {
-            Reverse => write!(f, "rev"),
-            ReverseComp => write!(f, "revcomp"),
-            Truncate(n) => write!(f, "trunc({n}"),
-            TruncateLeft(n) => write!(f, "trunc_left({n}"),
-            TruncateTo(n) => write!(f, "trunc_to({n}"),
-            TruncateToLeft(n) => write!(f, "trunc_to_left({n}"),
-            Remove => write!(f, "remove"),
-            Pad(n, nuc) => write!(f, "pad({n}, {nuc}"),
-            PadLeft(n, nuc) => write!(f, "pad_left({n}, {nuc}"),
-            PadTo(n, nuc) => write!(f, "pad_to({n}, {nuc}"),
-            PadToLeft(n, nuc) => write!(f, "pad_to_left({n}, {nuc}"),
-            Normalize => write!(f, "norm"),
-            Map(p, b) => {
-                let S(s, _) = b;
-                write!(f, "map({p}, {s}")
+            Reverse => write!(f, "rev({first})"),
+            ReverseComp => write!(f, "revcomp({first})"),
+            Truncate(n) => write!(f, "trunc({first}, {n})"),
+            TruncateLeft(n) => write!(f, "trunc_left({first}, {n})"),
+            TruncateTo(n) => write!(f, "trunc_to({first}, {n})"),
+            TruncateToLeft(n) => write!(f, "trunc_to_left({first}, {n})"),
+            Remove => write!(f, "remove({first})"),
+            Pad(n, nuc) => write!(f, "pad({first}, {n}, {nuc})"),
+            PadLeft(n, nuc) => write!(f, "pad_left({first}, {n}, {nuc})"),
+            PadTo(n, nuc) => write!(f, "pad_to({first}, {n}, {nuc})"),
+            PadToLeft(n, nuc) => write!(f, "pad_to_left({first}, {n}, {nuc})"),
+            Normalize => write!(f, "norm({first})"),
+            Map(p, S(b, _)) => {
+                write!(f, "map({first}, {p}, {b})")
             }
             MapWithMismatch(p, b, n) => {
                 let S(s, _) = b;
-                write!(f, "map_with_mismatch({p}, {s}, {n}")
+                write!(f, "map_with_mismatch({first}, {p}, {s}, {n})")
             }
-            FilterWithinDist(p, n) => write!(f, "filter_within_dist({p}, {n}"),
-            Hamming(n) => write!(f, "hamming({n}"),
+            FilterWithinDist(p, n) => write!(f, "filter_within_dist({first}, {p}, {n})"),
+            Hamming(n) => write!(f, "hamming({first}, {n})"),
         }
     }
 }
@@ -119,25 +119,49 @@ impl fmt::Display for IntervalKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use IntervalKind::*;
         match self {
-            Barcode => write!(f, "Barcode"),
-            Umi => write!(f, "Umi"),
-            Discard => write!(f, "Discard"),
-            ReadSeq => write!(f, "ReadSeq"),
-            FixedSeq => write!(f, "FixedSeq"),
+            Barcode => write!(f, "b"),
+            Umi => write!(f, "u"),
+            Discard => write!(f, "x"),
+            ReadSeq => write!(f, "r"),
+            FixedSeq => write!(f, "f"),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
+    /// `self`, as used inside the expression
+    /// passed as the third argument to `map` and `map_with_mismatch`.
     Self_,
+
+    /// An inline variable reference/binding: `<my_label>`.
     Label(S<String>),
+
+    /// An interval, with a specifier and a length: `b[10]`, `u[11-13]`, `f[AUCG]`, `r:`.
     GeomPiece(IntervalKind, IntervalShape),
+
+    /// A binding of an interval to an identifier,
+    /// either inline (`b<foo>[10]`)
+    /// or as a declaration statement (`foo = b[10]`).
     LabeledGeomPiece(Box<Self>, S<Box<Self>>),
+
+    /// A transformation invocation: `hamming(f[CAGAGC], 1)`.
+    ///
+    /// `.1` is the first argument.
     Function(S<Function>, S<Box<Self>>),
+
+    /// A read, with index and expression: `1{hamming(<brc>, 1)}`.
     Read(S<usize>, Vec<S<Self>>),
+
+    /// The list of definitions at the top of an EFGDL file:
+    /// `brc = b[10] foo = f[CAGAGC]`.``
     Definitions(Vec<S<Self>>),
+
+    /// List of reads specifying the output of a transformation:
+    /// ` -> 1{<brc>pad(<anchor>, 3, A)<read>}`.
     Transform(Vec<Self>),
+
+    /// A full EFGDL file: 0+ definitions, then input reads, then transformed reads.
     Description(Option<S<Box<Self>>>, S<Vec<Self>>, S<Option<Box<Self>>>),
 }
 
@@ -146,17 +170,12 @@ impl fmt::Display for Expr {
         use Expr::*;
         match self {
             Self_ => write!(f, "self"),
-            Label(S(s, _)) => write!(f, "{s}"),
+            Label(S(s, _)) => write!(f, "<{s}>"),
             GeomPiece(t, s) => write!(f, "{t}{s}"),
-            LabeledGeomPiece(l, box_) => {
-                let S(expr, _) = box_;
-
+            LabeledGeomPiece(l, S(expr, _)) => {
                 write!(f, "{l}={expr}")
             }
-            Function(S(fn_, _), box_) => {
-                let S(expr, _) = box_;
-                write!(f, "{fn_}({expr}))")
-            }
+            Function(S(fn_, _), S(expr, _)) => fn_.fmt(f, format_args!("{expr}")),
             Read(S(n, _), exprs) => write!(
                 f,
                 "{n}{{{}}}",
