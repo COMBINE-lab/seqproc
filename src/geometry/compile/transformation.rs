@@ -15,9 +15,7 @@ pub fn compile_transformation(
 ) -> Result<(Transformation, &mut HashMap<String, GeometryMeta>), Error> {
     let S(expr, span) = transformation;
 
-    let exprs = if let Expr::Transform(exprs) = expr {
-        exprs
-    } else {
+    let Expr::Transform(exprs) = expr else {
         return Err(Error {
             span,
             msg: format!("Expected a transformation expression found: {expr}"),
@@ -51,14 +49,11 @@ fn compile(
     let S(exprs, span) = exprs;
 
     for read in exprs {
-        let read = match read {
-            Expr::Read(S(_num, _), read) => read,
-            _ => {
-                return Err(Error {
-                    span,
-                    msg: format!("Expected a Read found {read}"),
-                });
-            }
+        let Expr::Read(_, read) = read else {
+            return Err(Error {
+                span,
+                msg: format!("Expected a Read found {read}"),
+            });
         };
 
         let mut inner_transformation: Vec<String> = Vec::new();
@@ -83,9 +78,7 @@ fn compile(
                 }
             }
 
-            let S(label, label_span) = if let Some(l) = label {
-                l
-            } else {
+            let Some(S(label, label_span)) = label else {
                 return Err(Error {
                     span,
                     msg: "Transformations must only reference previously defined labels"

@@ -54,7 +54,7 @@ pub fn validate_geometry(
             ReturnType::Ranged | ReturnType::Unbounded => {
                 vec![ReturnType::FixedSeq]
             }
-            _ => unreachable!(),
+            ReturnType::Void => unreachable!(),
         };
     }
 
@@ -97,9 +97,7 @@ pub fn compile_reads(
     let S(exprs, span) = exprs;
 
     'outer_outer: for read in exprs {
-        let (read, num) = if let Expr::Read(S(num, _), read) = read {
-            (read, num)
-        } else {
+        let Expr::Read(S(num, _), read) = read else {
             return Err(Error {
                 span,
                 msg: format!("Expected a Read found {read}"),
@@ -121,7 +119,7 @@ pub fn compile_reads(
                         stack.push(inner_fn);
                     }
                     Expr::LabeledGeomPiece(l, gp) => {
-                        if let Expr::Label(S(l, span)) = l.deref() {
+                        if let Expr::Label(S(l, span)) = &*l {
                             if labels.contains(l) || map.clone().contains_key(l) {
                                 err = Some(Error {
                                     span: span.clone(),

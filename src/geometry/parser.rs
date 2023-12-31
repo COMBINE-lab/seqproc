@@ -304,7 +304,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
     let ranged = piece_type
         .then(label.or_not())
         .then(range)
-        .map_with_span(|((type_, label), (_, range)), span| {
+        .map_with_span(|((type_, label), ((), range)), span| {
             let expr = Expr::GeomPiece(type_, range);
             if let Some(label) = label {
                 Expr::LabeledGeomPiece(Box::new(label), Box::new(S(expr, span)))
@@ -596,7 +596,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .map(|(n, read)| Expr::Read(n, read));
 
     let transformation = choice((
-        end().map_with_span(|_, span| S(None, span)),
+        end().map_with_span(|(), span| S(None, span)),
         just(Token::TransformTo)
             .then(transform_read.repeated().at_least(1).at_most(2))
             .map_with_span(|(_, val), span| S(Some(Expr::Transform(val)), span)),

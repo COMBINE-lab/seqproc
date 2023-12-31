@@ -173,7 +173,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .ignored()
         .then(take_until(just('"').ignored()))
         .padded()
-        .map(|(_, (f, _))| Token::File(f.into_iter().collect::<String>()));
+        .map(|((), (f, _))| Token::File(f.into_iter().collect::<String>()));
 
     let transformto = just('-').then(just('>')).to(Token::TransformTo);
 

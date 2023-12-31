@@ -9,7 +9,7 @@ use reads::compile_reads;
 use transformation::compile_transformation;
 use utils::Error;
 
-use std::{collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 
 use crate::{parser::Expr, S};
 
@@ -29,7 +29,7 @@ pub struct CompiledData {
 pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
     if let Expr::Description(d, r, t) = expr {
         // validate defintion block
-        let mut map = if let Some(expr) = d.deref() {
+        let mut map = if let Some(expr) = &*d {
             let def_res = compile_definitions(expr.clone());
 
             if let Err(e) = def_res {
@@ -43,14 +43,12 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
 
         let validate_read_res = compile_reads(r, &mut map);
 
-        let (mut map, geometry) = if let Ok(cd) = validate_read_res {
-            cd
-        } else {
+        let Ok((mut map, geometry)) = validate_read_res else {
             return Err(validate_read_res.err().unwrap());
         };
 
         // this needs a bit more thought
-        let compiled_transformation = if let S(Some(transform), span) = t.deref() {
+        let compiled_transformation = if let S(Some(transform), span) = &*t {
             let res = compile_transformation(S(transform.clone(), span.clone()), &mut map);
 
             if let Err(e) = res {

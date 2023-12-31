@@ -175,10 +175,9 @@ pub fn validate_composition(
             }
 
             match return_type {
-                ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedLen | ReturnType::Unbounded | ReturnType::Ranged => Ok(S(ReturnType::FixedLen, fn_span)),
                 ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
-                ReturnType::Unbounded | ReturnType::Ranged => Ok(S(ReturnType::FixedLen, fn_span)),
-                _ => Err(Error {
+                ReturnType::Void => Err(Error {
                     span: return_type_span,
                     msg: "Function TruncateTo and TruncateToLeft cannot take void element as an argument".to_string(),
                 }),
@@ -207,10 +206,9 @@ pub fn validate_composition(
             }
 
             match return_type {
-                ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedLen |  ReturnType::Unbounded | ReturnType::Ranged  => Ok(S(ReturnType::FixedLen, fn_span)),
                 ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
-                ReturnType::Unbounded | ReturnType::Ranged => Ok(S(ReturnType::FixedLen, fn_span)),
-                _ => Err(Error {
+                ReturnType::Void => Err(Error {
                     span: return_type_span,
                     msg: "Function PadTo and PadToLeft cannot take a void element as an argument"
                         .to_string(),

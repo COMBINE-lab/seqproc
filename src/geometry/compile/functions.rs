@@ -104,7 +104,7 @@ fn compile_inner_expr(
         loop {
             match expr {
                 Expr::LabeledGeomPiece(_, b) => {
-                    let S(gp, _) = b.deref();
+                    let S(gp, _) = &*b;
                     expr = gp.clone();
                 }
                 Expr::GeomPiece(_, _) => break,
