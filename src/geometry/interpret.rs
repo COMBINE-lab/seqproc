@@ -136,13 +136,13 @@ fn execute_stack(
     label: &str,
     attr: &str,
     read: BoxedReads,
-    size: IntervalShape,
+    size: &IntervalShape,
     additional_args: &[String],
 ) -> BoxedReads {
     let mut read = read;
 
     let range = if let IntervalShape::RangedLen(S((a, b), _)) = size {
-        Some(a..=b)
+        Some(*a..=*b)
     } else {
         None
     };
@@ -165,20 +165,13 @@ fn execute_stack(
                 let file = parse_additional_args(file, additional_args);
 
                 let mapped = map(read, label, attr, file, 0);
-                execute_stack(
-                    fns,
-                    label,
-                    "not_mapped",
-                    mapped,
-                    size.clone(),
-                    additional_args,
-                )
+                execute_stack(fns, label, "not_mapped", mapped, size, additional_args)
             }
             CompiledFunction::MapWithMismatch(file, fns, mismatch) => {
                 let file = parse_additional_args(file, additional_args);
 
                 let mapped = map(read, label, attr, file, mismatch);
-                execute_stack(fns, label, "mapped", mapped, size.clone(), additional_args)
+                execute_stack(fns, label, "mapped", mapped, size, additional_args)
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
                 let file = parse_additional_args(file, additional_args);
@@ -240,7 +233,7 @@ impl GeometryMeta {
             _ => unreachable!(),
         };
 
-        execute_stack(stack, &this_label, "", read, size, additional_args)
+        execute_stack(stack, &this_label, "", read, &size, additional_args)
     }
 
     fn interpret(
@@ -304,7 +297,7 @@ impl GeometryMeta {
             IntervalShape::UnboundedLen => process_unbounded(read, &init_label, &this_label),
         };
 
-        execute_stack(stack, &this_label, "", read, size, additional_args)
+        execute_stack(stack, &this_label, "", read, &size, additional_args)
     }
 
     fn interpret_dual(
@@ -366,7 +359,7 @@ impl GeometryMeta {
                     match_type,
                 );
 
-                execute_stack(stack, &this_label, "", read, size, additional_args)
+                execute_stack(stack, &this_label, "", read, &size, additional_args)
             }
             _ => unreachable!(),
         };

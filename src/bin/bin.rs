@@ -41,7 +41,7 @@ pub struct Args {
     additional: Vec<String>,
 }
 
-pub fn interpret(args: Args, compiled_data: CompiledData) {
+pub fn interpret(args: Args, compiled_data: &CompiledData) {
     let Args {
         geom: _,
         file1,
@@ -80,7 +80,7 @@ fn main() {
             if let Err(e) = res {
                 errs.push(Simple::custom(e.span, e.msg));
             } else {
-                interpret(args, res.ok().unwrap());
+                interpret(args, &res.ok().unwrap());
             }
         };
 
