@@ -1,9 +1,6 @@
 //! Defines the parser for EFGDL.
 
-use std::{
-    fmt::{self, Write},
-    ops::Deref,
-};
+use std::fmt::{self, Write};
 
 use chumsky::prelude::*;
 
@@ -70,8 +67,8 @@ pub enum Function {
     PadToLeft(usize, Nucleotide),
     /// `norm(I)`
     Normalize,
-    Map(String, Box<S<Expr>>),
-    MapWithMismatch(String, Box<S<Expr>>, usize),
+    Map(String, S<Box<Expr>>),
+    MapWithMismatch(String, S<Box<Expr>>, usize),
     FilterWithinDist(String, usize),
     Hamming(usize),
 }
@@ -93,11 +90,11 @@ impl fmt::Display for Function {
             PadToLeft(n, nuc) => write!(f, "pad_to_left({n}, {nuc}"),
             Normalize => write!(f, "norm"),
             Map(p, b) => {
-                let S(s, _) = b.deref();
+                let S(s, _) = b;
                 write!(f, "map({p}, {s}")
             }
             MapWithMismatch(p, b, n) => {
-                let S(s, _) = b.deref();
+                let S(s, _) = b;
                 write!(f, "map_with_mismatch({p}, {s}, {n}")
             }
             FilterWithinDist(p, n) => write!(f, "filter_within_dist({p}, {n}"),
@@ -137,12 +134,12 @@ pub enum Expr {
     Label(S<String>),
     Type(S<IntervalKind>),
     GeomPiece(IntervalKind, IntervalShape),
-    LabeledGeomPiece(Box<Self>, Box<S<Self>>),
-    Function(S<Function>, Box<S<Self>>),
+    LabeledGeomPiece(Box<Self>, S<Box<Self>>),
+    Function(S<Function>, S<Box<Self>>),
     Read(S<usize>, Vec<S<Self>>),
     Definitions(Vec<S<Self>>),
     Transform(Vec<Self>),
-    Description(Box<Option<S<Self>>>, S<Vec<Self>>, Box<S<Option<Self>>>),
+    Description(Option<S<Box<Self>>>, S<Vec<Self>>, S<Option<Box<Self>>>),
 }
 
 impl fmt::Display for Expr {
@@ -156,12 +153,12 @@ impl fmt::Display for Expr {
             Type(S(t, _)) => write!(f, "{t}"),
             GeomPiece(t, s) => write!(f, "{t}{s}"),
             LabeledGeomPiece(l, box_) => {
-                let S(expr, _) = box_.deref();
+                let S(expr, _) = box_;
 
                 write!(f, "{l}={expr}")
             }
             Function(S(fn_, _), box_) => {
-                let S(expr, _) = box_.deref();
+                let S(expr, _) = box_;
                 write!(f, "{fn_}({expr}))")
             }
             Read(S(n, _), exprs) => write!(
@@ -192,13 +189,13 @@ impl fmt::Display for Expr {
                     .join(" ")
             ),
             Description(d, r, t) => {
-                let d_w = if let Some(S(d, _)) = d.deref() {
+                let d_w = if let Some(S(d, _)) = d {
                     Some(format!("{d}"))
                 } else {
                     None
                 };
 
-                let t_w = if let S(Some(t), _) = t.deref() {
+                let t_w = if let S(Some(t), _) = t {
                     Some(format!("{t}"))
                 } else {
                     None
@@ -294,7 +291,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .map_with_span(|(type_, label), span| {
             let expr = Expr::GeomPiece(type_, IntervalShape::UnboundedLen);
             if let Some(label) = label {
-                Expr::LabeledGeomPiece(Box::new(label), Box::new(S(expr, span)))
+                Expr::LabeledGeomPiece(Box::new(label), S(Box::new(expr), span))
             } else {
                 expr
             }
@@ -307,7 +304,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .map_with_span(|((type_, label), ((), range)), span| {
             let expr = Expr::GeomPiece(type_, range);
             if let Some(label) = label {
-                Expr::LabeledGeomPiece(Box::new(label), Box::new(S(expr, span)))
+                Expr::LabeledGeomPiece(Box::new(label), S(Box::new(expr), span))
             } else {
                 expr
             }
@@ -320,7 +317,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .map_with_span(|((type_, label), len), span| {
             let expr = Expr::GeomPiece(type_, len);
             if let Some(label) = label {
-                Expr::LabeledGeomPiece(Box::new(label), Box::new(S(expr, span)))
+                Expr::LabeledGeomPiece(Box::new(label), S(Box::new(expr), span))
             } else {
                 expr
             }
@@ -334,7 +331,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .map_with_span(|((type_, label), nucs), span| {
             let expr = Expr::GeomPiece(type_, nucs);
             if let Some(label) = label {
-                Expr::LabeledGeomPiece(Box::new(label), Box::new(S(expr, span)))
+                Expr::LabeledGeomPiece(Box::new(label), S(Box::new(expr), span))
             } else {
                 expr
             }
@@ -384,12 +381,12 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
             just(Token::Remove)
                 .map_with_span(|_, span| S(Function::Remove, span))
                 .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
+                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("Remove function"),
             just(Token::Normalize)
                 .map_with_span(|_, span| S(Function::Normalize, span))
                 .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
+                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("Normalize function"),
             just(Token::Hamming)
                 .map_with_span(|_, span| span)
@@ -397,7 +394,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S((geom_p, num), span))| {
                     Expr::Function(
                         S(Function::Hamming(num), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Hamming function"),
@@ -407,7 +404,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S((geom_p, num), span))| {
                     Expr::Function(
                         S(Function::Truncate(num), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Truncate function"),
@@ -417,7 +414,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S((geom_p, num), span))| {
                     Expr::Function(
                         S(Function::TruncateLeft(num), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Truncate Left function"),
@@ -427,7 +424,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S((geom_p, num), span))| {
                     Expr::Function(
                         S(Function::TruncateTo(num), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Truncate To function"),
@@ -437,7 +434,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S((geom_p, num), span))| {
                     Expr::Function(
                         S(Function::TruncateToLeft(num), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Truncate To Left function"),
@@ -447,7 +444,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S(((geom_p, num), nuc), span))| {
                     Expr::Function(
                         S(Function::Pad(num, nuc), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Pad function"),
@@ -457,7 +454,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S(((geom_p, num), nuc), span))| {
                     Expr::Function(
                         S(Function::PadLeft(num, nuc), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Pad Left function"),
@@ -467,7 +464,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S(((geom_p, num), nuc), span))| {
                     Expr::Function(
                         S(Function::PadTo(num, nuc), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Pad To function"),
@@ -477,19 +474,19 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S(((geom_p, num), nuc), span))| {
                     Expr::Function(
                         S(Function::PadToLeft(num, nuc), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Pad To Left function"),
             just(Token::Reverse)
                 .map_with_span(|_, span| S(Function::Reverse, span))
                 .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
+                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("Reverse function"),
             just(Token::ReverseComp)
                 .map_with_span(|_, span| S(Function::ReverseComp, span))
                 .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, Box::new(tok)))
+                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("Reverse Compliment function"),
             just(Token::Map)
                 .map_with_span(|_, span| span)
@@ -505,8 +502,8 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 )
                 .map(|(fn_span, S(((geom_p, path), self_expr), span))| {
                     Expr::Function(
-                        S(Function::Map(path, Box::new(self_expr)), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Function::Map(path, self_expr.boxed()), fn_span),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Map function"),
@@ -527,10 +524,10 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S((((geom_p, path), self_expr), num), span))| {
                     Expr::Function(
                         S(
-                            Function::MapWithMismatch(path, Box::new(self_expr), num),
+                            Function::MapWithMismatch(path, self_expr.boxed(), num),
                             fn_span,
                         ),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Map with mismatch function"),
@@ -548,7 +545,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map(|(fn_span, S(((geom_p, path), num), span))| {
                     Expr::Function(
                         S(Function::FilterWithinDist(path, num), fn_span),
-                        Box::new(S(geom_p, span)),
+                        S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("Filter within dist function"),
@@ -562,7 +559,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .then(transformed_pieces.clone())
         .map_with_span(|(label, geom_p), span| {
             S(
-                Expr::LabeledGeomPiece(Box::new(label), Box::new(geom_p)),
+                Expr::LabeledGeomPiece(Box::new(label), geom_p.boxed()),
                 span,
             )
         })
@@ -607,7 +604,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .or_not()
         .then(reads.map_with_span(S))
         .then(transformation)
-        .map(|((d, r), t)| Expr::Description(Box::new(d), r, Box::new(t)))
+        .map(|((d, r), t)| Expr::Description(d.map(S::boxed), r, t.map(|i| i.map(Box::new))))
         .map_with_span(S)
         .recover_with(skip_then_retry_until([]))
 }

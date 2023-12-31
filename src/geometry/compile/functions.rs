@@ -4,8 +4,6 @@
 //! expressions with label references a seperate
 //! place for this to happen will be useful
 
-use std::ops::Deref;
-
 use crate::{
     compile::utils::{Error, GeometryMeta, GeometryPiece},
     parser::{Expr, Function},
@@ -51,12 +49,12 @@ pub fn compile_fn(
         Function::Normalize => CompiledFunction::Normalize,
         Function::MapWithMismatch(path, expr, mismatch) => CompiledFunction::MapWithMismatch(
             path,
-            compile_inner_expr(expr.deref().clone(), S(parent_expr, expr_span))?,
+            compile_inner_expr(expr.unboxed(), S(parent_expr, expr_span))?,
             mismatch,
         ),
         Function::Map(path, expr) => CompiledFunction::Map(
             path,
-            compile_inner_expr(expr.deref().clone(), S(parent_expr, expr_span))?,
+            compile_inner_expr(expr.unboxed(), S(parent_expr, expr_span))?,
         ),
         Function::FilterWithinDist(path, mismatch) => {
             CompiledFunction::FilterWithinDist(path, mismatch)
@@ -79,7 +77,7 @@ fn compile_inner_expr(
         match expr.0 {
             Expr::Self_ => break,
             Expr::Function(inner_fn, inner_expr) => {
-                expr = inner_expr.deref().clone();
+                expr = inner_expr.unboxed();
                 let inner_fn = compile_fn(inner_fn.clone(), expr.clone());
                 if inner_fn.is_ok() {
                     stack.push(inner_fn.ok().unwrap());
@@ -104,7 +102,7 @@ fn compile_inner_expr(
         loop {
             match expr {
                 Expr::LabeledGeomPiece(_, b) => {
-                    let S(gp, _) = &*b;
+                    let S(gp, _) = b.unboxed();
                     expr = gp.clone();
                 }
                 Expr::GeomPiece(_, _) => break,

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 
 use chumsky::{prelude::*, Stream};
 use seqproc::{
@@ -143,13 +143,13 @@ brc1 = b[1-4]
         unreachable!()
     };
 
-    let res = if let Some(def) = res.deref() {
+    let res = if let Some(def) = res {
         def
     } else {
         panic!("No definitions in {src}")
     };
 
-    let def_map = compile_definitions(res.clone())?;
+    let def_map = compile_definitions(res.unboxed())?;
 
     assert_eq!(2, def_map.len());
 
@@ -177,13 +177,13 @@ brc = b[1-4]
         unreachable!()
     };
 
-    let res = if let Some(def) = res.deref() {
+    let res = if let Some(def) = res {
         def
     } else {
         panic!("No definitions in {src}")
     };
 
-    let def_map = compile_definitions(res.clone());
+    let def_map = compile_definitions(res.unboxed());
 
     assert!(def_map.is_err());
 }
@@ -202,12 +202,12 @@ fn label_replacement() {
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let (def, reads) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
-        (d.deref().clone().unwrap(), r)
+        (d.unwrap().unboxed(), r)
     } else {
         unreachable!()
     };
 
-    let mut def_map = if let Ok(d) = compile_definitions(def.clone()) {
+    let mut def_map = if let Ok(d) = compile_definitions(def) {
         d
     } else {
         todo!()
@@ -232,12 +232,12 @@ fn no_variable() {
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let (def, reads) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
-        (d.deref().clone().unwrap(), r)
+        (d.unwrap().unboxed(), r)
     } else {
         unreachable!()
     };
 
-    let mut def_map = if let Ok(d) = compile_definitions(def.clone()) {
+    let mut def_map = if let Ok(d) = compile_definitions(def) {
         d
     } else {
         todo!()
@@ -282,12 +282,12 @@ brc = b[10]
     let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
     let (def, reads) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
-        (d.deref().clone().unwrap(), r)
+        (d.unwrap().unboxed(), r)
     } else {
         unreachable!()
     };
 
-    let mut def_map = if let Ok(d) = compile_definitions(def.clone()) {
+    let mut def_map = if let Ok(d) = compile_definitions(def) {
         d
     } else {
         todo!()
@@ -319,13 +319,13 @@ brc1 = pad(<brc>, 1, A)
         unreachable!()
     };
 
-    let res = if let Some(def) = res.deref() {
+    let res = if let Some(def) = res {
         def
     } else {
         panic!("No definitions in {src}")
     };
 
-    let def_map = compile_definitions(res.clone());
+    let def_map = compile_definitions(res.unboxed());
 
     assert!(def_map.is_err());
 }

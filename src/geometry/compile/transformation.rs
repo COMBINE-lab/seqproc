@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 
 use crate::{
     compile::{
@@ -67,7 +67,7 @@ fn compile(
             'inner: loop {
                 match expr.0 {
                     Expr::Function(fn_, gp) => {
-                        expr = gp.deref().clone();
+                        expr = gp.unboxed();
                         stack.push(fn_);
                     }
                     Expr::Label(ref l) => {

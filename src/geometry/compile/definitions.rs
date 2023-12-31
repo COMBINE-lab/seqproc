@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 
 use crate::{
     compile::{
@@ -17,7 +17,7 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
         match expr.0 {
             Expr::Function(fn_, gp) => {
                 // parse the function and validate it
-                expr = *gp;
+                expr = gp.unboxed();
                 stack.push(compile_fn(fn_, expr.clone())?); // here is where we can compile the functions
             }
             Expr::Label(_) => {
@@ -58,8 +58,8 @@ pub fn compile_definitions(
 
         for S(def, def_span) in defs {
             if let Expr::LabeledGeomPiece(label, expr) = def.clone() {
-                let expr = expr.deref().clone();
-                let label = label.deref().clone();
+                let expr = expr.unboxed();
+                let label = *label;
 
                 if let Expr::Label(S(l, span)) = label {
                     let res = validate_definition(expr, &l);

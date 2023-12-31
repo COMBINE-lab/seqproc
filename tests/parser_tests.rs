@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use chumsky::{prelude::*, Stream};
 use seqproc::{
     lexer::lexer,
@@ -24,10 +22,13 @@ fn definition() {
         Expr::Definitions(vec![S(
             Expr::LabeledGeomPiece(
                 Box::new(Expr::Label(S("brc".to_string(), 0..3))),
-                Box::new(S(
-                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen(S(10, 8..10))),
+                S(
+                    Box::new(Expr::GeomPiece(
+                        IntervalKind::Barcode,
+                        IntervalShape::FixedLen(S(10, 8..10)),
+                    )),
                     6..11,
-                )),
+                ),
             ),
             0..11,
         )]),
@@ -40,7 +41,7 @@ fn definition() {
         unreachable!()
     };
 
-    let res = if let Some(def) = res.deref() {
+    let res = if let Some(def) = res {
         def
     } else {
         panic!("No definitions in {src}")
@@ -48,7 +49,7 @@ fn definition() {
 
     assert_eq!(0, lex_err.len());
     assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert_eq!(res.unboxed(), expected_res);
 }
 
 #[test]
@@ -84,7 +85,7 @@ fn transformation() {
         unreachable!()
     };
 
-    let res = if let S(Some(trans), _) = res.deref() {
+    let res = if let S(Some(trans), _) = res {
         trans
     } else {
         panic!("No transformation in {src}")
@@ -92,7 +93,7 @@ fn transformation() {
 
     assert_eq!(0, lex_err.len());
     assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert_eq!(*res, expected_res);
 }
 
 #[test]
@@ -134,7 +135,7 @@ fn hamming() {
         vec![S(
             Expr::Function(
                 S(Function::Hamming(1), 2..9),
-                Box::new(S(Expr::Label(S("brc".to_string(), 10..15)), 10..18)),
+                S(Box::new(Expr::Label(S("brc".to_string(), 10..15))), 10..18),
             ),
             2..19,
         )],
@@ -169,7 +170,7 @@ fn remove() {
         vec![S(
             Expr::Function(
                 S(Function::Remove, 2..8),
-                Box::new(S(Expr::Label(S("brc".to_string(), 9..14)), 9..14)),
+                S(Box::new(Expr::Label(S("brc".to_string(), 9..14))), 9..14),
             ),
             2..15,
         )],
@@ -222,13 +223,13 @@ fn nested() {
         vec![S(
             Expr::Function(
                 S(Function::Reverse, 2..5),
-                Box::new(S(
-                    Expr::Function(
+                S(
+                    Box::new(Expr::Function(
                         S(Function::Normalize, 6..10),
-                        Box::new(S(Expr::Label(S("brc".to_string(), 11..16)), 11..16)),
-                    ),
+                        S(Box::new(Expr::Label(S("brc".to_string(), 11..16))), 11..16),
+                    )),
                     6..17,
-                )),
+                ),
             ),
             2..18,
         )],
@@ -265,10 +266,13 @@ fn labeled_unbounded() {
         vec![S(
             Expr::LabeledGeomPiece(
                 Box::new(Expr::Label(S("barcode".to_string(), 3..12))),
-                Box::new(S(
-                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::UnboundedLen),
+                S(
+                    Box::new(Expr::GeomPiece(
+                        IntervalKind::Barcode,
+                        IntervalShape::UnboundedLen,
+                    )),
                     2..13,
-                )),
+                ),
             ),
             2..13,
         )],

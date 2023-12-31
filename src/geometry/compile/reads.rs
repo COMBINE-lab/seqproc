@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 
 use crate::{
     compile::{
@@ -115,7 +115,7 @@ pub fn compile_reads(
             'inner: loop {
                 match expr.0 {
                     Expr::Function(inner_fn, gp) => {
-                        expr = gp.deref().clone();
+                        expr = gp.unboxed();
                         stack.push(inner_fn);
                     }
                     Expr::LabeledGeomPiece(l, gp) => {
@@ -133,7 +133,7 @@ pub fn compile_reads(
                         }
                         // maybe return from this and add labeled elements to the map outside of this
                         // would have to unpack labeled values to validate at the end
-                        expr = gp.deref().clone();
+                        expr = gp.unboxed();
 
                         for fn_ in stack {
                             compiled_stack.push(compile_fn(fn_, expr.clone())?);

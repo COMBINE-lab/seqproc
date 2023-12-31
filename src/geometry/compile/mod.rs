@@ -29,7 +29,7 @@ pub struct CompiledData {
 pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
     if let Expr::Description(d, r, t) = expr {
         // validate defintion block
-        let mut map = if let Some(expr) = &*d {
+        let mut map = if let Some(expr) = d.map(S::unboxed) {
             let def_res = compile_definitions(expr.clone());
 
             if let Err(e) = def_res {
@@ -48,7 +48,7 @@ pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
         };
 
         // this needs a bit more thought
-        let compiled_transformation = if let S(Some(transform), span) = &*t {
+        let compiled_transformation = if let S(Some(transform), span) = t.map(|o| o.map(|b| *b)) {
             let res = compile_transformation(S(transform.clone(), span.clone()), &mut map);
 
             if let Err(e) = res {

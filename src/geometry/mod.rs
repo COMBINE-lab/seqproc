@@ -57,4 +57,18 @@ impl<T> S<T> {
     pub fn as_mut(&mut self) -> S<&mut T> {
         S(&mut self.0, self.1.clone())
     }
+
+    pub fn boxed(self) -> S<Box<T>> {
+        S(Box::new(self.0), self.1)
+    }
+
+    pub fn map<R>(self, f: impl FnOnce(T) -> R) -> S<R> {
+        S(f(self.0), self.1)
+    }
+}
+
+impl<T> S<Box<T>> {
+    pub fn unboxed(self) -> S<T> {
+        S(*self.0, self.1)
+    }
 }
