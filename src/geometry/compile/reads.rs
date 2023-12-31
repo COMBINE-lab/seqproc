@@ -26,7 +26,7 @@ pub fn validate_geometry(
             Interval::Temporary(gp_) => gp_,
         };
 
-        let S(gp, span) = gm.expr.clone();
+        let S(gp, span) = &gm.expr;
 
         let type_ = match gp.size {
             IntervalShape::FixedSeq(_) => ReturnType::FixedSeq,
@@ -37,7 +37,7 @@ pub fn validate_geometry(
 
         if !expect_next.contains(&type_) {
             return Err(Error {
-                span,
+                span: span.clone(),
                 msg: format!("Ambiguous Geometry: expected {expect_next:?}, found: {type_}"),
             });
         }
@@ -71,8 +71,8 @@ pub fn standardize_geometry(
         let mut geom: Vec<GeometryMeta> = Vec::new();
         for interval in read {
             match interval {
-                (Interval::Named(l), _) => geom.push(map.get(&l).unwrap().clone()),
-                (Interval::Temporary(gp), _) => geom.push(gp.clone()),
+                (Interval::Named(l), _) => geom.push(map[&l].clone()),
+                (Interval::Temporary(gp), _) => geom.push(gp),
             }
         }
 
@@ -120,7 +120,7 @@ pub fn compile_reads(
                     }
                     Expr::LabeledGeomPiece(l, gp) => {
                         if let Expr::Label(S(l, span)) = &*l {
-                            if labels.contains(l) || map.clone().contains_key(l) {
+                            if labels.contains(l) || map.contains_key(l) {
                                 err = Some(Error {
                                     span: span.clone(),
                                     msg: format!("Variable: {l}, already defined above."),
@@ -223,7 +223,7 @@ pub fn compile_reads(
             }
 
             if let Some(l) = label {
-                map.insert(l.clone(), gm.clone());
+                map.insert(l.clone(), gm);
                 read_geom.push((Interval::Named(l), num));
             } else {
                 read_geom.push((Interval::Temporary(gm), num));
