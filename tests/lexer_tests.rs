@@ -31,7 +31,7 @@ fn tokens() {
             (Token::RBracket, 10..11),
         ],
         lexer().parse(src).unwrap()
-    )
+    );
 }
 
 #[test]
@@ -40,7 +40,7 @@ fn fail() {
 
     let (_, err) = lexer().parse_recovery(src);
 
-    assert_eq!(err.len(), 1)
+    assert_eq!(err.len(), 1);
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn label() {
     assert_eq!(
         vec![(Token::Label("barcode".to_string()), 0..7)],
         res.unwrap()
-    )
+    );
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn precidence() {
     assert_eq!(
         result,
         res.unwrap().iter().map(|(tok, _)| tok).collect::<Vec<_>>()
-    )
+    );
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn map_vs_with_mismatch() {
     assert_eq!(
         result,
         res.unwrap().iter().map(|(tok, _)| tok).collect::<Vec<_>>()
-    )
+    );
 }
 
 #[test]
@@ -133,5 +133,5 @@ fn arguments() {
     assert_eq!(
         result,
         res.unwrap().iter().map(|(tok, _)| tok).collect::<Vec<_>>()
-    )
+    );
 }

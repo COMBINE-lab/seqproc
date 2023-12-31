@@ -371,7 +371,7 @@ umi = pad(u[10], 1, A)
 
     let res = compile(desc);
 
-    assert!(res.is_err())
+    assert!(res.is_err());
 }
 
 #[test]
@@ -392,7 +392,7 @@ brc = remove(trunc(b[10], 3))
 
     let res = compile(desc);
 
-    assert!(res.is_err())
+    assert!(res.is_err());
 }
 
 #[test]
@@ -430,7 +430,7 @@ fn invalid_geom_one() {
 
     let res = compile(desc);
 
-    assert!(res.is_err())
+    assert!(res.is_err());
 }
 
 #[test]
@@ -449,7 +449,7 @@ fn invalid_geom_two() {
 
     let res = compile(desc);
 
-    assert!(res.is_err())
+    assert!(res.is_err());
 }
 
 #[test]

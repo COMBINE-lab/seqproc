@@ -80,7 +80,7 @@ pub fn compile_definitions(
                     err = Some(Error {
                         span: def_span,
                         msg: format!("Expected a Labeled Geometry piece, found: {def}"),
-                    })
+                    });
                 }
             }
         }

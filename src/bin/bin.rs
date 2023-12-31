@@ -58,7 +58,7 @@ pub fn interpret(args: Args, compiled_data: CompiledData) {
 
     let read = compiled_data.interpret(read, &out1, &out2, &additional);
 
-    read.run_with_threads(threads)
+    read.run_with_threads(threads);
 }
 
 fn main() {
@@ -158,5 +158,5 @@ fn main() {
             };
 
             report.finish().print(Source::from(&geom)).unwrap();
-        })
+        });
 }

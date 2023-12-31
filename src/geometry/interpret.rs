@@ -227,7 +227,7 @@ impl GeometryMeta {
         };
 
         if type_ == IntervalKind::Discard {
-            stack.push(S(CompiledFunction::Remove, 0..1))
+            stack.push(S(CompiledFunction::Remove, 0..1));
         }
 
         // this is only called from `interpret_dual` which is for variable to fixedSeq
@@ -264,7 +264,7 @@ impl GeometryMeta {
         let next_label = format!("{cur_label}_{right}");
 
         if type_ == IntervalKind::Discard {
-            stack.push(S(CompiledFunction::Remove, 0..1))
+            stack.push(S(CompiledFunction::Remove, 0..1));
         }
 
         // execute the requisite process here

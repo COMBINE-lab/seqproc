@@ -95,7 +95,7 @@ fn compile(
 
             let gp = if let Some(gp) = map.get(&label) {
                 for fn_ in stack {
-                    compiled_stack.push(compile_fn(fn_, expr.clone())?)
+                    compiled_stack.push(compile_fn(fn_, expr.clone())?);
                 }
 
                 GeometryMeta {

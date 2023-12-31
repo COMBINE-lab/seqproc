@@ -138,7 +138,7 @@ pub fn compile_reads(
                         expr = gp.deref().clone();
 
                         for fn_ in stack {
-                            compiled_stack.push(compile_fn(fn_, expr.clone())?)
+                            compiled_stack.push(compile_fn(fn_, expr.clone())?);
                         }
 
                         break 'inner;
@@ -168,7 +168,7 @@ pub fn compile_reads(
                                         ),
                                         inner_expr.expr.1.clone(),
                                     ),
-                                )?)
+                                )?);
                             }
 
                             compiled_stack = compiled_stack
@@ -189,7 +189,7 @@ pub fn compile_reads(
                     }
                     Expr::GeomPiece(_, _) => {
                         for fn_ in stack {
-                            compiled_stack.push(compile_fn(fn_, expr.clone())?)
+                            compiled_stack.push(compile_fn(fn_, expr.clone())?);
                         }
 
                         break 'inner;
@@ -226,7 +226,7 @@ pub fn compile_reads(
 
             if let Some(l) = label {
                 map.insert(l.clone(), gm.clone());
-                read_geom.push((Interval::Named(l), num))
+                read_geom.push((Interval::Named(l), num));
             } else {
                 read_geom.push((Interval::Temporary(gm), num));
             }
