@@ -5,7 +5,7 @@ use crate::{
         functions::{compile_fn, CompiledFunction},
         utils::*,
     },
-    parser::Expr,
+    parser::{Definition, Expr},
     S,
 };
 
@@ -49,51 +49,37 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
 }
 
 pub fn compile_definitions(
-    S(expr, expr_span): S<Expr>,
+    S(defs, _): S<Vec<S<Definition>>>,
 ) -> Result<HashMap<String, GeometryMeta>, Error> {
-    if let Expr::Definitions(defs) = expr {
-        let mut map = HashMap::new();
+    let mut map = HashMap::new();
 
-        let mut err: Option<Error> = None;
+    let mut err: Option<Error> = None;
 
-        for S(def, def_span) in defs {
-            if let Expr::LabeledGeomPiece(label, expr) = def.clone() {
-                let expr = expr.unboxed();
-                let label = *label;
-
-                if let Expr::Label(S(l, span)) = label {
-                    let res = validate_definition(expr, &l);
-                    if let Err(e) = res {
-                        err = Some(e);
-                        break;
-                    } else if map.insert(l.clone(), res.ok().unwrap()).is_some() {
-                        err = Some(Error {
-                            // span labels
-                            span,
-                            msg: format!(
-                                "Repeated label in definition block: \"{l}\" already defined"
-                            ),
-                        });
-                        break;
-                    }
-                } else {
-                    err = Some(Error {
-                        span: def_span,
-                        msg: format!("Expected a Labeled Geometry piece, found: {def}"),
-                    });
-                }
-            }
+    for S(
+        Definition {
+            label: S(label_str, label_span),
+            expr,
+        },
+        _,
+    ) in defs
+    {
+        let res = validate_definition(expr, &label_str);
+        if let Err(e) = res {
+            err = Some(e);
+            break;
+        } else if map.insert(label_str.clone(), res.ok().unwrap()).is_some() {
+            err = Some(Error {
+                // span labels
+                span: label_span,
+                msg: format!("Repeated label in definition block: \"{label_str}\" already defined"),
+            });
+            break;
         }
-
-        if let Some(e) = err {
-            return Err(e);
-        }
-
-        Ok(map)
-    } else {
-        Err(Error {
-            span: expr_span,
-            msg: format!("Expected a definition block, found: {expr}"),
-        })
     }
+
+    if let Some(e) = err {
+        return Err(e);
+    }
+
+    Ok(map)
 }

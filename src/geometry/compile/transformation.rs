@@ -5,60 +5,24 @@ use crate::{
         functions::{compile_fn, CompiledFunction},
         utils::*,
     },
-    parser::{Expr, Function},
+    parser::{Expr, Function, Read},
     S,
 };
 
+/// Takes the map, all labels should be in the map
+/// Validate any further compositions
+/// Update the map with the new geometry pieces
+/// Return the new map and a list of labels which represents the final transformation
 pub fn compile_transformation(
-    transformation: S<Expr>,
-    map: &mut HashMap<String, GeometryMeta>,
-) -> Result<(Transformation, &mut HashMap<String, GeometryMeta>), Error> {
-    let S(expr, span) = transformation;
-
-    let Expr::Transform(exprs) = expr else {
-        return Err(Error {
-            span,
-            msg: format!("Expected a transformation expression found: {expr}"),
-        });
-    };
-
-    /*
-       Although this is similar to the compile function for reads it is slightly different
-       This should only allow labels and functions
-
-       Thus the method should have different validation and should be unique
-       Also there is no need to confirm geometry
-
-       Lets see if we can make this a bit cleaner
-    */
-    compile(S(exprs, span), map)
-}
-
-/*
-   Takes the map, all labels should be in the map
-   Validate any further compositions
-   Update the map with the new geometry pieces
-   Return the new map and a list of labels which represents the final transformation
-*/
-fn compile(
-    exprs: S<Vec<Expr>>,
-    map: &mut HashMap<String, GeometryMeta>,
-) -> Result<(Transformation, &mut HashMap<String, GeometryMeta>), Error> {
+    S(reads, span): S<Vec<S<Read>>>,
+    mut map: HashMap<String, GeometryMeta>,
+) -> Result<(Transformation, HashMap<String, GeometryMeta>), Error> {
     let mut transformation: Transformation = Vec::new();
 
-    let S(exprs, span) = exprs;
-
-    for read in exprs {
-        let Expr::Read(_, read) = read else {
-            return Err(Error {
-                span,
-                msg: format!("Expected a Read found {read}"),
-            });
-        };
-
+    for S(Read { exprs, .. }, _) in reads {
         let mut inner_transformation: Vec<String> = Vec::new();
 
-        for expr in read {
+        for expr in exprs {
             let mut expr = expr;
             let mut stack: Vec<S<Function>> = Vec::new();
             let mut compiled_stack: Vec<S<CompiledFunction>> = Vec::new();
@@ -86,24 +50,24 @@ fn compile(
                 });
             };
 
-            let gp = if let Some(gp) = map.get(&label) {
-                for fn_ in stack {
-                    compiled_stack.push(compile_fn(fn_, expr.clone())?);
-                }
-
-                GeometryMeta {
-                    expr: gp.expr.clone(),
-                    stack: compiled_stack
-                        .clone()
-                        .into_iter()
-                        .chain(gp.stack.clone())
-                        .collect::<Vec<_>>(),
-                }
-            } else {
+            let Some(gp) = map.get(&label) else {
                 return Err(Error {
                     span: label_span,
-                    msg: format!("Variable with name \"{label}\" found"),
+                    msg: format!("Variable with name \"{label}\" not found"),
                 });
+            };
+
+            for fn_ in stack {
+                compiled_stack.push(compile_fn(fn_, expr.clone())?);
+            }
+
+            let gp = GeometryMeta {
+                expr: gp.expr.clone(),
+                stack: compiled_stack
+                    .clone()
+                    .into_iter()
+                    .chain(gp.stack.clone())
+                    .collect::<Vec<_>>(),
             };
 
             gp.validate_expr()?;

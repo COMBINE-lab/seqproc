@@ -9,9 +9,7 @@ use reads::compile_reads;
 use transformation::compile_transformation;
 use utils::Error;
 
-use std::collections::HashMap;
-
-use crate::{parser::Expr, S};
+use crate::{parser::Description, S};
 
 use self::{
     reads::standardize_geometry,
@@ -26,76 +24,66 @@ pub struct CompiledData {
 }
 
 // this should be more of a compile and also should return a kind of
-pub fn compile(expr: Expr) -> Result<CompiledData, Error> {
-    if let Expr::Description(d, r, t) = expr {
-        // validate defintion block
-        let mut map = if let Some(expr) = d.map(S::unboxed) {
-            let def_res = compile_definitions(expr.clone());
+pub fn compile(
+    Description {
+        definitions,
+        reads,
+        transforms,
+    }: Description,
+) -> Result<CompiledData, Error> {
+    // validate defintion block
+    let map = {
+        let def_res = compile_definitions(definitions);
 
-            if let Err(e) = def_res {
-                return Err(e);
-            } else {
-                def_res.ok().unwrap()
-            }
+        if let Err(e) = def_res {
+            return Err(e);
         } else {
-            HashMap::new()
-        };
-
-        let validate_read_res = compile_reads(r, &mut map);
-
-        let Ok((mut map, geometry)) = validate_read_res else {
-            return Err(validate_read_res.err().unwrap());
-        };
-
-        // this needs a bit more thought
-        let compiled_transformation = if let S(Some(transform), span) = t.map(|o| o.map(|b| *b)) {
-            let res = compile_transformation(S(transform.clone(), span.clone()), &mut map);
-
-            if let Err(e) = res {
-                return Err(e);
-            } else {
-                res.ok()
-            }
-        } else {
-            None
-        };
-
-        /*
-           At this point we have
-               - map
-               - geometry
-               - transformation
-
-           What needs to happen
-               - labels in geometry replaced by their value in map
-               - labels in transformation add their read number from geometry DONE
-        */
-
-        let numbered_labels = geometry
-            .iter()
-            .flatten()
-            .filter(|e| matches!(e.0, Interval::Named(_)))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        if let Some((transformation, map)) = compiled_transformation {
-            let transformation = label_transformation(transformation, &numbered_labels);
-
-            let geometry = standardize_geometry(&mut map.clone(), geometry);
-
-            Ok(CompiledData {
-                geometry,
-                transformation: Some(transformation),
-            })
-        } else {
-            let geometry = standardize_geometry(&mut map, geometry);
-
-            Ok(CompiledData {
-                geometry,
-                transformation: None,
-            })
+            def_res.ok().unwrap()
         }
+    };
+    let validate_read_res = compile_reads(reads, map);
+
+    let Ok((map, geometry)) = validate_read_res else {
+        return Err(validate_read_res.err().unwrap());
+    };
+
+    let numbered_labels = geometry
+        .iter()
+        .flatten()
+        .filter(|e| matches!(e.0, Interval::Named(_)))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    // this needs a bit more thought
+
+    /*
+       At this point we have
+           - map
+           - geometry
+           - transformation
+
+       What needs to happen
+           - labels in geometry replaced by their value in map
+           - labels in transformation add their read number from geometry DONE
+    */
+
+    if let Some(S(transform, span)) = transforms {
+        let (transformation, map) = compile_transformation(S(transform, span), map)?;
+
+        let transformation = label_transformation(transformation, &numbered_labels);
+
+        let geometry = standardize_geometry(map, geometry);
+
+        Ok(CompiledData {
+            geometry,
+            transformation: Some(transformation),
+        })
     } else {
-        unreachable!()
+        let geometry = standardize_geometry(map, geometry);
+
+        Ok(CompiledData {
+            geometry,
+            transformation: None,
+        })
     }
 }

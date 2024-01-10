@@ -143,26 +143,14 @@ pub enum Expr {
     /// A binding of an interval to an identifier,
     /// either inline (`b<foo>[10]`)
     /// or as a declaration statement (`foo = b[10]`).
-    LabeledGeomPiece(Box<Self>, S<Box<Self>>),
+    ///
+    /// `.0` is the label, `.1` is the interval.
+    LabeledGeomPiece(S<String>, S<Box<Self>>),
 
     /// A transformation invocation: `hamming(f[CAGAGC], 1)`.
     ///
     /// `.1` is the first argument.
     Function(S<Function>, S<Box<Self>>),
-
-    /// A read, with index and expression: `1{hamming(<brc>, 1)}`.
-    Read(S<usize>, Vec<S<Self>>),
-
-    /// The list of definitions at the top of an EFGDL file:
-    /// `brc = b[10] foo = f[CAGAGC]`.``
-    Definitions(Vec<S<Self>>),
-
-    /// List of reads specifying the output of a transformation:
-    /// ` -> 1{<brc>pad(<anchor>, 3, A)<read>}`.
-    Transform(Vec<Self>),
-
-    /// A full EFGDL file: 0+ definitions, then input reads, then transformed reads.
-    Description(Option<S<Box<Self>>>, S<Vec<Self>>, S<Option<Box<Self>>>),
 }
 
 impl fmt::Display for Expr {
@@ -172,73 +160,42 @@ impl fmt::Display for Expr {
             Self_ => write!(f, "self"),
             Label(S(s, _)) => write!(f, "<{s}>"),
             GeomPiece(t, s) => write!(f, "{t}{s}"),
-            LabeledGeomPiece(l, S(expr, _)) => {
+            LabeledGeomPiece(S(l, _), S(expr, _)) => {
                 write!(f, "{l}={expr}")
             }
             Function(S(fn_, _), S(expr, _)) => fn_.fmt(f, format_args!("{expr}")),
-            Read(S(n, _), exprs) => write!(
-                f,
-                "{n}{{{}}}",
-                exprs
-                    .iter()
-                    .map(|S(x, _)| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ),
-            Definitions(exprs) => write!(
-                f,
-                "def(\n{}\n)",
-                exprs
-                    .iter()
-                    .map(|S(x, _)| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-            Transform(exprs) => write!(
-                f,
-                " -> {}",
-                exprs
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ),
-            Description(d, r, t) => {
-                let d_w = if let Some(S(d, _)) = d {
-                    Some(format!("{d}"))
-                } else {
-                    None
-                };
-
-                let t_w = if let S(Some(t), _) = t {
-                    Some(format!("{t}"))
-                } else {
-                    None
-                };
-
-                let S(r, _) = r;
-
-                let r_w = r
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-
-                if let Some(d_s) = d_w {
-                    if let Some(t_s) = t_w {
-                        write!(f, "{d_s}\n{r_w}\n{t_s}")
-                    } else {
-                        write!(f, "{d_s}\n{r_w}")
-                    }
-                } else {
-                    write!(f, "{r_w}")
-                }
-            }
         }
     }
 }
 
-pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
+/// A variable definition in an EFGDL header: `foo = f[ABC]`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Definition {
+    pub label: S<String>,
+    pub expr: S<Expr>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A read, with index and expression: `1{hamming(<brc>, 1)}`.
+pub struct Read {
+    pub index: S<usize>,
+    pub exprs: Vec<S<Expr>>,
+}
+
+/// A full EFGDL file: 0+ definitions, then input reads, then transformed reads.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+
+pub struct Description {
+    /// The list of definitions at the top of an EFGDL file:
+    /// `brc = b[10] foo = f[CAGAGC]`.``
+    pub definitions: S<Vec<S<Definition>>>,
+    pub reads: S<Vec<S<Read>>>,
+    /// List of reads specifying the output of a transformation:
+    /// ` -> 1{<brc>pad(<anchor>, 3, A)<read>}`.
+    pub transforms: Option<S<Vec<S<Read>>>>,
+}
+
+pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clone {
     /*
        Start with creating combinators and
        a recursive definition of a geom_piece
@@ -276,6 +233,8 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .map_with_span(|l, span| Expr::Label(S(l, span)))
         .labelled("Label");
 
+    let label_str = ident.map_with_span(S).labelled("Label");
+
     let self_ = just(Token::Self_).to(Expr::Self_).labelled("Self");
 
     let range = just(Token::LBracket)
@@ -301,12 +260,12 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .labelled("Nucleotide String");
 
     let unbounded = piece_type
-        .then(label.or_not())
+        .then(label_str.or_not())
         .then_ignore(just(Token::Colon))
         .map_with_span(|(type_, label), span| {
             let expr = Expr::GeomPiece(type_, IntervalShape::UnboundedLen);
             if let Some(label) = label {
-                Expr::LabeledGeomPiece(Box::new(label), S(Box::new(expr), span))
+                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
             } else {
                 expr
             }
@@ -314,12 +273,12 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .labelled("Unbounded Segment");
 
     let ranged = piece_type
-        .then(label.or_not())
+        .then(label_str.or_not())
         .then(range)
         .map_with_span(|((type_, label), ((), range)), span| {
             let expr = Expr::GeomPiece(type_, range);
             if let Some(label) = label {
-                Expr::LabeledGeomPiece(Box::new(label), S(Box::new(expr), span))
+                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
             } else {
                 expr
             }
@@ -327,12 +286,12 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
         .labelled("Ranged Segment");
 
     let fixed = piece_type
-        .then(label.or_not())
+        .then(label_str.or_not())
         .then(fixed_len)
         .map_with_span(|((type_, label), len), span| {
             let expr = Expr::GeomPiece(type_, len);
             if let Some(label) = label {
-                Expr::LabeledGeomPiece(Box::new(label), S(Box::new(expr), span))
+                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
             } else {
                 expr
             }
@@ -341,12 +300,12 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
 
     let fixed_seq = just(Token::FixedSeq)
         .to(IntervalKind::FixedSeq)
-        .then(label.or_not())
+        .then(label_str.or_not())
         .then(nucstr)
         .map_with_span(|((type_, label), nucs), span| {
             let expr = Expr::GeomPiece(type_, nucs);
             if let Some(label) = label {
-                Expr::LabeledGeomPiece(Box::new(label), S(Box::new(expr), span))
+                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
             } else {
                 expr
             }
@@ -502,7 +461,7 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .map_with_span(|_, span| S(Function::ReverseComp, span))
                 .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("Reverse Compliment function"),
+                .labelled("Reverse Complement function"),
             just(Token::Map)
                 .map_with_span(|_, span| span)
                 .then(
@@ -569,17 +528,19 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
     .map_with_span(S);
 
     let definitions = ident
-        .map_with_span(|tok, span| Expr::Label(S(tok, span)))
+        .map_with_span(S)
         .then_ignore(just(Token::Equals))
         .then(transformed_pieces.clone())
         .map_with_span(|(label, geom_p), span| {
             S(
-                Expr::LabeledGeomPiece(Box::new(label), geom_p.boxed()),
+                Definition {
+                    label,
+                    expr: geom_p,
+                },
                 span,
             )
         })
-        .repeated()
-        .at_least(1);
+        .repeated();
 
     let reads = num
         .map_with_span(S)
@@ -590,10 +551,17 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .at_least(1)
                 .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map(|(n, read)| Expr::Read(n, read))
+        .map_with_span(|(n, read), span| {
+            S(
+                Read {
+                    index: n,
+                    exprs: read,
+                },
+                span,
+            )
+        })
         .repeated()
-        .at_least(2)
-        .at_most(2)
+        .exactly(2)
         .collect::<Vec<_>>();
 
     let transform_read = num
@@ -605,21 +573,31 @@ pub fn parser() -> impl Parser<Token, S<Expr>, Error = Simple<Token>> + Clone {
                 .at_least(1)
                 .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map(|(n, read)| Expr::Read(n, read));
+        .map_with_span(|(n, read), span| {
+            S(
+                Read {
+                    index: n,
+                    exprs: read,
+                },
+                span,
+            )
+        });
 
     let transformation = choice((
-        end().map_with_span(|(), span| S(None, span)),
+        end().map(|()| None),
         just(Token::TransformTo)
             .then(transform_read.repeated().at_least(1).at_most(2))
-            .map_with_span(|(_, val), span| S(Some(Expr::Transform(val)), span)),
+            .map_with_span(|(_, val), span| Some(S(val, span))),
     ));
 
     definitions
-        .map_with_span(|tok, span| S(Expr::Definitions(tok), span))
-        .or_not()
+        .map_with_span(S)
         .then(reads.map_with_span(S))
         .then(transformation)
-        .map(|((d, r), t)| Expr::Description(d.map(S::boxed), r, t.map(|i| i.map(Box::new))))
-        .map_with_span(S)
+        .map(|((d, r), t)| Description {
+            definitions: d,
+            reads: r,
+            transforms: t,
+        })
         .recover_with(skip_then_retry_until([]))
 }

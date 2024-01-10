@@ -5,7 +5,7 @@ use crate::{
         functions::{compile_fn, CompiledFunction},
         utils::*,
     },
-    parser::{Expr, Function, IntervalShape},
+    parser::{Expr, Function, IntervalShape, Read},
     S,
 };
 
@@ -62,7 +62,7 @@ pub fn validate_geometry(
 }
 
 pub fn standardize_geometry(
-    map: &mut HashMap<String, GeometryMeta>,
+    map: HashMap<String, GeometryMeta>,
     geometry: Geometry,
 ) -> Vec<Vec<GeometryMeta>> {
     let mut std_geom: Vec<Vec<GeometryMeta>> = Vec::new();
@@ -84,8 +84,8 @@ pub fn standardize_geometry(
 
 // this should take both reads and parse them. Allowing for combined label_map
 pub fn compile_reads(
-    exprs: S<Vec<Expr>>,
-    map: &mut HashMap<String, GeometryMeta>,
+    S(reads, _): S<Vec<S<Read>>>,
+    mut map: HashMap<String, GeometryMeta>,
 ) -> Result<(HashMap<String, GeometryMeta>, Geometry), Error> {
     let mut err: Option<Error> = None;
     let mut geometry: Geometry = Vec::new();
@@ -94,19 +94,16 @@ pub fn compile_reads(
     // create a vector of labels which have already been used. help with errors
     // labels and span!
 
-    let S(exprs, span) = exprs;
-
-    'outer_outer: for read in exprs {
-        let Expr::Read(S(num, _), read) = read else {
-            return Err(Error {
-                span,
-                msg: format!("Expected a Read found {read}"),
-            });
-        };
-
+    'outer_outer: for S(
+        Read {
+            index: S(num, _),
+            exprs: read_exprs,
+        },
+        _,
+    ) in reads
+    {
         let mut read_geom: Vec<(Interval, usize)> = Vec::new();
-        'outer: for expr in read {
-            let mut expr = expr;
+        'outer: for mut expr in read_exprs {
             let mut spanned_geom_piece: Option<S<GeometryPiece>> = None;
             let mut compiled_stack: Vec<S<CompiledFunction>> = Vec::new();
             let mut stack: Vec<S<Function>> = Vec::new();
@@ -118,19 +115,18 @@ pub fn compile_reads(
                         expr = gp.unboxed();
                         stack.push(inner_fn);
                     }
-                    Expr::LabeledGeomPiece(l, gp) => {
-                        if let Expr::Label(S(l, span)) = &*l {
-                            if labels.contains(l) || map.contains_key(l) {
-                                err = Some(Error {
-                                    span: span.clone(),
-                                    msg: format!("Variable: {l}, already defined above."),
-                                });
+                    Expr::LabeledGeomPiece(S(l, span), gp) => {
+                        if labels.contains(&l) || map.contains_key(&l) {
+                            err = Some(Error {
+                                span,
+                                msg: format!("Variable: {l}, already defined above."),
+                            });
 
-                                break 'outer;
-                            }
-
-                            label = Some(l.clone());
+                            break 'outer;
                         }
+
+                        label = Some(l.clone());
+
                         // maybe return from this and add labeled elements to the map outside of this
                         // would have to unpack labeled values to validate at the end
                         expr = gp.unboxed();
@@ -230,7 +226,7 @@ pub fn compile_reads(
             }
         }
 
-        if let Err(e) = validate_geometry(map, &read_geom) {
+        if let Err(e) = validate_geometry(&map, &read_geom) {
             err = Some(e);
             break 'outer_outer;
         }
@@ -242,5 +238,5 @@ pub fn compile_reads(
         return Err(e);
     }
 
-    Ok((map.clone(), geometry))
+    Ok((map, geometry))
 }
