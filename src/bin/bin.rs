@@ -67,10 +67,10 @@ fn main() {
 
     let (tokens, mut errs) = lexer::lexer().parse_recovery(&*geom);
 
-    let parse_errs = if let Some(tokens) = &tokens {
+    let parse_errs = if let Some(tokens) = tokens {
         let (ast, parse_errs) = parser().parse_recovery(Stream::from_iter(
             tokens.len()..tokens.len() + 1,
-            tokens.clone().into_iter(),
+            tokens.into_iter(),
         ));
 
         if let Some(ast) = ast {
