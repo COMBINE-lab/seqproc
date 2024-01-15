@@ -1,76 +1,37 @@
-use std::{collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 
-use super::{
-    functions::{compile_fn, CompiledFunction},
-    utils::*,
+use crate::{
+    compile::{
+        functions::{compile_fn, CompiledFunction},
+        utils::*,
+    },
+    parser::{Expr, Function, Read},
+    S,
 };
 
-use crate::parser::{Expr, Function, Spanned};
-
+/// Takes the map, all labels should be in the map
+/// Validate any further compositions
+/// Update the map with the new geometry pieces
+/// Return the new map and a list of labels which represents the final transformation
 pub fn compile_transformation(
-    transformation: Spanned<Expr>,
-    map: &mut HashMap<String, GeometryMeta>,
-) -> Result<(Transformation, &mut HashMap<String, GeometryMeta>), Error> {
-    let (expr, span) = transformation;
-
-    let exprs = if let Expr::Transform(exprs) = expr {
-        exprs
-    } else {
-        return Err(Error {
-            span,
-            msg: format!("Expected a transformation expression found: {}", expr),
-        });
-    };
-
-    /*
-       Although this is similar to the compile function for reads it is slightly different
-       This should only allow labels and functions
-
-       Thus the method should have different validation and should be unique
-       Also there is no need to confirm geometry
-
-       Lets see if we can make this a bit cleaner
-    */
-    compile((exprs, span), map)
-}
-
-/*
-   Takes the map, all labels should be in the map
-   Validate any further compositions
-   Update the map with the new geometry pieces
-   Return the new map and a list of labels which represents the final transformation
-*/
-fn compile(
-    exprs: Spanned<Vec<Expr>>,
-    map: &mut HashMap<String, GeometryMeta>,
-) -> Result<(Transformation, &mut HashMap<String, GeometryMeta>), Error> {
+    S(reads, span): S<Vec<S<Read>>>,
+    mut map: HashMap<String, GeometryMeta>,
+) -> Result<(Transformation, HashMap<String, GeometryMeta>), Error> {
     let mut transformation: Transformation = Vec::new();
 
-    let (exprs, span) = exprs;
-
-    for read in exprs {
-        let read = match read {
-            Expr::Read((_num, _), read) => read,
-            _ => {
-                return Err(Error {
-                    span,
-                    msg: format!("Expected a Read found {}", read),
-                });
-            }
-        };
-
+    for S(Read { exprs, .. }, _) in reads {
         let mut inner_transformation: Vec<String> = Vec::new();
 
-        for expr in read {
+        for expr in exprs {
             let mut expr = expr;
-            let mut stack: Vec<Spanned<Function>> = Vec::new();
-            let mut compiled_stack: Vec<Spanned<CompiledFunction>> = Vec::new();
-            let label: Option<Spanned<String>>;
+            let mut stack: Vec<S<Function>> = Vec::new();
+            let mut compiled_stack: Vec<S<CompiledFunction>> = Vec::new();
+            let label: Option<S<String>>;
 
             'inner: loop {
                 match expr.0 {
                     Expr::Function(fn_, gp) => {
-                        expr = gp.deref().clone();
+                        expr = gp.unboxed();
                         stack.push(fn_);
                     }
                     Expr::Label(ref l) => {
@@ -81,9 +42,7 @@ fn compile(
                 }
             }
 
-            let (label, label_span) = if let Some(l) = label {
-                l
-            } else {
+            let Some(S(label, label_span)) = label else {
                 return Err(Error {
                     span,
                     msg: "Transformations must only reference previously defined labels"
@@ -91,27 +50,27 @@ fn compile(
                 });
             };
 
-            let gp = if let Some(gp) = map.get(&label) {
-                for fn_ in stack {
-                    compiled_stack.push(compile_fn(fn_, expr.clone())?)
-                }
-
-                GeometryMeta {
-                    expr: gp.expr.clone(),
-                    stack: compiled_stack
-                        .clone()
-                        .into_iter()
-                        .chain(gp.stack.clone())
-                        .collect::<Vec<_>>(),
-                }
-            } else {
+            let Some(gp) = map.get(&label) else {
                 return Err(Error {
                     span: label_span,
-                    msg: format!("Variable with name \"{}\" found", label),
+                    msg: format!("Variable with name \"{label}\" not found"),
                 });
             };
 
-            validate_expr(gp.clone())?;
+            for fn_ in stack {
+                compiled_stack.push(compile_fn(fn_, expr.clone())?);
+            }
+
+            let gp = GeometryMeta {
+                expr: gp.expr.clone(),
+                stack: compiled_stack
+                    .clone()
+                    .into_iter()
+                    .chain(gp.stack.clone())
+                    .collect::<Vec<_>>(),
+            };
+
+            gp.validate_expr()?;
 
             map.insert(label.clone(), gp);
 
@@ -148,7 +107,7 @@ pub fn label_transformation(
         for l in t {
             let num = find_num(&l, numbered_labels);
 
-            inner_transformation.push(format!("seq{num}.{}", l));
+            inner_transformation.push(format!("seq{num}.{l}"));
         }
 
         numbered_transformation.push(inner_transformation);

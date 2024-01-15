@@ -1,22 +1,23 @@
-use super::{
-    functions::{compile_fn, CompiledFunction},
-    utils::*,
+use std::collections::HashMap;
+
+use crate::{
+    compile::{
+        functions::{compile_fn, CompiledFunction},
+        utils::*,
+    },
+    parser::{Definition, Expr},
+    S,
 };
 
-use std::{collections::HashMap, ops::Deref};
-
-use crate::parser::{Expr, Spanned};
-
-// validate definitions there should be no labels, just labeled geom peices and functions
-fn validate_definition(expr: Spanned<Expr>, label: &str) -> Result<GeometryMeta, Error> {
-    let mut stack: Vec<Spanned<CompiledFunction>> = vec![];
-    let mut expr = expr;
+/// validate definitions there should be no labels, just labeled geom peices and functions
+fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, Error> {
+    let mut stack: Vec<S<CompiledFunction>> = vec![];
 
     loop {
         match expr.0 {
             Expr::Function(fn_, gp) => {
                 // parse the function and validate it
-                expr = gp.deref().clone();
+                expr = gp.unboxed();
                 stack.push(compile_fn(fn_, expr.clone())?); // here is where we can compile the functions
             }
             Expr::Label(_) => {
@@ -29,8 +30,8 @@ fn validate_definition(expr: Spanned<Expr>, label: &str) -> Result<GeometryMeta,
         }
     }
 
-    let gp = if let (Expr::GeomPiece(type_, size), span) = expr {
-        (
+    let gp = if let S(Expr::GeomPiece(type_, size), span) = expr {
+        S(
             GeometryPiece {
                 type_,
                 size,
@@ -44,56 +45,41 @@ fn validate_definition(expr: Spanned<Expr>, label: &str) -> Result<GeometryMeta,
 
     let gp = GeometryMeta { expr: gp, stack };
 
-    validate_expr(gp)
+    gp.validate_expr().map(|()| gp)
 }
 
-pub fn compile_definitions(expr: Spanned<Expr>) -> Result<HashMap<String, GeometryMeta>, Error> {
-    let (expr, expr_span) = expr;
+pub fn compile_definitions(
+    S(defs, _): S<Vec<S<Definition>>>,
+) -> Result<HashMap<String, GeometryMeta>, Error> {
+    let mut map = HashMap::new();
 
-    if let Expr::Definitions(defs) = expr {
-        let mut map = HashMap::new();
+    let mut err: Option<Error> = None;
 
-        let mut err: Option<Error> = None;
-
-        for (def, def_span) in defs {
-            if let Expr::LabeledGeomPiece(label, expr) = def.clone() {
-                let expr = expr.deref().clone();
-                let label = label.deref().clone();
-
-                if let Expr::Label((l, span)) = label {
-                    let res = validate_definition(expr.clone(), &l);
-                    if let Err(e) = res {
-                        err = Some(e);
-                        break;
-                    } else if map.insert(l.clone(), res.ok().unwrap()).is_some() {
-                        err = Some(Error {
-                            // span labels
-                            span,
-                            msg: format!(
-                                "Repeated label in definition block: \"{}\" already defined",
-                                l
-                            ),
-                        });
-                        break;
-                    }
-                } else {
-                    err = Some(Error {
-                        span: def_span,
-                        msg: format!("Expected a Labeled Geometry piece, found: {}", def),
-                    })
-                }
-            }
+    for S(
+        Definition {
+            label: S(label_str, label_span),
+            expr,
+        },
+        _,
+    ) in defs
+    {
+        let res = validate_definition(expr, &label_str);
+        if let Err(e) = res {
+            err = Some(e);
+            break;
+        } else if map.insert(label_str.clone(), res.ok().unwrap()).is_some() {
+            err = Some(Error {
+                // span labels
+                span: label_span,
+                msg: format!("Repeated label in definition block: \"{label_str}\" already defined"),
+            });
+            break;
         }
-
-        if let Some(e) = err {
-            return Err(e);
-        }
-
-        Ok(map)
-    } else {
-        Err(Error {
-            span: expr_span,
-            msg: format!("Expected a definition block, found: {}", expr),
-        })
     }
+
+    if let Some(e) = err {
+        return Err(e);
+    }
+
+    Ok(map)
 }

@@ -1,10 +1,10 @@
-use std::{collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 
 use chumsky::{prelude::*, Stream};
 use seqproc::{
     compile::{compile, definitions::compile_definitions, reads::compile_reads, utils::Error},
     lexer::lexer,
-    parser::{parser, Expr},
+    parser::parser,
 };
 
 #[test]
@@ -17,15 +17,12 @@ fn no_err() -> Result<(), Error> {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
-    };
-
-    compile_reads(res, &mut HashMap::new())?;
+    compile_reads(res.reads, HashMap::new())?;
 
     Ok(())
 }
@@ -40,15 +37,12 @@ fn fail_norm() {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
-    };
-
-    let res = compile_reads(res.clone(), &mut HashMap::new());
+    let res = compile_reads(res.reads, HashMap::new());
 
     assert!(res.is_err());
 }
@@ -63,15 +57,12 @@ fn pass_composition() {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
-    };
-
-    let res = compile_reads(res.clone(), &mut HashMap::new());
+    let res = compile_reads(res.reads, HashMap::new());
 
     assert!(res.is_ok());
 }
@@ -86,15 +77,12 @@ fn fail_remove() {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
-    };
-
-    let res = compile_reads(res.clone(), &mut HashMap::new());
+    let res = compile_reads(res.reads, HashMap::new());
 
     assert!(res.is_err());
 }
@@ -109,15 +97,12 @@ fn discard_as_void() {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
-    };
-
-    let res = compile_reads(res.clone(), &mut HashMap::new());
+    let res = compile_reads(res.reads, HashMap::new());
 
     assert!(res.is_err());
 }
@@ -135,21 +120,12 @@ brc1 = b[1-4]
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let res = if let Expr::Description(d, _r, _t) = res.clone().unwrap().0 {
-        d
-    } else {
-        unreachable!()
-    };
-
-    let res = if let Some(def) = res.deref() {
-        def
-    } else {
-        panic!("No definitions in {}", src)
-    };
-
-    let def_map = compile_definitions(res.clone())?;
+    let def_map = compile_definitions(res.definitions)?;
 
     assert_eq!(2, def_map.len());
 
@@ -169,21 +145,12 @@ brc = b[1-4]
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let res = if let Expr::Description(d, _r, _t) = res.clone().unwrap().0 {
-        d
-    } else {
-        unreachable!()
-    };
-
-    let res = if let Some(def) = res.deref() {
-        def
-    } else {
-        panic!("No definitions in {}", src)
-    };
-
-    let def_map = compile_definitions(res.clone());
+    let def_map = compile_definitions(res.definitions);
 
     assert!(def_map.is_err());
 }
@@ -199,21 +166,14 @@ fn label_replacement() {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let (def, reads) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
-        (d.deref().clone().unwrap(), r)
-    } else {
-        unreachable!()
-    };
+    let def_map = compile_definitions(res.definitions).unwrap();
 
-    let mut def_map = if let Ok(d) = compile_definitions(def.clone()) {
-        d
-    } else {
-        todo!()
-    };
-
-    let res = compile_reads(reads, &mut def_map);
+    let res = compile_reads(res.reads, def_map);
 
     assert!(res.is_err());
 }
@@ -229,21 +189,14 @@ fn no_variable() {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let (def, reads) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
-        (d.deref().clone().unwrap(), r)
-    } else {
-        unreachable!()
-    };
+    let def_map = compile_definitions(res.definitions).unwrap();
 
-    let mut def_map = if let Ok(d) = compile_definitions(def.clone()) {
-        d
-    } else {
-        todo!()
-    };
-
-    let res = compile_reads(reads, &mut def_map);
+    let res = compile_reads(res.reads, def_map);
 
     assert!(res.is_err());
 }
@@ -258,11 +211,12 @@ fn expr_unwrap() -> Result<(), Error> {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
-
-    compile(desc)?;
+    compile(res)?;
 
     Ok(())
 }
@@ -279,21 +233,14 @@ brc = b[10]
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let (def, reads) = if let Expr::Description(d, r, _t) = res.clone().unwrap().0 {
-        (d.deref().clone().unwrap(), r)
-    } else {
-        unreachable!()
-    };
+    let def_map = compile_definitions(res.definitions).unwrap();
 
-    let mut def_map = if let Ok(d) = compile_definitions(def.clone()) {
-        d
-    } else {
-        todo!()
-    };
-
-    let res = compile_reads(reads, &mut def_map);
+    let res = compile_reads(res.reads, def_map);
 
     assert!(res.is_err());
 }
@@ -311,21 +258,12 @@ brc1 = pad(<brc>, 1, A)
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let res = if let Expr::Description(d, _r, _t) = res.clone().unwrap().0 {
-        d
-    } else {
-        unreachable!()
-    };
-
-    let res = if let Some(def) = res.deref() {
-        def
-    } else {
-        panic!("No definitions in {}", src)
-    };
-
-    let def_map = compile_definitions(res.clone());
+    let def_map = compile_definitions(res.definitions);
 
     assert!(def_map.is_err());
 }
@@ -343,11 +281,12 @@ umi = pad(u[10], 1, A)
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
-
-    compile(desc)?;
+    compile(res)?;
 
     Ok(())
 }
@@ -365,13 +304,14 @@ umi = pad(u[10], 1, A)
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
+    let res = compile(res);
 
-    let res = compile(desc);
-
-    assert!(res.is_err())
+    assert!(res.is_err());
 }
 
 #[test]
@@ -386,13 +326,14 @@ brc = remove(trunc(b[10], 3))
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
+    let res = compile(res);
 
-    let res = compile(desc);
-
-    assert!(res.is_err())
+    assert!(res.is_err());
 }
 
 #[test]
@@ -405,11 +346,12 @@ fn valid_geom() -> Result<(), Error> {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
-
-    compile(desc)?;
+    compile(res)?;
 
     Ok(())
 }
@@ -424,13 +366,14 @@ fn invalid_geom_one() {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
+    let res = compile(res);
 
-    let res = compile(desc);
-
-    assert!(res.is_err())
+    assert!(res.is_err());
 }
 
 #[test]
@@ -443,13 +386,14 @@ fn invalid_geom_two() {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
+    let res = compile(res);
 
-    let res = compile(desc);
-
-    assert!(res.is_err())
+    assert!(res.is_err());
 }
 
 #[test]
@@ -467,11 +411,12 @@ test = r:
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
-
-    compile(desc)?;
+    compile(res)?;
 
     Ok(())
 }
@@ -490,11 +435,12 @@ umi = norm(u[9-11])
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
-
-    compile(desc)?;
+    compile(res)?;
 
     Ok(())
 }
@@ -509,11 +455,12 @@ fn compile_map_arguments() -> Result<(), Error> {
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
-
-    compile(desc)?;
+    compile(res)?;
 
     Ok(())
 }
@@ -530,11 +477,12 @@ brc = b[10-11]
 
     let len = res.len();
 
-    let (res, _) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let res = parser()
+        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+        .0
+        .unwrap();
 
-    let desc = res.clone().unwrap().0;
-
-    compile(desc)?;
+    compile(res)?;
 
     Ok(())
 }

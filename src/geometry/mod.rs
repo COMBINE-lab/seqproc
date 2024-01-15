@@ -5,6 +5,7 @@ pub mod parser;
 
 use std::{
     fmt::{self, Write},
+    ops::Range,
     slice,
 };
 
@@ -38,5 +39,24 @@ impl Nucleotide {
                 nuc.len(),
             ))
         }
+    }
+}
+
+/// A range of characters in the input file.
+pub type Span = Range<usize>;
+
+/// Associates a `T` with a corresponding span in the source file.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct S<T>(pub T, pub Span);
+
+impl<T> S<T> {
+    pub fn boxed(self) -> S<Box<T>> {
+        S(Box::new(self.0), self.1)
+    }
+}
+
+impl<T> S<Box<T>> {
+    pub fn unboxed(self) -> S<T> {
+        S(*self.0, self.1)
     }
 }

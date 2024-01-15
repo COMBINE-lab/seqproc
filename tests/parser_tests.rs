@@ -1,10 +1,8 @@
-use std::ops::Deref;
-
 use chumsky::{prelude::*, Stream};
 use seqproc::{
     lexer::lexer,
-    parser::{parser, Expr, Function, IntervalKind, IntervalShape},
-    Nucleotide,
+    parser::{parser, Definition, Expr, Function, IntervalKind, IntervalShape, Read},
+    Nucleotide, S,
 };
 
 #[test]
@@ -17,38 +15,29 @@ fn definition() {
 
     let len = res.len();
 
-    let (res, parser_err) =
-        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let (Some(res), parser_err) =
+        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+    else {
+        panic!()
+    };
 
-    let expected_res = (
-        Expr::Definitions(vec![(
-            Expr::LabeledGeomPiece(
-                Box::new(Expr::Label(("brc".to_string(), 0..3))),
-                Box::new((
-                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen((10, 8..10))),
+    let expected_res = S(
+        vec![S(
+            Definition {
+                label: S("brc".to_string(), 0..3),
+                expr: S(
+                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen(S(10, 8..10))),
                     6..11,
-                )),
-            ),
+                ),
+            },
             0..11,
-        )]),
+        )],
         0..11,
     );
 
-    let res = if let Expr::Description(d, _r, _t) = res.clone().unwrap().0 {
-        d
-    } else {
-        unreachable!()
-    };
-
-    let res = if let Some(def) = res.deref() {
-        def
-    } else {
-        panic!("No definitions in {}", src)
-    };
-
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+    assert_eq!(res.definitions, expected_res);
 }
 
 #[test]
@@ -61,38 +50,35 @@ fn transformation() {
 
     let len = res.len();
 
-    let (res, parser_err) =
-        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
-
-    let expected_res = Expr::Transform(vec![
-        Expr::Read(
-            (1, 16..17),
-            vec![(Expr::Label(("t".to_string(), 18..21)), 18..21)],
-        ),
-        Expr::Read(
-            (2, 22..23),
-            vec![(
-                Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::UnboundedLen),
-                24..26,
-            )],
-        ),
-    ]);
-
-    let res = if let Expr::Description(_d, _r, t) = res.clone().unwrap().0 {
-        t
-    } else {
-        unreachable!()
+    let (Some(res), parser_err) =
+        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+    else {
+        panic!()
     };
 
-    let res = if let (Some(trans), _) = res.deref() {
-        trans
-    } else {
-        panic!("No transformation in {}", src)
-    };
+    let expected_res = vec![
+        S(
+            Read {
+                index: S(1, 16..17),
+                exprs: vec![S(Expr::Label(S("t".to_string(), 18..21)), 18..21)],
+            },
+            16..22,
+        ),
+        S(
+            Read {
+                index: S(2, 22..23),
+                exprs: vec![S(
+                    Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::UnboundedLen),
+                    24..26,
+                )],
+            },
+            22..27,
+        ),
+    ];
 
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+    assert_eq!(res.transforms.unwrap().0, expected_res);
 }
 
 #[test]
@@ -112,8 +98,8 @@ another = remove(u[9-11])
 
     let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
 }
 
 #[test]
@@ -126,29 +112,26 @@ fn hamming() {
 
     let len = res.len();
 
-    let (res, parser_err) =
-        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let (Some(res), parser_err) =
+        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+    else {
+        panic!()
+    };
 
-    let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+    let expected_res = Read {
+        index: S(1, 0..1),
+        exprs: vec![S(
             Expr::Function(
-                (Function::Hamming(1), 2..9),
-                Box::new((Expr::Label(("brc".to_string(), 10..15)), 10..18)),
+                S(Function::Hamming(1), 2..9),
+                S(Box::new(Expr::Label(S("brc".to_string(), 10..15))), 10..18),
             ),
             2..19,
         )],
-    );
-
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
     };
 
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
-    assert_eq!(res.0.first().unwrap(), &expected_res);
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+    assert_eq!(res.reads.0[0].0, expected_res);
 }
 
 #[test]
@@ -161,31 +144,26 @@ fn remove() {
 
     let len = res.len();
 
-    let (res, parser_err) =
-        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let (Some(res), parser_err) =
+        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+    else {
+        panic!()
+    };
 
-    let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+    let expected_res = Read {
+        index: S(1, 0..1),
+        exprs: vec![S(
             Expr::Function(
-                (Function::Remove, 2..8),
-                Box::new((Expr::Label(("brc".to_string(), 9..14)), 9..14)),
+                S(Function::Remove, 2..8),
+                S(Box::new(Expr::Label(S("brc".to_string(), 9..14))), 9..14),
             ),
             2..15,
         )],
-    );
-
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
     };
 
-    let res = res.0.first().unwrap();
-
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+    assert_eq!(res.reads.0[0].0, expected_res);
 }
 
 #[test]
@@ -200,7 +178,7 @@ fn illegal_nest() {
 
     let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    assert_eq!(0, lex_err.len());
+    assert!(lex_err.is_empty());
     assert_eq!(1, parser_err.len());
 }
 
@@ -214,37 +192,32 @@ fn nested() {
 
     let len = res.len();
 
-    let (res, parser_err) =
-        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let (Some(res), parser_err) =
+        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+    else {
+        panic!()
+    };
 
-    let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+    let expected_res = Read {
+        index: S(1, 0..1),
+        exprs: vec![S(
             Expr::Function(
-                (Function::Reverse, 2..5),
-                Box::new((
-                    Expr::Function(
-                        (Function::Normalize, 6..10),
-                        Box::new((Expr::Label(("brc".to_string(), 11..16)), 11..16)),
-                    ),
+                S(Function::Reverse, 2..5),
+                S(
+                    Box::new(Expr::Function(
+                        S(Function::Normalize, 6..10),
+                        S(Box::new(Expr::Label(S("brc".to_string(), 11..16))), 11..16),
+                    )),
                     6..17,
-                )),
+                ),
             ),
             2..18,
         )],
-    );
-
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
     };
 
-    let res = res.0.first().unwrap();
-
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+    assert_eq!(res.reads.0[0].0, expected_res);
 }
 
 #[test]
@@ -257,34 +230,32 @@ fn labeled_unbounded() {
 
     let len = res.len();
 
-    let (res, parser_err) =
-        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let (Some(res), parser_err) =
+        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+    else {
+        panic!()
+    };
 
-    let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+    let expected_res = Read {
+        index: S(1, 0..1),
+        exprs: vec![S(
             Expr::LabeledGeomPiece(
-                Box::new(Expr::Label(("barcode".to_string(), 3..12))),
-                Box::new((
-                    Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::UnboundedLen),
+                S("barcode".to_string(), 3..12),
+                S(
+                    Box::new(Expr::GeomPiece(
+                        IntervalKind::Barcode,
+                        IntervalShape::UnboundedLen,
+                    )),
                     2..13,
-                )),
+                ),
             ),
             2..13,
         )],
-    );
-
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
     };
 
-    let res = res.0.first().unwrap();
-
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+    assert_eq!(res.reads.0[0].0, expected_res);
 }
 
 #[test]
@@ -297,31 +268,26 @@ fn ranged() {
 
     let len = res.len();
 
-    let (res, parser_err) =
-        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let (Some(res), parser_err) =
+        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+    else {
+        panic!()
+    };
 
-    let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+    let expected_res = Read {
+        index: S(1, 0..1),
+        exprs: vec![S(
             Expr::GeomPiece(
                 IntervalKind::Barcode,
-                IntervalShape::RangedLen(((10, 11), 4..9)),
+                IntervalShape::RangedLen(S((10, 11), 4..9)),
             ),
             2..10,
         )],
-    );
-
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
     };
 
-    let res = res.0.first().unwrap();
-
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+    assert_eq!(res.reads.0[0].0, expected_res);
 }
 
 #[test]
@@ -334,28 +300,23 @@ fn fixed() {
 
     let len = res.len();
 
-    let (res, parser_err) =
-        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
-
-    let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
-            Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::FixedLen((10, 4..6))),
-            2..7,
-        )],
-    );
-
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
+    let (Some(res), parser_err) =
+        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+    else {
+        panic!()
     };
 
-    let res = res.0.first().unwrap();
+    let expected_res = Read {
+        index: S(1, 0..1),
+        exprs: vec![S(
+            Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::FixedLen(S(10, 4..6))),
+            2..7,
+        )],
+    };
 
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+    assert_eq!(res.reads.0[0].0, expected_res);
 }
 
 #[test]
@@ -368,15 +329,18 @@ fn fixed_seq() {
 
     let len = res.len();
 
-    let (res, parser_err) =
-        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    let (Some(res), parser_err) =
+        parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
+    else {
+        panic!()
+    };
 
-    let expected_res = Expr::Read(
-        (1, 0..1),
-        vec![(
+    let expected_res = Read {
+        index: S(1, 0..1),
+        exprs: vec![S(
             Expr::GeomPiece(
                 IntervalKind::FixedSeq,
-                IntervalShape::FixedSeq((
+                IntervalShape::FixedSeq(S(
                     vec![
                         Nucleotide::G,
                         Nucleotide::A,
@@ -389,19 +353,11 @@ fn fixed_seq() {
             ),
             2..10,
         )],
-    );
-
-    let res = if let Expr::Description(_d, r, _t) = res.clone().unwrap().0 {
-        r
-    } else {
-        unreachable!()
     };
 
-    let res = res.0.first().unwrap();
-
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
-    assert_eq!(res, &expected_res);
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+    assert_eq!(res.reads.0[0].0, expected_res);
 }
 
 #[test]
@@ -416,7 +372,7 @@ fn fail_ranged_seq() {
 
     let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    assert_eq!(0, lex_err.len());
+    assert!(lex_err.is_empty());
     assert_eq!(1, parser_err.len());
 }
 
@@ -432,8 +388,8 @@ fn allow_expr_arg() {
 
     let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    assert_eq!(0, lex_err.len());
-    assert_eq!(0, parser_err.len());
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
 }
 
 #[test]
@@ -448,6 +404,6 @@ fn fail_map() {
 
     let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
 
-    assert_eq!(0, lex_err.len());
+    assert!(lex_err.is_empty());
     assert_eq!(1, parser_err.len());
 }

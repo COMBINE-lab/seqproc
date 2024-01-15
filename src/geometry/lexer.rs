@@ -1,12 +1,9 @@
 //! Defines the lexer for EFGDL.
+use std::fmt::{self, Write};
 
 use chumsky::prelude::*;
-use std::{
-    fmt::{self, Write},
-    ops::Range,
-};
 
-pub type Span = Range<usize>;
+use super::Span;
 
 /// A token produced by the EFGDL lexer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -98,10 +95,10 @@ pub enum Token {
 }
 
 impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Token::*;
         match self {
-            Num(n) => write!(f, "{}", n),
+            Num(n) => write!(f, "{n}"),
             LParen => f.write_char('('),
             RParen => f.write_char(')'),
             LBracket => f.write_char('['),
@@ -176,7 +173,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .ignored()
         .then(take_until(just('"').ignored()))
         .padded()
-        .map(|(_, (f, _))| Token::File(f.into_iter().collect::<String>()));
+        .map(|((), (f, _))| Token::File(f.into_iter().collect::<String>()));
 
     let transformto = just('-').then(just('>')).to(Token::TransformTo);
 

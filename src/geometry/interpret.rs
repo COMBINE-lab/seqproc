@@ -10,8 +10,9 @@ use crate::{
         utils::{GeometryMeta, GeometryPiece},
         CompiledData,
     },
-    parser::{IntervalKind, IntervalShape, Spanned},
+    parser::{IntervalKind, IntervalShape},
     processors::*,
+    S,
 };
 
 fn labels(read_label: &[String]) -> (String, String) {
@@ -131,22 +132,22 @@ fn parse_additional_args(arg: String, args: &[String]) -> String {
 }
 
 fn execute_stack(
-    stack: Vec<Spanned<CompiledFunction>>,
+    stack: Vec<S<CompiledFunction>>,
     label: &str,
     attr: &str,
     read: BoxedReads,
-    size: IntervalShape,
+    size: &IntervalShape,
     additional_args: &[String],
 ) -> BoxedReads {
     let mut read = read;
 
-    let range = if let IntervalShape::RangedLen(((a, b), _)) = size {
-        Some(a..=b)
+    let range = if let IntervalShape::RangedLen(S((a, b), _)) = size {
+        Some(*a..=*b)
     } else {
         None
     };
 
-    for (fn_, _) in stack.into_iter().rev() {
+    for S(fn_, _) in stack.into_iter().rev() {
         read = match fn_ {
             CompiledFunction::Reverse => reverse(read, label, attr),
             CompiledFunction::ReverseComp => reverse_comp(read, label, attr),
@@ -164,20 +165,13 @@ fn execute_stack(
                 let file = parse_additional_args(file, additional_args);
 
                 let mapped = map(read, label, attr, file, 0);
-                execute_stack(
-                    fns,
-                    label,
-                    "not_mapped",
-                    mapped,
-                    size.clone(),
-                    additional_args,
-                )
+                execute_stack(fns, label, "not_mapped", mapped, size, additional_args)
             }
             CompiledFunction::MapWithMismatch(file, fns, mismatch) => {
                 let file = parse_additional_args(file, additional_args);
 
                 let mapped = map(read, label, attr, file, mismatch);
-                execute_stack(fns, label, "mapped", mapped, size.clone(), additional_args)
+                execute_stack(fns, label, "mapped", mapped, size, additional_args)
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
                 let file = parse_additional_args(file, additional_args);
@@ -198,10 +192,10 @@ impl GeometryMeta {
         IntervalKind,
         IntervalShape,
         Option<String>,
-        Vec<Spanned<CompiledFunction>>,
+        Vec<S<CompiledFunction>>,
     ) {
         let GeometryMeta {
-            expr: (GeometryPiece { type_, size, label }, _),
+            expr: S(GeometryPiece { type_, size, label }, _),
             stack,
         } = self.clone();
 
@@ -226,20 +220,20 @@ impl GeometryMeta {
         };
 
         if type_ == IntervalKind::Discard {
-            stack.push((CompiledFunction::Remove, 0..1))
+            stack.push(S(CompiledFunction::Remove, 0..1));
         }
 
         // this is only called from `interpret_dual` which is for variable to fixedSeq
         // thus this is only for variable sized segments
         let read = match size {
-            IntervalShape::RangedLen(((a, b), _)) => {
+            IntervalShape::RangedLen(S((a, b), _)) => {
                 process_ranged_len_no_cut(read, &this_label, a..=b)
             }
             IntervalShape::UnboundedLen => process_unbounded_no_cut(read, &init_label, &this_label),
             _ => unreachable!(),
         };
 
-        execute_stack(stack, &this_label, "", read, size, additional_args)
+        execute_stack(stack, &this_label, "", read, &size, additional_args)
     }
 
     fn interpret(
@@ -263,15 +257,15 @@ impl GeometryMeta {
         let next_label = format!("{cur_label}_{right}");
 
         if type_ == IntervalKind::Discard {
-            stack.push((CompiledFunction::Remove, 0..1))
+            stack.push(S(CompiledFunction::Remove, 0..1));
         }
 
         // execute the requisite process here
         let read = match size.clone() {
-            IntervalShape::FixedSeq((seq, _)) => {
+            IntervalShape::FixedSeq(S(seq, _)) => {
                 let match_type = if !stack.is_empty() {
                     match stack.last().unwrap() {
-                        (CompiledFunction::Hamming(n), _) => {
+                        S(CompiledFunction::Hamming(n), _) => {
                             let dist = Frac(1.0 - (*n as f64 / seq.len() as f64));
                             HammingSearch(dist)
                         }
@@ -294,16 +288,16 @@ impl GeometryMeta {
                     match_type,
                 )
             }
-            IntervalShape::FixedLen((len, _)) => {
+            IntervalShape::FixedLen(S(len, _)) => {
                 process_fixed_len(read, &init_label, &this_label, &next_label, len)
             }
-            IntervalShape::RangedLen(((a, b), _)) => {
+            IntervalShape::RangedLen(S((a, b), _)) => {
                 process_ranged_len(read, &init_label, &this_label, &next_label, a..=b)
             }
             IntervalShape::UnboundedLen => process_unbounded(read, &init_label, &this_label),
         };
 
-        execute_stack(stack, &this_label, "", read, size, additional_args)
+        execute_stack(stack, &this_label, "", read, &size, additional_args)
     }
 
     fn interpret_dual(
@@ -340,12 +334,12 @@ impl GeometryMeta {
         let next_label = format!("{cur_label}_{right}");
 
         let read = match size.clone() {
-            IntervalShape::FixedSeq((seq, _)) => {
+            IntervalShape::FixedSeq(S(seq, _)) => {
                 // check if the first function on the stack is a hamming search
                 // else do an exact match
                 let match_type = if !stack.is_empty() {
                     match stack.pop().unwrap() {
-                        (CompiledFunction::Hamming(n), _) => {
+                        S(CompiledFunction::Hamming(n), _) => {
                             let dist = Frac(1.0 - (n as f64 / seq.len() as f64));
                             HammingSearch(dist)
                         }
@@ -365,7 +359,7 @@ impl GeometryMeta {
                     match_type,
                 );
 
-                execute_stack(stack, &this_label, "", read, size, additional_args)
+                execute_stack(stack, &this_label, "", read, &size, additional_args)
             }
             _ => unreachable!(),
         };

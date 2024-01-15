@@ -40,7 +40,7 @@ pub struct Args {
     additional: Vec<String>,
 }
 
-pub fn interpret(args: Args, compiled_data: CompiledData) {
+pub fn interpret(args: Args, compiled_data: &CompiledData) {
     let Args {
         geom: _,
         file1,
@@ -57,7 +57,7 @@ pub fn interpret(args: Args, compiled_data: CompiledData) {
 
     let read = compiled_data.interpret(read, &out1, &out2, &additional);
 
-    read.run_with_threads(threads)
+    read.run_with_threads(threads);
 }
 
 fn main() {
@@ -67,19 +67,19 @@ fn main() {
 
     let (tokens, mut errs) = lexer::lexer().parse_recovery(&*geom);
 
-    let parse_errs = if let Some(tokens) = &tokens {
+    let parse_errs = if let Some(tokens) = tokens {
         let (ast, parse_errs) = parser().parse_recovery(Stream::from_iter(
             tokens.len()..tokens.len() + 1,
-            tokens.clone().into_iter(),
+            tokens.into_iter(),
         ));
 
-        if let Some((ast, _)) = &ast {
-            let res = compile(ast.clone());
+        if let Some(ast) = ast {
+            let res = compile(ast);
 
             if let Err(e) = res {
                 errs.push(Simple::custom(e.span, e.msg));
             } else {
-                interpret(args, res.ok().unwrap());
+                interpret(args, &res.ok().unwrap());
             }
         };
 
@@ -157,5 +157,5 @@ fn main() {
             };
 
             report.finish().print(Source::from(&geom)).unwrap();
-        })
+        });
 }

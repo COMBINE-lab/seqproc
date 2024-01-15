@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::{
-    lexer::Span,
-    parser::{IntervalKind, IntervalShape, Spanned},
+    parser::{IntervalKind, IntervalShape},
+    Span, S,
 };
 
 use super::functions::CompiledFunction;
@@ -11,7 +11,7 @@ pub type Geometry = Vec<Vec<(Interval, usize)>>;
 
 pub type Transformation = Vec<Vec<String>>;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ReturnType {
     Ranged,
     FixedLen,
@@ -21,7 +21,7 @@ pub enum ReturnType {
 }
 
 impl fmt::Display for ReturnType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ReturnType::*;
         match self {
             Ranged => write!(f, "Ranged"),
@@ -40,7 +40,7 @@ pub struct Error {
 }
 
 impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "Error: {}, at {}-{}",
@@ -58,19 +58,19 @@ pub enum Interval {
 }
 
 impl fmt::Display for Interval {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Interval::*;
         match self {
-            Named(s) => write!(f, "Label: {}", s),
-            Temporary(gp) => write!(f, "{}", gp),
+            Named(s) => write!(f, "Label: {s}"),
+            Temporary(gp) => write!(f, "{gp}"),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GeometryMeta {
-    pub expr: Spanned<GeometryPiece>,
-    pub stack: Vec<Spanned<CompiledFunction>>,
+    pub expr: S<GeometryPiece>,
+    pub stack: Vec<S<CompiledFunction>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -81,78 +81,71 @@ pub struct GeometryPiece {
 }
 
 impl fmt::Display for GeometryMeta {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Geometry Meta: {}, {:?}", self.expr.0, self.stack)
     }
 }
 
 impl fmt::Display for GeometryPiece {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}: {}, {}", self.label, self.type_, self.size)
     }
 }
 
-pub fn validate_expr(gp: GeometryMeta) -> Result<GeometryMeta, Error> {
-    gp_return_type(gp.clone())?;
+impl GeometryMeta {
+    pub fn validate_expr(&self) -> Result<(), Error> {
+        let S(expr, expr_span) = &self.expr;
 
-    Ok(gp)
-}
-
-pub fn gp_return_type(gp: GeometryMeta) -> Result<ReturnType, Error> {
-    let (expr, expr_span) = gp.clone().expr;
-
-    let expr_type = {
-        if let IntervalKind::Discard = expr.type_ {
-            ReturnType::Void
-        } else {
-            match expr.size {
-                IntervalShape::FixedSeq(_) => ReturnType::FixedSeq,
-                IntervalShape::FixedLen(_) => ReturnType::FixedLen,
-                IntervalShape::RangedLen(_) => ReturnType::Ranged,
-                IntervalShape::UnboundedLen => ReturnType::Unbounded,
+        let expr_type = {
+            if let IntervalKind::Discard = expr.type_ {
+                ReturnType::Void
+            } else {
+                match expr.size {
+                    IntervalShape::FixedSeq(_) => ReturnType::FixedSeq,
+                    IntervalShape::FixedLen(_) => ReturnType::FixedLen,
+                    IntervalShape::RangedLen(_) => ReturnType::Ranged,
+                    IntervalShape::UnboundedLen => ReturnType::Unbounded,
+                }
             }
+        };
+
+        let mut return_type = S(expr_type, expr_span.clone());
+
+        for S(fn_, span) in self.stack.iter().rev() {
+            return_type = validate_composition(S(fn_, span.clone()), return_type, &expr.size)?;
         }
-    };
 
-    let mut return_type = (expr_type, expr_span);
-
-    for fn_ in gp.stack.into_iter().rev() {
-        return_type = validate_composition(fn_, return_type, expr.clone().size)?;
+        Ok(())
     }
-
-    Ok(return_type.0)
 }
 
 pub fn validate_composition(
-    fn_: Spanned<CompiledFunction>,
-    return_type: Spanned<ReturnType>,
-    size: IntervalShape,
-) -> Result<Spanned<ReturnType>, Error> {
-    let (fn_, fn_span) = fn_;
-    let (return_type, return_type_span) = return_type;
-
+    S(fn_, fn_span): S<&CompiledFunction>,
+    S(return_type, return_type_span): S<ReturnType>,
+    size: &IntervalShape,
+) -> Result<S<ReturnType>, Error> {
     let (min, max) = match size {
-        IntervalShape::FixedSeq((seq, _)) => (0, seq.len()),
-        IntervalShape::FixedLen((n, _)) => (0, n),
-        IntervalShape::RangedLen(((a, b), _)) => (a, b),
+        IntervalShape::FixedSeq(S(seq, _)) => (0, seq.len()),
+        &IntervalShape::FixedLen(S(n, _)) => (0, n),
+        &IntervalShape::RangedLen(S((a, b), _)) => (a, b),
         IntervalShape::UnboundedLen => (100, 100),
     };
 
-    match fn_ {
+    match *fn_ {
         CompiledFunction::ReverseComp => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
                 msg: "Function Reverse Complement cannot take void element as an argument"
                     .to_string(),
             }),
-            _ => Ok((return_type, fn_span)),
+            _ => Ok(S(return_type, fn_span)),
         },
         CompiledFunction::Reverse => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
                 msg: "Function Reverse cannot take void element as an argument".to_string(),
             }),
-            _ => Ok((return_type, fn_span)),
+            _ => Ok(S(return_type, fn_span)),
         },
         CompiledFunction::Truncate(by) | CompiledFunction::TruncateLeft(by) => {
             if min <= by && max <= by {
@@ -169,7 +162,7 @@ pub fn validate_composition(
                         "Function Truncate and TruncateLeft cannot take void element as an argument"
                             .to_string(),
                 }),
-                _ => Ok((return_type, fn_span)),
+                _ => Ok(S(return_type, fn_span)),
             }
         }
         CompiledFunction::TruncateTo(to) | CompiledFunction::TruncateToLeft(to) => {
@@ -182,10 +175,9 @@ pub fn validate_composition(
             }
 
             match return_type {
-                ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
-                ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
-                ReturnType::Unbounded | ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
-                _ => Err(Error {
+                ReturnType::FixedLen | ReturnType::Unbounded | ReturnType::Ranged => Ok(S(ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+                ReturnType::Void => Err(Error {
                     span: return_type_span,
                     msg: "Function TruncateTo and TruncateToLeft cannot take void element as an argument".to_string(),
                 }),
@@ -196,14 +188,14 @@ pub fn validate_composition(
                 span: return_type_span,
                 msg: "Function Remove cannot recieve a void element as an argument".to_string(),
             }),
-            _ => Ok((ReturnType::Void, fn_span)),
+            _ => Ok(S(ReturnType::Void, fn_span)),
         },
         CompiledFunction::Pad(..) | CompiledFunction::PadLeft(..) => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
                 msg: "Function Pad and PadLeft cannot take void element as an argument".to_string(),
             }),
-            _ => Ok((return_type, fn_span)),
+            _ => Ok(S(return_type, fn_span)),
         },
         CompiledFunction::PadTo(to, ..) | CompiledFunction::PadToLeft(to, ..) => {
             if to < max {
@@ -214,10 +206,9 @@ pub fn validate_composition(
             }
 
             match return_type {
-                ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
-                ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
-                ReturnType::Unbounded | ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
-                _ => Err(Error {
+                ReturnType::FixedLen |  ReturnType::Unbounded | ReturnType::Ranged  => Ok(S(ReturnType::FixedLen, fn_span)),
+                ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+                ReturnType::Void => Err(Error {
                     span: return_type_span,
                     msg: "Function PadTo and PadToLeft cannot take a void element as an argument"
                         .to_string(),
@@ -225,45 +216,41 @@ pub fn validate_composition(
             }
         }
         CompiledFunction::Normalize => match return_type {
-            ReturnType::Ranged => Ok((ReturnType::FixedLen, fn_span)),
+            ReturnType::Ranged => Ok(S(ReturnType::FixedLen, fn_span)),
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
-                    "Function Normalize must take ranged element an argument, found: {}",
-                    return_type
+                    "Function Normalize must take ranged element an argument, found: {return_type}"
                 ),
             }),
         },
         CompiledFunction::Map(..) | CompiledFunction::MapWithMismatch(..) => match return_type {
             ReturnType::Ranged | ReturnType::FixedLen | ReturnType::FixedSeq => {
-                Ok((ReturnType::FixedLen, fn_span))
+                Ok(S(ReturnType::FixedLen, fn_span))
             }
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
-                    "Function Map can recieve a Ranged or Fixed piece as an argument, found: {}",
-                    return_type
+                    "Function Map can recieve a Ranged or Fixed piece as an argument, found: {return_type}"
                 ),
             }),
         },
         CompiledFunction::FilterWithinDist(..) => match return_type {
-            ReturnType::FixedLen => Ok((ReturnType::FixedLen, fn_span)),
-            ReturnType::Ranged => Ok((ReturnType::Ranged, fn_span)),
+            ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
+            ReturnType::Ranged => Ok(S(ReturnType::Ranged, fn_span)),
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
-                    "Function Filter can recieve a Ranged or Fixed piece as an argument, found: {}",
-                    return_type
+                    "Function Filter can recieve a Ranged or Fixed piece as an argument, found: {return_type}"
                 ),
             }),
         },
         CompiledFunction::Hamming(_) => match return_type {
-            ReturnType::FixedSeq => Ok((ReturnType::FixedSeq, fn_span)),
+            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
-                    "Function Hamming must take Sequence element an argument, found: {}",
-                    return_type
+                    "Function Hamming must take Sequence element an argument, found: {return_type}"
                 ),
             }),
         },
