@@ -66,12 +66,13 @@ impl VariableGeomPiece {
     }
 
     pub fn is_unbounded(self) -> bool {
-        matches!(self,
+        match self {
             Self::Barcode(VariableGeom::Unbounded, _)
             | Self::Discard(VariableGeom::Unbounded, _)
             | Self::ReadSeq(VariableGeom::Unbounded, _)
-            | Self::Umi(VariableGeom::Unbounded, _) 
-        )
+            | Self::Umi(VariableGeom::Unbounded, _) => true,
+            _ => false,            
+        }
     }
 }
 

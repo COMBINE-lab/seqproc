@@ -2,10 +2,6 @@ use antisequence::{iter_fastq2, Reads, sel};
 use chumsky::prelude::*;
 use clap::{arg, Parser as cParser};
 use std::time::Instant;
-use std::io;
-use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
-use tracing::{warn, info};
-
 
 use seqproc::syntax::Read;
 
@@ -63,19 +59,6 @@ pub fn interpret(args: Args, reads: Vec<Read>) {
 }
 
 fn main() {
-    // set up the logging.  Here we will take the 
-    // logging level from the environment variable if 
-    // it is set.  Otherwise, we'll set the default 
-    tracing_subscriber::registry()
-        // log level to INFO.
-        .with(fmt::layer().with_writer(io::stderr))
-        .with(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
-
     let args: Args = Args::parse();
 
     let start = Instant::now();
@@ -83,8 +66,8 @@ fn main() {
 
     match seqproc::parse::parser().parse(geom) {
         Ok(reads) => interpret(args, reads),
-        Err(errs) => warn!("Error: {:?}", errs),
+        Err(errs) => println!("Error: {:?}", errs),
     }
     let duration = start.elapsed();
-    info!("tranformation completed in {:.2}s", duration.as_secs_f32());
+    println!("tranformation completed in {:.2}s", duration.as_secs_f32());
 }
