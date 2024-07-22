@@ -1,7 +1,9 @@
 use antisequence::{iter_fastq2, Reads};
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::{prelude::*, Stream};
-use clap::{arg, Parser as ClapParser};
+use clap::arg;
+use std::io;
+use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use seqproc::{
     compile::{compile, CompiledData},
@@ -10,7 +12,7 @@ use seqproc::{
 };
 
 /// General puprose sequence preprocessor
-#[derive(Debug, ClapParser)]
+#[derive(Debug, clap::Parser)]
 pub struct Args {
     /// FGDL string
     #[arg(short, long)]
@@ -61,7 +63,20 @@ pub fn interpret(args: Args, compiled_data: &CompiledData) {
 }
 
 fn main() {
-    let args: Args = Args::parse();
+    // set up the logging. Here we will take the
+    // logging level from the environment variable if
+    // it is set. Otherwise we will set the default
+    tracing_subscriber::registry()
+        // log level to INFO
+        .with(fmt::layer().with_writer(io::stderr))
+        .with(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
+
+    let args: Args = <Args as clap::Parser>::parse();
 
     let geom = std::fs::read_to_string(&args.geom).unwrap();
 
