@@ -57,8 +57,10 @@ pub fn interpret(args: Args, compiled_data: &CompiledData) {
         .unwrap_or_else(|e| panic!("{e}"))
         .boxed();
 
+    // this should return an iter of nodes
     let read = compiled_data.interpret(read, &out1, &out2, &additional);
 
+    // run the nodes through the graph
     read.run_with_threads(threads);
 }
 

@@ -1,11 +1,88 @@
+use crate::{geometry::compile::functions::CompiledFunction, parser::IntervalShape};
+
 use std::ops::{Bound, RangeBounds};
 
 use antisequence::{
-    expr::{Label, SelectorExpr, TransformExpr},
+    expr::{label, Label, SelectorExpr, TransformExpr},
+    node::*,
     *,
 };
+use chumsky::chain::Chain;
 
 use crate::{interpret::BoxedReads, Nucleotide};
+
+impl CompiledFunction {
+    fn to_expr(
+        self,
+        interval_name: &[u8],
+        meta_data: Option<IntervalShape>,
+    ) -> antisequence::expr::Expr {
+        use antisequence::expr::Expr;
+        match self {
+            CompiledFunction::Reverse => Expr::from(label(interval_name)).rev(),
+            CompiledFunction::ReverseComp => Expr::from(label(interval_name)).revcomp(),
+            // trunc by
+            CompiledFunction::Truncate(n) => Expr::from(label(interval_name)).slice(..=(-1 * n)),
+            CompiledFunction::TruncateLeft(n) => Expr::from(label(interval_name)).slice((-1 * n)..),
+            // trunc to
+            CompiledFunction::TruncateTo(n) => Expr::from(label(interval_name)).slice(..=n),
+            CompiledFunction::TruncateToLeft(n) => Expr::from(label(interval_name))
+                .slice(label(interval_name).len().sub(Expr::from(n))..),
+            CompiledFunction::Pad(n, nuc) => {
+                Expr::from(label(interval_name)).concat(Expr::bytes(nuc as u8).repeat(n))
+            }
+            CompiledFunction::PadLeft(n, nuc) => Expr::bytes(nuc as u8)
+                .repeat(n)
+                .concat(Expr::from(label(interval_name))),
+            CompiledFunction::PadTo(n, nuc) => Expr::from(label(interval_name)).pad(
+                Expr::bytes(nuc as u8),
+                Expr::from(n),
+                End::Right,
+            ),
+            CompiledFunction::PadToLeft(n, nuc) => Expr::from(label(interval_name)).pad(
+                Expr::bytes(nuc as u8),
+                Expr::from(n),
+                End::Left,
+            ),
+            CompiledFunction::Normalize => {
+                let range = if let Some(r) = meta_data {
+                    match r {
+                        IntervalShape::RangedLen(r) => r.0..=r.1,
+                        _ => panic!("Expected a ranged length"),
+                    }
+                };
+                Expr::from(label(interval_name)).normalize(range)
+            }
+            // these cannot be exprs
+            CompiledFunction::Remove => todo!(),
+            CompiledFunction::Map(_, _) => todo!(),
+            CompiledFunction::MapWithMismatch(_, _, _) => todo!(),
+            CompiledFunction::FilterWithinDist(_, _) => todo!(),
+            CompiledFunction::Hamming(_) => todo!(),
+        }
+    }
+}
+
+fn get_interval(label: &str, attr: &str) -> &'static [u8] {
+    if attr.is_empty() {
+        label.as_bytes()
+    } else {
+        format!("{label}_{attr}").as_bytes()
+    }
+}
+
+fn cut_node(tr_expr: TransformExpr, index: EndIdx) -> Box<dyn antisequence::GraphNode> {
+    CutNode::new(tr_expr, index)
+}
+
+fn set_node(label_name: &str, expr: antisequence::expr::Expr) -> Box<dyn antisequence::GraphNode> {
+    SetNode::new(label(label_name), expr)
+}
+
+fn retain_node(expr: antisequence::expr::Expr) -> Box<dyn antisequence::GraphNode> {
+    RetainNode::new(expr)
+}
+
 
 fn get_selector(label: &str, attr: &str) -> SelectorExpr {
     if attr.is_empty() {
@@ -19,6 +96,7 @@ pub fn set(read: BoxedReads, sel_expr: SelectorExpr, label: &str, transform: &st
 
     read.set(sel_expr, label, transform).boxed()
 }
+
 
 fn cut(
     read: BoxedReads,

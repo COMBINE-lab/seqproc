@@ -42,6 +42,9 @@ impl CompiledData {
 
         let mut read = read;
 
+        // create a pipeline of commands
+        // TODO: this should return an iter of nodes to add
+        // then at the end the iter is returned to be executes
         for (i, read_geometry) in geometry.iter().enumerate() {
             read = interpret_geometry(
                 read_geometry,
