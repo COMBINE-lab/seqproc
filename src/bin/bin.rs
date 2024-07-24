@@ -1,4 +1,4 @@
-use antisequence::{iter_fastq2, Reads};
+use antisequence::graph::OutputFastqNode;
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::{prelude::*, Stream};
 use clap::arg;
@@ -53,15 +53,44 @@ pub fn interpret(args: Args, compiled_data: &CompiledData) {
         additional,
     } = args;
 
-    let read = iter_fastq2(file1, file2, 256)
-        .unwrap_or_else(|e| panic!("{e}"))
-        .boxed();
+    let mut graph = antisequence::graph::Graph::new();
+    graph.add(
+        antisequence::graph::InputFastq2Node::new(file1, file2).unwrap_or_else(|e| panic!("{e}")),
+    );
 
     // this should return an iter of nodes
-    let read = compiled_data.interpret(read, &out1, &out2, &additional);
+    let nodes = compiled_data.interpret(&additional);
 
     // run the nodes through the graph
-    read.run_with_threads(threads);
+    for node in nodes {
+        match node {
+            seqproc::GraphNodes::TrimNode(n) => {
+                graph.add(n);
+            }
+            seqproc::GraphNodes::CutNode(n) => {
+                graph.add(n);
+            }
+            seqproc::GraphNodes::RetainNode(n) => {
+                graph.add(n);
+            }
+            seqproc::GraphNodes::SetNode(n) => {
+                graph.add(n);
+            }
+            seqproc::GraphNodes::MatchAnyNode(n) => {
+                graph.add(*n);
+            }
+        }
+    }
+
+    if out1.is_empty() && out2.is_empty() {
+        graph.add(OutputFastqNode::new1("/dev/null"));
+    } else if out2.is_empty() {
+        graph.add(OutputFastqNode::new1(out1));
+    } else {
+        graph.add(OutputFastqNode::new2(out1, out2));
+    }
+
+    graph.run_with_threads(threads);
 }
 
 fn main() {

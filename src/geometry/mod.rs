@@ -40,6 +40,17 @@ impl Nucleotide {
             ))
         }
     }
+
+    pub fn as_string(nuc: Nucleotide) -> String {
+        match nuc {
+            Nucleotide::A => "A",
+            Nucleotide::C => "C",
+            Nucleotide::G => "G",
+            Nucleotide::T => "T",
+            Nucleotide::U => "U",
+        }
+        .to_owned()
+    }
 }
 
 /// A range of characters in the input file.
