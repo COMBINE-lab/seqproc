@@ -19,13 +19,17 @@ use crate::{
 };
 
 // use these consts for left and right
-static LEFT: &str = "l";
-static RIGHT: &str = "r";
 static VOID_LABEL: &str = "_";
+static NEXT_RIGHT: &str = "_r";
+static NEXT_LEFT: &str = "_l";
 
-fn labels(read_label: &[String]) -> (String, String) {
+fn labels(read_label: &[&str]) -> (String, String) {
     let len = read_label.len();
-    let next_label = read_label.to_vec().as_slice().join("");
+    let next_label = read_label
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()
+        .join("");
 
     if len == 1 {
         (format!("{}*", read_label.first().unwrap()), next_label)
@@ -47,7 +51,7 @@ impl CompiledData {
             interpret_geometry(
                 &mut nodes,
                 read_geometry,
-                format!("seq{}.", i + 1),
+                &format!("seq{}.", i + 1),
                 additional_args,
             );
         }
@@ -67,12 +71,12 @@ impl CompiledData {
 fn interpret_geometry(
     nodes: &mut Vec<GraphNodes>,
     geometry: &[GeometryMeta],
-    init_label: String,
+    init_label: &str,
     additional_args: &[String],
 ) {
     let mut geometry_iter = geometry.iter();
 
-    let mut label: Vec<String> = vec![init_label];
+    let mut label: Vec<&str> = vec![init_label];
 
     while let Some(gp) = geometry_iter.next() {
         let (_, size, _, _) = gp.unpack();
@@ -84,14 +88,14 @@ fn interpret_geometry(
             IntervalShape::RangedLen(_) | IntervalShape::UnboundedLen => {
                 // by rules of geometry this should either be None or a sequence
                 if let Some(next) = geometry_iter.next() {
-                    next.interpret_dual(gp, &label, additional_args, nodes);
+                    next.interpret_dual(gp, &mut label, additional_args, nodes);
                 } else {
                     gp.interpret(&label, additional_args, nodes);
                 }
             }
         };
 
-        label.push(format!("_{RIGHT}"));
+        label.push(NEXT_RIGHT);
     }
 }
 
@@ -112,8 +116,8 @@ fn parse_additional_args(arg: String, args: &[String]) -> String {
 
 fn execute_stack(
     stack: Vec<S<CompiledFunction>>,
-    label: String,
-    attr: String,
+    label: &str,
+    attr: &str,
     size: &IntervalShape,
     additional_args: &[String],
     nodes: &mut Vec<GraphNodes>,
@@ -125,18 +129,18 @@ fn execute_stack(
     };
 
     let interval_name = if attr.is_empty() {
-        label.clone()
+        label
     } else {
-        [label.clone(), ".".to_string(), attr].concat()
+        let l = label;
+        let a = attr;
+        &[l, ".", a].concat()
     };
 
     for S(fn_, _) in stack.into_iter().rev() {
         match fn_ {
             CompiledFunction::Remove => {
                 // let interval_name = get_interval(label, attr);
-                nodes.push(trim_node([antisequence::expr::label(
-                    interval_name.clone(),
-                )]));
+                nodes.push(trim_node([antisequence::expr::label(interval_name)]));
             }
             CompiledFunction::Hamming(_) => {
                 panic!("Hamming requires to be bound to a sequence cannot operate in isolation")
@@ -146,28 +150,14 @@ fn execute_stack(
 
                 // map node
                 // let mapped = map(read, label, attr, file, 0);
-                execute_stack(
-                    fns,
-                    label.clone(),
-                    "not_mapped".to_string(),
-                    size,
-                    additional_args,
-                    nodes,
-                );
+                execute_stack(fns, label, "not_mapped", size, additional_args, nodes);
             }
             CompiledFunction::MapWithMismatch(file, fns, mismatch) => {
                 let file = parse_additional_args(file, additional_args);
 
                 // map node
                 // let mapped = map(read, label, attr, file, mismatch);
-                execute_stack(
-                    fns,
-                    label.clone(),
-                    "not_mapped".to_string(),
-                    size,
-                    additional_args,
-                    nodes,
-                );
+                execute_stack(fns, label, "not_mapped", size, additional_args, nodes);
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
                 let file = parse_additional_args(file, additional_args);
@@ -179,41 +169,42 @@ fn execute_stack(
             // for the rest of the compliled functions which translate exactly to a single node
             _ => {
                 // let interval_name = get_interval(label, attr);
-                nodes.push(set_node(
-                    &interval_name,
-                    fn_.to_expr(&interval_name, &range),
-                ));
+                nodes.push(set_node(interval_name, fn_.to_expr(interval_name, &range)));
             }
         };
     }
 }
 
-impl GeometryMeta {
-    fn unpack(
-        &self,
+impl<'a> GeometryMeta {
+    fn unpack<'b: 'a>(
+        &'b self,
     ) -> (
         IntervalKind,
         IntervalShape,
-        Option<String>,
+        Option<&'a str>,
         Vec<S<CompiledFunction>>,
     ) {
         let GeometryMeta {
             expr: S(GeometryPiece { type_, size, label }, _),
             stack,
-        } = self.clone();
+        } = self;
 
-        (type_, size, label, stack)
+        if let Some(l) = label {
+            (*type_, size.clone(), Some(l), stack.to_vec())
+        } else {
+            (*type_, size.clone(), None, stack.to_vec())
+        }
     }
 
     fn interpret_no_cut(
         &self,
-        label: Vec<String>,
+        label: &[&str],
         additional_args: &[String],
         nodes: &mut Vec<GraphNodes>,
     ) {
         let (type_, size, self_label, mut stack) = self.unpack();
 
-        let (init_label, cur_label) = labels(&label);
+        let (init_label, cur_label) = labels(label);
         let seq_name = label.first().unwrap();
 
         let this_label = if let Some(l) = self_label {
@@ -242,17 +233,10 @@ impl GeometryMeta {
             _ => unreachable!(),
         };
 
-        execute_stack(
-            stack,
-            this_label,
-            "".to_string(),
-            &size,
-            additional_args,
-            nodes,
-        );
+        execute_stack(stack, &this_label, "", &size, additional_args, nodes);
     }
 
-    fn interpret(&self, label: &[String], additional_args: &[String], nodes: &mut Vec<GraphNodes>) {
+    fn interpret(&self, label: &[&str], additional_args: &[String], nodes: &mut Vec<GraphNodes>) {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -261,9 +245,9 @@ impl GeometryMeta {
         let this_label = if let Some(l) = self_label {
             format!("{seq_name}{l}")
         } else {
-            format!("{cur_label}_{LEFT}")
+            format!("{cur_label}{NEXT_LEFT}")
         };
-        let next_label = format!("{cur_label}_{RIGHT}");
+        let next_label = format!("{cur_label}{NEXT_RIGHT}");
 
         if type_ == IntervalKind::Discard {
             stack.push(S(CompiledFunction::Remove, 0..1));
@@ -331,20 +315,13 @@ impl GeometryMeta {
             }
         };
 
-        execute_stack(
-            stack,
-            this_label,
-            "".to_string(),
-            &size,
-            additional_args,
-            nodes,
-        );
+        execute_stack(stack, &this_label, "", &size, additional_args, nodes);
     }
 
     fn interpret_dual(
         &self,
         prev: &Self,
-        label: &Vec<String>,
+        label: &mut Vec<&str>,
         additional_args: &[String],
         nodes: &mut Vec<GraphNodes>,
     ) {
@@ -359,18 +336,18 @@ impl GeometryMeta {
         let mut left_label = label.to_owned();
 
         let prev_label = if let Some(l) = prev_label {
-            left_label.push(l.clone());
+            left_label.push(l);
             format!("{seq_name}{l}")
         } else {
-            left_label.push(format!("_{LEFT}"));
-            format!("{cur_label}_{LEFT}")
+            left_label.push(NEXT_LEFT);
+            format!("{cur_label}{NEXT_LEFT}")
         };
         let this_label = if let Some(l) = this_label {
             format!("{seq_name}{l}")
         } else {
             format!("{cur_label}_anchor")
         };
-        let next_label = format!("{cur_label}_{RIGHT}");
+        let next_label = format!("{cur_label}{NEXT_RIGHT}");
 
         match size.clone() {
             IntervalShape::FixedSeq(S(seq, _)) => {
@@ -398,20 +375,13 @@ impl GeometryMeta {
                 ));
                 nodes.push(retain_node(label_exists(this_label.clone())));
 
-                execute_stack(
-                    stack,
-                    this_label,
-                    "".to_string(),
-                    &size,
-                    additional_args,
-                    nodes,
-                );
+                execute_stack(stack, &this_label, "", &size, additional_args, nodes);
             }
             _ => unreachable!(),
         };
 
         // call interpret for self
         // this is just an unbounded or ranged segment. No cut just set or validate
-        prev.interpret_no_cut(left_label, additional_args, nodes);
+        prev.interpret_no_cut(&left_label, additional_args, nodes);
     }
 }
