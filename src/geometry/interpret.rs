@@ -6,6 +6,7 @@ use antisequence::{
     *,
 };
 use expr::label_exists;
+use graph::Graph;
 
 use crate::{
     compile::{
@@ -38,18 +39,16 @@ fn labels(read_label: &[&str]) -> (String, String) {
     }
 }
 
-impl CompiledData {
-    pub fn interpret(&self, additional_args: &[String]) -> Vec<GraphNodes> {
+impl<'a> CompiledData {
+    pub fn interpret<'b: 'a>(&'a self, graph: &'b mut Graph, additional_args: &[String]) {
         let Self {
             geometry,
             transformation,
         } = self;
 
-        let mut nodes: Vec<GraphNodes> = vec![];
-
         for (i, read_geometry) in geometry.iter().enumerate() {
             interpret_geometry(
-                &mut nodes,
+                graph,
                 read_geometry,
                 &format!("seq{}.", i + 1),
                 additional_args,
@@ -60,16 +59,14 @@ impl CompiledData {
             for (i, tr) in transformation.iter().enumerate() {
                 let seq_name = format!("seq{}.*", i + 1);
                 let tr = format!("{{{}}}", tr.join("}{"));
-                nodes.push(set_node(&seq_name, antisequence::expr::fmt_expr(tr)));
+                graph.add(set_node(&seq_name, antisequence::expr::fmt_expr(tr)));
             }
-        }
-
-        nodes
+        };
     }
 }
 
 fn interpret_geometry(
-    nodes: &mut Vec<GraphNodes>,
+    graph: &mut Graph,
     geometry: &[GeometryMeta],
     init_label: &str,
     additional_args: &[String],
@@ -83,14 +80,14 @@ fn interpret_geometry(
 
         match size {
             IntervalShape::FixedSeq(_) | IntervalShape::FixedLen(_) => {
-                gp.interpret(&label, additional_args, nodes);
+                gp.interpret(&label, additional_args, graph);
             }
             IntervalShape::RangedLen(_) | IntervalShape::UnboundedLen => {
                 // by rules of geometry this should either be None or a sequence
                 if let Some(next) = geometry_iter.next() {
-                    next.interpret_dual(gp, &mut label, additional_args, nodes);
+                    next.interpret_dual(gp, &mut label, additional_args, graph);
                 } else {
-                    gp.interpret(&label, additional_args, nodes);
+                    gp.interpret(&label, additional_args, graph);
                 }
             }
         };
@@ -120,7 +117,7 @@ fn execute_stack(
     attr: &str,
     size: &IntervalShape,
     additional_args: &[String],
-    nodes: &mut Vec<GraphNodes>,
+    graph: &mut Graph,
 ) {
     let range = if let IntervalShape::RangedLen(S((a, b), _)) = size {
         Some(*a..=*b)
@@ -131,16 +128,14 @@ fn execute_stack(
     let interval_name = if attr.is_empty() {
         label
     } else {
-        let l = label;
-        let a = attr;
-        &[l, ".", a].concat()
+        &[label, ".", attr].concat()
     };
 
     for S(fn_, _) in stack.into_iter().rev() {
         match fn_ {
             CompiledFunction::Remove => {
                 // let interval_name = get_interval(label, attr);
-                nodes.push(trim_node([antisequence::expr::label(interval_name)]));
+                graph.add(trim_node([antisequence::expr::label(interval_name)]));
             }
             CompiledFunction::Hamming(_) => {
                 panic!("Hamming requires to be bound to a sequence cannot operate in isolation")
@@ -150,14 +145,14 @@ fn execute_stack(
 
                 // map node
                 // let mapped = map(read, label, attr, file, 0);
-                execute_stack(fns, label, "not_mapped", size, additional_args, nodes);
+                execute_stack(fns, label, "not_mapped", size, additional_args, graph);
             }
             CompiledFunction::MapWithMismatch(file, fns, mismatch) => {
                 let file = parse_additional_args(file, additional_args);
 
                 // map node
                 // let mapped = map(read, label, attr, file, mismatch);
-                execute_stack(fns, label, "not_mapped", size, additional_args, nodes);
+                execute_stack(fns, label, "not_mapped", size, additional_args, graph);
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
                 let file = parse_additional_args(file, additional_args);
@@ -169,7 +164,7 @@ fn execute_stack(
             // for the rest of the compliled functions which translate exactly to a single node
             _ => {
                 // let interval_name = get_interval(label, attr);
-                nodes.push(set_node(interval_name, fn_.to_expr(interval_name, &range)));
+                graph.add(set_node(interval_name, fn_.to_expr(interval_name, &range)));
             }
         };
     }
@@ -196,12 +191,7 @@ impl<'a> GeometryMeta {
         }
     }
 
-    fn interpret_no_cut(
-        &self,
-        label: &[&str],
-        additional_args: &[String],
-        nodes: &mut Vec<GraphNodes>,
-    ) {
+    fn interpret_no_cut(&self, label: &[&str], additional_args: &[String], graph: &mut Graph) {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -221,11 +211,11 @@ impl<'a> GeometryMeta {
         // thus this is only for variable sized segments
         match size {
             IntervalShape::RangedLen(S((a, b), _)) => {
-                nodes.push(valid_label_length(&this_label, a, Some(b)));
+                graph.add(valid_label_length(&this_label, a, Some(b)));
             }
             IntervalShape::UnboundedLen => {
                 // set init -> this
-                nodes.push(set_node(
+                graph.add(set_node(
                     &init_label,
                     antisequence::expr::Expr::from(antisequence::expr::label(this_label.clone())),
                 ));
@@ -233,10 +223,10 @@ impl<'a> GeometryMeta {
             _ => unreachable!(),
         };
 
-        execute_stack(stack, &this_label, "", &size, additional_args, nodes);
+        execute_stack(stack, &this_label, "", &size, additional_args, graph);
     }
 
-    fn interpret(&self, label: &[&str], additional_args: &[String], nodes: &mut Vec<GraphNodes>) {
+    fn interpret(&self, label: &[&str], additional_args: &[String], graph: &mut Graph) {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -273,7 +263,7 @@ impl<'a> GeometryMeta {
 
                 // a match
                 // a retain
-                nodes.push(match_node(
+                graph.add(match_node(
                     &seq,
                     &init_label,
                     &this_label,
@@ -281,41 +271,41 @@ impl<'a> GeometryMeta {
                     &next_label,
                     match_type,
                 ));
-                nodes.push(retain_node(label_exists(this_label.clone())));
+                graph.add(retain_node(label_exists(this_label.clone())));
             }
             IntervalShape::FixedLen(S(len, _)) => {
                 // a cut
                 // a validate length
-                nodes.push(cut_node(
+                graph.add(cut_node(
                     into_transform_expr(&init_label, [this_label.clone(), next_label]),
                     LeftEnd(len),
                 ));
-                nodes.push(valid_label_length(&this_label, len, None));
+                graph.add(valid_label_length(&this_label, len, None));
             }
             IntervalShape::RangedLen(S((a, b), _)) => {
                 // a cut
                 // a validate length
-                nodes.push(cut_node(
+                graph.add(cut_node(
                     into_transform_expr(&init_label, [this_label.clone(), next_label]),
                     LeftEnd(b),
                 ));
-                nodes.push(valid_label_length(&this_label, a, Some(b)));
+                graph.add(valid_label_length(&this_label, a, Some(b)));
             }
             // a cut
             // a set
             IntervalShape::UnboundedLen => {
-                nodes.push(cut_node(
+                graph.add(cut_node(
                     into_transform_expr(&init_label, [VOID_LABEL.to_owned(), this_label.clone()]),
                     LeftEnd(0),
                 ));
-                nodes.push(set_node(
+                graph.add(set_node(
                     &init_label,
                     antisequence::expr::Expr::from(antisequence::expr::label(this_label.clone())),
                 ));
             }
         };
 
-        execute_stack(stack, &this_label, "", &size, additional_args, nodes);
+        execute_stack(stack, &this_label, "", &size, additional_args, graph);
     }
 
     fn interpret_dual(
@@ -323,7 +313,7 @@ impl<'a> GeometryMeta {
         prev: &Self,
         label: &mut Vec<&str>,
         additional_args: &[String],
-        nodes: &mut Vec<GraphNodes>,
+        graph: &mut Graph,
     ) {
         // unpack label for self
         let (_, size, this_label, mut stack) = self.unpack();
@@ -365,7 +355,7 @@ impl<'a> GeometryMeta {
                     ExactSearch
                 };
 
-                nodes.push(match_node(
+                graph.add(match_node(
                     &seq,
                     &init_label,
                     &this_label,
@@ -373,15 +363,15 @@ impl<'a> GeometryMeta {
                     &next_label,
                     match_type,
                 ));
-                nodes.push(retain_node(label_exists(this_label.clone())));
+                graph.add(retain_node(label_exists(this_label.clone())));
 
-                execute_stack(stack, &this_label, "", &size, additional_args, nodes);
+                execute_stack(stack, &this_label, "", &size, additional_args, graph);
             }
             _ => unreachable!(),
         };
 
         // call interpret for self
         // this is just an unbounded or ranged segment. No cut just set or validate
-        prev.interpret_no_cut(&left_label, additional_args, nodes);
+        prev.interpret_no_cut(&left_label, additional_args, graph);
     }
 }

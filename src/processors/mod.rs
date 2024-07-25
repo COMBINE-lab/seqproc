@@ -10,14 +10,6 @@ use antisequence::{
 
 use crate::Nucleotide;
 
-pub enum GraphNodes {
-    TrimNode(antisequence::graph::TrimNode),
-    CutNode(antisequence::graph::CutNode),
-    RetainNode(antisequence::graph::RetainNode),
-    SetNode(antisequence::graph::SetNode),
-    MatchAnyNode(Box<antisequence::graph::MatchAnyNode>),
-}
-
 impl CompiledFunction {
     pub fn to_expr(
         self,
@@ -88,19 +80,19 @@ pub fn into_transform_expr(
     )
 }
 
-pub fn cut_node(tr_expr: TransformExpr, index: EndIdx) -> GraphNodes {
-    GraphNodes::CutNode(CutNode::new(tr_expr, index))
+pub fn cut_node(tr_expr: TransformExpr, index: EndIdx) -> CutNode {
+    CutNode::new(tr_expr, index)
 }
 
-pub fn set_node(label_name: &str, expr: antisequence::expr::Expr) -> GraphNodes {
-    GraphNodes::SetNode(SetNode::new(label(label_name), expr))
+pub fn set_node(label_name: &str, expr: antisequence::expr::Expr) -> SetNode {
+    SetNode::new(label(label_name), expr)
 }
 
-pub fn retain_node(expr: antisequence::expr::Expr) -> GraphNodes {
-    GraphNodes::RetainNode(RetainNode::new(expr))
+pub fn retain_node(expr: antisequence::expr::Expr) -> RetainNode {
+    RetainNode::new(expr)
 }
 
-pub fn valid_label_length(this_label: &str, from: usize, to: Option<usize>) -> GraphNodes {
+pub fn valid_label_length(this_label: &str, from: usize, to: Option<usize>) -> RetainNode {
     if let Some(to) = to {
         return retain_node(
             antisequence::expr::Expr::from(label(this_label))
@@ -115,8 +107,8 @@ pub fn valid_label_length(this_label: &str, from: usize, to: Option<usize>) -> G
     )
 }
 
-pub fn trim_node(labels: impl IntoIterator<Item = antisequence::expr::Label>) -> GraphNodes {
-    GraphNodes::TrimNode(TrimNode::new(labels))
+pub fn trim_node(labels: impl IntoIterator<Item = antisequence::expr::Label>) -> TrimNode {
+    TrimNode::new(labels)
 }
 
 pub fn filter(
@@ -156,7 +148,7 @@ pub fn match_node(
     prev_label: &str,
     next_label: &str,
     match_type: MatchType,
-) -> GraphNodes {
+) -> MatchAnyNode {
     let tr_expr = match match_type {
         PrefixAln { .. } => into_transform_expr(
             starting_label,
@@ -173,9 +165,9 @@ pub fn match_node(
         _ => unreachable!(),
     };
 
-    GraphNodes::MatchAnyNode(Box::new(MatchAnyNode::new(
+    MatchAnyNode::new(
         tr_expr,
         Patterns::from_strs([Nucleotide::as_str(sequence)]),
         match_type,
-    )))
+    )
 }

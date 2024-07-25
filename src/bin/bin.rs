@@ -58,29 +58,7 @@ pub fn interpret(args: Args, compiled_data: &CompiledData) {
         antisequence::graph::InputFastq2Node::new(file1, file2).unwrap_or_else(|e| panic!("{e}")),
     );
 
-    // this should return an iter of nodes
-    let nodes = compiled_data.interpret(&additional);
-
-    // run the nodes through the graph
-    for node in nodes {
-        match node {
-            seqproc::GraphNodes::TrimNode(n) => {
-                graph.add(n);
-            }
-            seqproc::GraphNodes::CutNode(n) => {
-                graph.add(n);
-            }
-            seqproc::GraphNodes::RetainNode(n) => {
-                graph.add(n);
-            }
-            seqproc::GraphNodes::SetNode(n) => {
-                graph.add(n);
-            }
-            seqproc::GraphNodes::MatchAnyNode(n) => {
-                graph.add(*n);
-            }
-        }
-    }
+    compiled_data.interpret(&mut graph, &additional);
 
     if out1.is_empty() && out2.is_empty() {
         graph.add(OutputFastqNode::new1("/dev/null"));
