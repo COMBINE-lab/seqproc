@@ -1,3 +1,5 @@
+use std::{path::PathBuf, str::FromStr};
+
 use antisequence::{
     graph::{
         MatchType::{ExactSearch, HammingSearch, PrefixAln},
@@ -5,8 +7,9 @@ use antisequence::{
     },
     *,
 };
+use chumsky::chain::Chain;
 use expr::label_exists;
-use graph::Graph;
+use graph::{Graph, MatchType::Hamming, Threshold};
 
 use crate::{
     compile::{
@@ -19,10 +22,13 @@ use crate::{
     S,
 };
 
+use super::Nucleotide;
+
 // use these consts for left and right
 static VOID_LABEL: &str = "_";
 static NEXT_RIGHT: &str = "_r";
 static NEXT_LEFT: &str = "_l";
+pub static FILTER: &str = "_f";
 
 fn labels(read_label: &[&str]) -> (String, String) {
     let len = read_label.len();
@@ -96,18 +102,25 @@ fn interpret_geometry(
     }
 }
 
-fn parse_additional_args(arg: String, args: &[String]) -> String {
+fn parse_additional_args(arg: String, args: &[String]) -> PathBuf {
     match arg.parse::<usize>() {
-        Ok(n) => args
-            .get(n)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Expected {n} additional arguments with `--additional` tag. Found only {}.",
-                    args.len()
-                )
-            })
-            .clone(),
-        _ => arg,
+        Ok(n) => PathBuf::from_str(
+            &args
+                .get(n)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected {n} additional arguments with `--additional` tag. Found only {}.",
+                        args.len()
+                    )
+                })
+                .clone(),
+        )
+        .expect(&format!(
+            "Expected path as argument -- could not parse argument {n} as path."
+        )),
+        _ => PathBuf::from_str(&arg).expect(&format!(
+            "Expected path as argument -- could not parse {arg} as path."
+        )),
     }
 }
 
@@ -125,6 +138,13 @@ fn execute_stack(
         None
     };
 
+    let interval_length = match size {
+        IntervalShape::FixedSeq(v) => v.len(),
+        IntervalShape::FixedLen(S(n, _)) => *n,
+        IntervalShape::RangedLen(S((_, b), _)) => *b,
+        IntervalShape::UnboundedLen => 0,
+    };
+
     let interval_name = if attr.is_empty() {
         label
     } else {
@@ -134,7 +154,6 @@ fn execute_stack(
     for S(fn_, _) in stack.into_iter().rev() {
         match fn_ {
             CompiledFunction::Remove => {
-                // let interval_name = get_interval(label, attr);
                 graph.add(trim_node([antisequence::expr::label(interval_name)]));
             }
             CompiledFunction::Hamming(_) => {
@@ -155,15 +174,21 @@ fn execute_stack(
                 execute_stack(fns, label, "not_mapped", size, additional_args, graph);
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
-                let file = parse_additional_args(file, additional_args);
+                let file_path = parse_additional_args(file, additional_args);
+                let patterns = parse_file_filter(file_path);
 
-                // filter
-                // retain
-                // filter(read, label, attr, file, mismatch)
+                graph.add(match_node(
+                    patterns,
+                    label,
+                    vec![label],
+                    Hamming(Threshold::Count(interval_length - mismatch)),
+                ));
+                graph.add(retain_node(
+                    expr::attr_exists(&[label, ".", FILTER].concat()).not(),
+                ));
             }
             // for the rest of the compliled functions which translate exactly to a single node
             _ => {
-                // let interval_name = get_interval(label, attr);
                 graph.add(set_node(interval_name, fn_.to_expr(interval_name, &range)));
             }
         };
@@ -214,7 +239,6 @@ impl<'a> GeometryMeta {
                 graph.add(valid_label_length(&this_label, a, Some(b)));
             }
             IntervalShape::UnboundedLen => {
-                // set init -> this
                 graph.add(set_node(
                     &init_label,
                     antisequence::expr::Expr::from(antisequence::expr::label(this_label.clone())),
@@ -226,7 +250,7 @@ impl<'a> GeometryMeta {
         execute_stack(stack, &this_label, "", &size, additional_args, graph);
     }
 
-    fn interpret(&self, label: &[&str], additional_args: &[String], graph: &mut Graph) {
+    fn interpret<'c: 'a>(&self, label: &[&str], additional_args: &[String], graph: &mut Graph) {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -246,56 +270,52 @@ impl<'a> GeometryMeta {
         // execute the requisite process here
         match size.clone() {
             IntervalShape::FixedSeq(S(seq, _)) => {
+                let labels;
                 let match_type = if !stack.is_empty() {
                     match stack.last().unwrap() {
                         S(CompiledFunction::Hamming(n), _) => {
+                            labels = vec!["_", &this_label, &next_label];
                             let dist = Frac(1.0 - (*n as f64 / seq.len() as f64));
                             HammingSearch(dist)
                         }
-                        _ => PrefixAln {
-                            identity: 1.0,
-                            overlap: 1.0,
-                        },
+                        _ => {
+                            labels = vec![&this_label, &next_label];
+                            PrefixAln {
+                                identity: 1.0,
+                                overlap: 1.0,
+                            }
+                        }
                     }
                 } else {
+                    labels = vec!["_", &this_label, &next_label];
                     ExactSearch
                 };
 
-                // a match
-                // a retain
                 graph.add(match_node(
-                    &seq,
+                    Patterns::from_strs([Nucleotide::as_str(&seq)]),
                     &init_label,
-                    &this_label,
-                    "_",
-                    &next_label,
+                    labels,
                     match_type,
                 ));
                 graph.add(retain_node(label_exists(this_label.clone())));
             }
             IntervalShape::FixedLen(S(len, _)) => {
-                // a cut
-                // a validate length
                 graph.add(cut_node(
-                    into_transform_expr(&init_label, [this_label.clone(), next_label]),
+                    into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
                     LeftEnd(len),
                 ));
                 graph.add(valid_label_length(&this_label, len, None));
             }
             IntervalShape::RangedLen(S((a, b), _)) => {
-                // a cut
-                // a validate length
                 graph.add(cut_node(
-                    into_transform_expr(&init_label, [this_label.clone(), next_label]),
+                    into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
                     LeftEnd(b),
                 ));
                 graph.add(valid_label_length(&this_label, a, Some(b)));
             }
-            // a cut
-            // a set
             IntervalShape::UnboundedLen => {
                 graph.add(cut_node(
-                    into_transform_expr(&init_label, [VOID_LABEL.to_owned(), this_label.clone()]),
+                    into_transform_expr(&init_label, [VOID_LABEL, &this_label]),
                     LeftEnd(0),
                 ));
                 graph.add(set_node(
@@ -305,7 +325,14 @@ impl<'a> GeometryMeta {
             }
         };
 
-        execute_stack(stack, &this_label, "", &size, additional_args, graph);
+        execute_stack(
+            stack,
+            this_label.as_str(),
+            "",
+            &size,
+            additional_args,
+            graph,
+        );
     }
 
     fn interpret_dual(
@@ -356,11 +383,9 @@ impl<'a> GeometryMeta {
                 };
 
                 graph.add(match_node(
-                    &seq,
+                    Patterns::from_strs([Nucleotide::as_str(&seq)]),
                     &init_label,
-                    &this_label,
-                    &prev_label,
-                    &next_label,
+                    vec![&prev_label, &this_label, &next_label],
                     match_type,
                 ));
                 graph.add(retain_node(label_exists(this_label.clone())));

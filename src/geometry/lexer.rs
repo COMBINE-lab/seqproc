@@ -92,12 +92,15 @@ pub enum Token {
     C,
     /// Nucleotide `A`.
     A,
+    /// Reserved label beginning - cannot being label with '_'
+    Reserved(String),
 }
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Token::*;
         match self {
+            Reserved(s) => write!(f, "cannot prefix labed with _: {s}"),
             Num(n) => write!(f, "{n}"),
             LParen => f.write_char('('),
             RParen => f.write_char(')'),
@@ -161,7 +164,13 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     let label = just('<')
         .ignore_then(text::ident())
         .then_ignore(just('>'))
-        .map(Token::Label);
+        .map(|s: String| {
+            if s.starts_with("_") {
+                Token::Reserved(s)
+            } else {
+                Token::Label(s)
+            }
+        });
 
     let special = choice((
         just('=').to(Token::Equals),
@@ -212,7 +221,13 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "r" => Token::ReadSeq,
         "x" => Token::Discard,
         "f" => Token::FixedSeq,
-        _ => Token::Label(s),
+        _ => {
+            if s.starts_with("_") {
+                Token::Reserved(s)
+            } else {
+                Token::Label(s)
+            }
+        }
     });
 
     let token = nucs

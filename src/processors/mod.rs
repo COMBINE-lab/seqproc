@@ -1,12 +1,18 @@
-use std::ops::RangeInclusive;
+use std::{
+    fs::File,
+    io::{BufRead, BufReader},
+    ops::RangeInclusive,
+    path::PathBuf,
+};
 
-use crate::geometry::compile::functions::CompiledFunction;
+use crate::{geometry::compile::functions::CompiledFunction, interpret::FILTER};
 
 use antisequence::{
     expr::{label, TransformExpr},
     graph::*,
     *,
 };
+use expr::Expr;
 
 use crate::Nucleotide;
 
@@ -64,9 +70,9 @@ impl CompiledFunction {
     }
 }
 
-pub fn into_transform_expr(
+pub fn into_transform_expr<'a>(
     this_label: &str,
-    next_labels: impl IntoIterator<Item = String>,
+    next_labels: impl IntoIterator<Item = &'a str>,
 ) -> TransformExpr {
     TransformExpr::new(
         [label(this_label)],
@@ -111,23 +117,6 @@ pub fn trim_node(labels: impl IntoIterator<Item = antisequence::expr::Label>) ->
     TrimNode::new(labels)
 }
 
-pub fn filter(
-    label: &str,
-    attr: &str,
-    filename: String,
-    mismatch: usize,
-) -> Box<dyn antisequence::graph::GraphNode> {
-    todo!();
-    // let sel_expr = get_selector(label, attr);
-    // let sel_retain_expr = get_selector(label, "_f");
-
-    // let tr_expr = TransformExpr::new(format!("{label} -> {label}._f").as_bytes()).unwrap();
-
-    // read.filter(sel_expr, tr_expr, filename, mismatch)
-    //     .retain(sel_retain_expr)
-    //     .boxed()
-}
-
 pub fn map(
     label: &str,
     attr: &str,
@@ -142,32 +131,38 @@ pub fn map(
 }
 
 pub fn match_node(
-    sequence: &[Nucleotide],
+    patterns: Patterns,
     starting_label: &str,
-    this_label: &str,
-    prev_label: &str,
-    next_label: &str,
+    next_labels: Vec<&str>,
     match_type: MatchType,
 ) -> MatchAnyNode {
     let tr_expr = match match_type {
-        PrefixAln { .. } => into_transform_expr(
-            starting_label,
-            [this_label.to_owned(), next_label.to_owned()],
-        ),
-        ExactSearch | HammingSearch(_) => into_transform_expr(
-            starting_label,
-            [
-                prev_label.to_owned(),
-                this_label.to_owned(),
-                next_label.to_owned(),
-            ],
-        ),
+        PrefixAln { .. } => into_transform_expr(starting_label, next_labels),
+        ExactSearch | HammingSearch(_) => into_transform_expr(starting_label, next_labels),
+        Hamming(_) => into_transform_expr(starting_label, next_labels),
         _ => unreachable!(),
     };
 
-    MatchAnyNode::new(
-        tr_expr,
-        Patterns::from_strs([Nucleotide::as_str(sequence)]),
-        match_type,
-    )
+    MatchAnyNode::new(tr_expr, patterns, match_type)
+}
+
+pub fn parse_file_filter<'a>(path: PathBuf) -> Patterns {
+    let file = File::open(path.clone()).expect(&format!(
+        "Expected file -- could not open {:?}",
+        path.file_name().unwrap()
+    ));
+    let reader = BufReader::new(file);
+    let mut contents = vec![];
+    for (i, line) in reader.lines().enumerate() {
+        let line = line.expect(&format!(
+            "Could not read line {i} in file {:?}.",
+            path.file_name().unwrap()
+        ));
+        contents.push(Pattern::Expr {
+            expr: Expr::from(line),
+            attrs: vec![],
+        })
+    }
+
+    Patterns::new(FILTER, vec![""], contents)
 }

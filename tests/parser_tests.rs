@@ -407,3 +407,67 @@ fn fail_map() {
     assert!(lex_err.is_empty());
     assert_eq!(1, parser_err.len());
 }
+
+#[test]
+fn fail_prefix_label_underscore() {
+    let src = "_brc = b[10] 1{<brc>}2{r:}";
+
+    let (res, lex_err) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    assert!(lex_err.is_empty());
+    assert_eq!(1, parser_err.len());
+}
+
+#[test]
+fn fail_prefix_inlinelabel_underscore() {
+    let src = "1{b<_brc>[10]}2{r:}";
+
+    let (res, lex_err) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    assert!(lex_err.is_empty());
+    assert_eq!(1, parser_err.len());
+}
+
+#[test]
+fn ok_mid_inlinelabel_underscore() {
+    let src = "1{b<b_rc>[10]}2{r:}";
+
+    let (res, lex_err) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+}
+
+#[test]
+fn ok_mid_label_underscore() {
+    let src = "b_rc = b[10] 1{<brc>}2{r:}";
+
+    let (res, lex_err) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+}

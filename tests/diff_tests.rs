@@ -35,7 +35,7 @@ fn run_tests() -> Result<(), Box<dyn Error>> {
         let entry = entry?;
         let entry_name = &*entry.file_name().into_string().unwrap();
         // temp: map and filter have not yet been implemented -- just to make sure test pass
-        if entry_name == "map" || entry_name == "filter" {
+        if entry_name == "map" {
             continue;
         }
         let fgdl = &*fgdl_dir_path.join(format!("{entry_name}.fgdl"));
