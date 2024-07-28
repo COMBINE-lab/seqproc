@@ -87,7 +87,7 @@ dependencies = [
 [[package]]
 name = "antisequence"
 version = "0.1.0"
-source = "git+https://github.com/noahcape/ANTISEQUENCE/?branch=update_exprs#68f4bda9cf95123c7d341c8281cedf9bfc59280f"
+source = "git+https://github.com/Daniel-Liu-c0deb0t/ANTISEQUENCE.git?branch=dev#cbf72b0a52636b45a3070fb9757d950436bae7bd"
 dependencies = [
  "block-aligner",
  "colored",

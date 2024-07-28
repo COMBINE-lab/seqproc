@@ -34,7 +34,7 @@ impl CompiledFunction {
                 Expr::from(label(interval_name)).slice(-(n as isize)..)
             }
             // trunc to
-            CompiledFunction::TruncateTo(n) => Expr::from(label(interval_name)).slice(..=n),
+            CompiledFunction::TruncateTo(n) => Expr::from(label(interval_name)).slice(..n),
             CompiledFunction::TruncateToLeft(n) => Expr::from(label(interval_name))
                 .slice(Expr::from(label(interval_name)).len().sub(Expr::from(n))..),
             CompiledFunction::Pad(n, nuc) => Expr::from(label(interval_name))
@@ -86,19 +86,19 @@ pub fn into_transform_expr<'a>(
     )
 }
 
-pub fn cut_node(tr_expr: TransformExpr, index: EndIdx) -> CutNode {
-    CutNode::new(tr_expr, index)
+pub fn cut_node(tr_expr: TransformExpr, index: antisequence::expr::Expr) -> CutOp {
+    CutOp::new(tr_expr, index)
 }
 
-pub fn set_node(label_name: &str, expr: antisequence::expr::Expr) -> SetNode {
-    SetNode::new(label(label_name), expr)
+pub fn set_node(label_name: &str, expr: antisequence::expr::Expr) -> SetOp {
+    SetOp::new(label(label_name), expr)
 }
 
-pub fn retain_node(expr: antisequence::expr::Expr) -> RetainNode {
-    RetainNode::new(expr)
+pub fn retain_node(expr: antisequence::expr::Expr) -> RetainOp {
+    RetainOp::new(expr)
 }
 
-pub fn valid_label_length(this_label: &str, from: usize, to: Option<usize>) -> RetainNode {
+pub fn valid_label_length(this_label: &str, from: usize, to: Option<usize>) -> RetainOp {
     if let Some(to) = to {
         return retain_node(
             antisequence::expr::Expr::from(label(this_label))
@@ -113,8 +113,8 @@ pub fn valid_label_length(this_label: &str, from: usize, to: Option<usize>) -> R
     )
 }
 
-pub fn trim_node(labels: impl IntoIterator<Item = antisequence::expr::Label>) -> TrimNode {
-    TrimNode::new(labels)
+pub fn trim_node(labels: impl IntoIterator<Item = antisequence::expr::Label>) -> TrimOp {
+    TrimOp::new(labels)
 }
 
 pub fn map(
@@ -135,7 +135,7 @@ pub fn match_node(
     starting_label: &str,
     next_labels: Vec<&str>,
     match_type: MatchType,
-) -> MatchAnyNode {
+) -> MatchAnyOp {
     let tr_expr = match match_type {
         PrefixAln { .. } => into_transform_expr(starting_label, next_labels),
         ExactSearch | HammingSearch(_) => into_transform_expr(starting_label, next_labels),
@@ -143,7 +143,7 @@ pub fn match_node(
         _ => unreachable!(),
     };
 
-    MatchAnyNode::new(tr_expr, patterns, match_type)
+    MatchAnyOp::new(tr_expr, patterns, match_type)
 }
 
 pub fn parse_file_filter<'a>(path: PathBuf) -> Patterns {

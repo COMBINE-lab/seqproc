@@ -8,7 +8,7 @@ use antisequence::{
     *,
 };
 use chumsky::chain::Chain;
-use expr::label_exists;
+use expr::{label_exists, Expr};
 use graph::{Graph, MatchType::Hamming, Threshold};
 
 use crate::{
@@ -302,21 +302,24 @@ impl<'a> GeometryMeta {
             IntervalShape::FixedLen(S(len, _)) => {
                 graph.add(cut_node(
                     into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
-                    LeftEnd(len),
+                    Expr::from(len),
+                    // LeftEnd(len),
                 ));
                 graph.add(valid_label_length(&this_label, len, None));
             }
             IntervalShape::RangedLen(S((a, b), _)) => {
                 graph.add(cut_node(
                     into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
-                    LeftEnd(b),
+                    Expr::from(b),
+                    // LeftEnd(b),
                 ));
                 graph.add(valid_label_length(&this_label, a, Some(b)));
             }
             IntervalShape::UnboundedLen => {
                 graph.add(cut_node(
                     into_transform_expr(&init_label, [VOID_LABEL, &this_label]),
-                    LeftEnd(0),
+                    Expr::from(0),
+                    // LeftEnd(0),
                 ));
                 graph.add(set_node(
                     &init_label,

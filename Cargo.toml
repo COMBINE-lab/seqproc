@@ -15,7 +15,7 @@ name = "seqproc"
 path = "src/bin/bin.rs"
 
 [dependencies]
-antisequence = { git = "https://github.com/noahcape/ANTISEQUENCE/", branch = 'update_exprs' }
+antisequence = { git = "https://github.com/Daniel-Liu-c0deb0t/ANTISEQUENCE.git", branch = 'dev' }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tracing = "0.1.37"
 ariadne = "0.3.0"

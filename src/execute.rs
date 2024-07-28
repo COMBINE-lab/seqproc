@@ -1,4 +1,4 @@
-use std::{path::PathBuf, thread};
+use std::{fs::File, io::BufWriter, path::PathBuf, thread};
 
 use antisequence::graph::*;
 use anyhow::{bail, Result};
@@ -38,41 +38,56 @@ pub fn interpret(
 ) {
     let mut graph = antisequence::graph::Graph::new();
     graph.add(
-        antisequence::graph::InputFastq2Node::new(file1, file2).unwrap_or_else(|e| panic!("{e}")),
+        antisequence::graph::InputFastqOp::from_files([file1, file2]).unwrap_or_else(|e| panic!("{e}")),
     );
 
     compiled_data.interpret(&mut graph, &additional_args);
 
     if out1.is_empty() && out2.is_empty() {
-        graph.add(OutputFastqNode::new1("/dev/null"));
+        graph.add(OutputFastqFileOp::from_file("/dev/null"));
     } else if out2.is_empty() {
-        graph.add(OutputFastqNode::new1(out1));
+        graph.add(OutputFastqFileOp::from_file(out1));
     } else {
-        graph.add(OutputFastqNode::new2(out1, out2));
+        graph.add(OutputFastqFileOp::from_files([out1, out2]));
     }
 
     graph.run_with_threads(threads);
 }
 
-fn interpret_simpleaf(
-    file1: String,
-    file2: String,
+fn interpret_to_pipes(
+    files1: Vec<String>,
+    files2: Vec<String>,
     out1: PathBuf,
     out2: PathBuf,
     threads: usize,
     additional_args: Vec<String>,
     compiled_data: CompiledData,
-) {
+) -> SeqprocStats {
+    let f1 = File::create(out1).expect("Unable to open read 1 file");
+    let f2 = File::create(out2).expect("Unable to open read 2 file");
+
+    let stream1 = BufWriter::new(f1);
+    let stream2 = BufWriter::new(f2);
+
+    let files = files1.iter().zip(files2.iter()).flat_map(|tup| std::iter::once(tup.0).chain(std::iter::once(tup.1))).collect::<Vec<_>>();
+
     let mut graph = antisequence::graph::Graph::new();
     graph.add(
-        antisequence::graph::InputFastq2Node::new(file1, file2).unwrap_or_else(|e| panic!("{e}")),
+        antisequence::graph::InputFastqOp::from_files(files).unwrap_or_else(|e| panic!("{e}")),
     );
 
     compiled_data.interpret(&mut graph, &additional_args);
 
-    // write to out1 and out2
+    graph.add(OutputFastqOp::from_writers([stream1, stream2]));
 
     graph.run_with_threads(threads);
+
+
+
+    return SeqprocStats {
+        total_fragments: 0,
+        failed_parsing: 0,
+    }
 }
 
 pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
@@ -134,9 +149,10 @@ pub fn read_pairs_to_file(
 }
 
 pub fn read_pairs_to_fifo(
-    _compiled_data: CompiledData,
-    r1: Vec<PathBuf>,
-    r2: Vec<PathBuf>,
+    compiled_data: CompiledData,
+    r1: Vec<String>,
+    r2: Vec<String>,
+    additional_args: Vec<String>,
 ) -> Result<FifoSeqprocData> {
     if r1.len() != r2.len() {
         bail!(
@@ -176,7 +192,7 @@ pub fn read_pairs_to_fifo(
     let r2_fifo_clone = r2_fifo.clone();
 
     let join_handle: thread::JoinHandle<Result<SeqprocStats>> = thread::spawn(move || {
-        // let seqproc_stats = sinpleaf_interpret(file1, file2, out1, out2, threads, additional_args, compiled_data);
+        let seqproc_stats = interpret_to_pipes(r1, r2, r1_fifo_clone, r2_fifo_clone, 1, additional_args, compiled_data);
 
         // Explicitly check for and propagate any errors encountered in the
         // closing and deleting of the temporary directory.  The directory
@@ -185,10 +201,7 @@ pub fn read_pairs_to_fifo(
         // ignored.
         // see: https://docs.rs/tempfile/latest/tempfile/struct.TempDir.html#method.close
         match tmp_dir.close() {
-            Ok(_) => Ok(SeqprocStats {
-                total_fragments: 0,
-                failed_parsing: 0,
-            }),
+            Ok(_) => Ok(seqproc_stats),
             Err(e) => {
                 bail!("When closing (deleting) the temp directory, the following error was encountered {:?}", e);
             }
