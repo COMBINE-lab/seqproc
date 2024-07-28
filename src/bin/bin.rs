@@ -1,14 +1,10 @@
-use antisequence::graph::OutputFastqNode;
-use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
-use chumsky::{prelude::*, Stream};
 use clap::arg;
 use std::io;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use seqproc::{
-    compile::{compile, CompiledData},
-    lexer,
-    parser::parser,
+    error::handle_errors,
+    execute::{compile_geom, interpret},
 };
 
 /// General puprose sequence preprocessor
@@ -42,35 +38,6 @@ pub struct Args {
     additional: Vec<String>,
 }
 
-pub fn interpret(args: Args, compiled_data: &CompiledData) {
-    let Args {
-        geom: _,
-        file1,
-        file2,
-        out1,
-        out2,
-        threads,
-        additional,
-    } = args;
-
-    let mut graph = antisequence::graph::Graph::new();
-    graph.add(
-        antisequence::graph::InputFastq2Node::new(file1, file2).unwrap_or_else(|e| panic!("{e}")),
-    );
-
-    compiled_data.interpret(&mut graph, &additional);
-
-    if out1.is_empty() && out2.is_empty() {
-        graph.add(OutputFastqNode::new1("/dev/null"));
-    } else if out2.is_empty() {
-        graph.add(OutputFastqNode::new1(out1));
-    } else {
-        graph.add(OutputFastqNode::new2(out1, out2));
-    }
-
-    graph.run_with_threads(threads);
-}
-
 fn main() {
     // set up the logging. Here we will take the
     // logging level from the environment variable if
@@ -89,97 +56,18 @@ fn main() {
 
     let geom = std::fs::read_to_string(&args.geom).unwrap();
 
-    let (tokens, mut errs) = lexer::lexer().parse_recovery(&*geom);
+    let compiled_efgdl = compile_geom(geom.clone());
 
-    let parse_errs = if let Some(tokens) = tokens {
-        let (ast, parse_errs) = parser().parse_recovery(Stream::from_iter(
-            tokens.len()..tokens.len() + 1,
-            tokens.into_iter(),
-        ));
-
-        if let Some(ast) = ast {
-            let res = compile(ast);
-
-            if let Err(e) = res {
-                errs.push(Simple::custom(e.span, e.msg));
-            } else {
-                interpret(args, &res.ok().unwrap());
-            }
-        };
-
-        parse_errs
-    } else {
-        Vec::new()
-    };
-
-    // error recovery
-    errs.into_iter()
-        .map(|e| e.map(|c| c.to_string()))
-        .chain(parse_errs.into_iter().map(|e| e.map(|tok| tok.to_string())))
-        .for_each(|e| {
-            let report = Report::build(ReportKind::Error, (), e.span().start);
-
-            let report = match e.reason() {
-                chumsky::error::SimpleReason::Custom(msg) => report.with_message(msg).with_label(
-                    Label::new(e.span())
-                        .with_message(format!("{}", msg.fg(Color::Red)))
-                        .with_color(Color::Red),
-                ),
-                chumsky::error::SimpleReason::Unclosed { span, delimiter } => report
-                    .with_message(format!(
-                        "Unclosed delimiter {}",
-                        delimiter.fg(Color::Yellow)
-                    ))
-                    .with_label(
-                        Label::new(span.clone())
-                            .with_message(format!(
-                                "Unclosed delimiter {}",
-                                delimiter.fg(Color::Yellow)
-                            ))
-                            .with_color(Color::Yellow),
-                    )
-                    .with_label(
-                        Label::new(e.span())
-                            .with_message(format!(
-                                "Must be closed before this {}",
-                                e.found()
-                                    .unwrap_or(&"end of file".to_string())
-                                    .fg(Color::Red)
-                            ))
-                            .with_color(Color::Red),
-                    ),
-                chumsky::error::SimpleReason::Unexpected => report
-                    .with_message(format!(
-                        "{}, expected {}",
-                        if e.found().is_some() {
-                            "Unexpected token in input"
-                        } else {
-                            "Unexpected end of input"
-                        },
-                        if e.expected().len() == 0 {
-                            "something else".to_string()
-                        } else {
-                            e.expected()
-                                .map(|expected| match expected {
-                                    Some(expected) => expected.to_string(),
-                                    None => "end of input".to_string(),
-                                })
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
-                    ))
-                    .with_label(
-                        Label::new(e.span())
-                            .with_message(format!(
-                                "Unexpected token {}",
-                                e.found()
-                                    .unwrap_or(&"end of file".to_string())
-                                    .fg(Color::Red)
-                            ))
-                            .with_color(Color::Red),
-                    ),
-            };
-
-            report.finish().print(Source::from(&geom)).unwrap();
-        });
+    match compiled_efgdl {
+        Ok(geom) => interpret(
+            args.file1,
+            args.file2,
+            args.out1,
+            args.out2,
+            args.threads,
+            args.additional,
+            geom,
+        ),
+        Err(e) => handle_errors(e, geom),
+    }
 }

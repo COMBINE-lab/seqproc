@@ -5,11 +5,15 @@ use crate::{
     Span, S,
 };
 
-use super::functions::CompiledFunction;
+use super::functions::{ChangeAs, CompiledFunction};
 
 pub type Geometry = Vec<Vec<(Interval, usize)>>;
 
 pub type Transformation = Vec<Vec<String>>;
+
+fn log4_roundup(n: usize) -> usize {
+    (n.ilog2() + 1).div_ceil(2) as usize
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ReturnType {
@@ -190,6 +194,7 @@ pub fn validate_composition(
             }),
             _ => Ok(S(ReturnType::Void, fn_span)),
         },
+        // todo: should this take only fixed length segments so to lead ot known ending length?
         CompiledFunction::Pad(..) | CompiledFunction::PadLeft(..) => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
@@ -254,5 +259,106 @@ pub fn validate_composition(
                 ),
             }),
         },
+    }
+}
+
+impl GeometryMeta {
+    pub fn is_complex(&self) -> bool {
+        self.expr.0.is_complex()
+    }
+
+    pub fn get_label(&self) -> Option<String> {
+        self.expr.0.label.clone()
+    }
+
+    // show normalize when seen, then at the end if something is still variable then normalize
+    pub fn get_simplified_description_string(&self) -> String {
+        if self.expr.0.is_seq() {
+            return String::from("");
+        }
+
+        let mut size: Option<IntervalShape> = Some(self.expr.0.clone().size);
+
+        for (n, change_as) in self
+            .stack
+            .iter()
+            .map(|S(f, _)| f.clone().get_change_in_len())
+        {
+            size = match change_as {
+                ChangeAs::TO => Some(size.unwrap().update_size_to(n)),
+                ChangeAs::ADD => Some(size.unwrap().update_size_add(n)),
+                ChangeAs::SUB => Some(size.unwrap().update_size_sub(n)),
+                ChangeAs::REMOVE => None,
+            }
+        }
+
+        match size {
+            Some(s) => self
+                .expr
+                .0
+                .get_simplified_description_string(s.get_normalized()),
+            None => String::from(""),
+        }
+    }
+}
+
+impl IntervalShape {
+    pub fn update_size_to(&self, n: usize) -> Self {
+        IntervalShape::FixedLen(S(n, 0..1))
+    }
+
+    pub fn update_size_add(self, n: usize) -> Self {
+        match self {
+            IntervalShape::FixedLen(S(l, s)) => IntervalShape::FixedLen(S(n + l, s)),
+            IntervalShape::RangedLen(S((a, b), s)) => {
+                IntervalShape::RangedLen(S((a + n, b + n), s))
+            }
+            _ => self,
+        }
+    }
+
+    pub fn update_size_sub(self, n: usize) -> Self {
+        match self {
+            IntervalShape::FixedLen(S(l, s)) => IntervalShape::FixedLen(S(l - n, s)),
+            _ => self,
+        }
+    }
+
+    pub fn get_normalized(self) -> Self {
+        match self {
+            IntervalShape::RangedLen(S((a, b), s)) => {
+                IntervalShape::FixedLen(S(b + log4_roundup(b - a + 1), s))
+            }
+            _ => self,
+        }
+    }
+}
+
+impl GeometryPiece {
+    pub fn is_complex(&self) -> bool {
+        matches!(
+            self.size,
+            IntervalShape::RangedLen(..) | IntervalShape::FixedSeq(..)
+        )
+    }
+
+    pub fn is_seq(&self) -> bool {
+        matches!(self.size, IntervalShape::FixedSeq(..))
+    }
+
+    pub fn get_simplified_description_string(&self, size: IntervalShape) -> String {
+        let type_ = match self.type_ {
+            IntervalKind::Barcode => "b",
+            IntervalKind::Umi => "u",
+            IntervalKind::Discard => "x",
+            IntervalKind::ReadSeq => "r",
+            _ => unreachable!(),
+        };
+
+        match size {
+            IntervalShape::FixedLen(S(n, ..)) => format!("{type_}[{n}]"),
+            IntervalShape::UnboundedLen => format!("{type_}:"),
+            _ => unreachable!(),
+        }
     }
 }

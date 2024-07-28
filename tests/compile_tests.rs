@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use chumsky::{prelude::*, Stream};
 use seqproc::{
     compile::{compile, definitions::compile_definitions, reads::compile_reads, utils::Error},
+    execute::compile_geom,
     lexer::lexer,
     parser::parser,
 };
@@ -485,4 +486,84 @@ brc = b[10-11]
     compile(res)?;
 
     Ok(())
+}
+
+#[test]
+fn test_simplified_geom() {
+    let geom = String::from("1{b[9-10]f[CAGAGC]u[8]b[10]}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]u[8]b[10]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_simplified_geom_with_transformation() {
+    let geom = String::from(
+        "1{b<brc>[9-10]f[CAGAGC]u<umi>[8]b<brc2>[10]}2{r<read>:} -> 1{<brc><brc2><umi>}2{<read>}",
+    );
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[10]u[8]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_desc_with_remove() {
+    let geom = String::from("1{b[9-10]f[CAGAGC]remove(u[8])b[10]}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[10]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_desc_with_pad() {
+    let geom = String::from("1{b[9-10]f[CAGAGC]remove(u[8])pad_to(b[10], 13, A)}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[13]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_desc_with_trunc() {
+    let geom = String::from("1{b[9-10]f[CAGAGC]remove(u[8])trunc(b[10], 3)}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[7]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_simplified_geom_from_def() {
+    let geom = String::from("brc = b[9-10] 1{<brc>f[CAGAGC]remove(u[8])b[10]}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[10]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
 }

@@ -30,6 +30,30 @@ pub enum CompiledFunction {
     Hamming(usize),
 }
 
+pub enum ChangeAs {
+    TO,
+    ADD,
+    SUB,
+    REMOVE,
+}
+
+impl CompiledFunction {
+    pub fn get_change_in_len(&self) -> (usize, ChangeAs) {
+        match self {
+            CompiledFunction::Truncate(n) | CompiledFunction::TruncateLeft(n) => {
+                (*n, ChangeAs::SUB)
+            }
+            CompiledFunction::PadTo(n, _)
+            | CompiledFunction::PadToLeft(n, _)
+            | CompiledFunction::TruncateTo(n)
+            | CompiledFunction::TruncateToLeft(n) => (*n, ChangeAs::TO),
+            CompiledFunction::Pad(n, _) | CompiledFunction::PadLeft(n, _) => (*n, ChangeAs::ADD),
+            CompiledFunction::Remove => (0, ChangeAs::REMOVE),
+            _ => (0, ChangeAs::ADD),
+        }
+    }
+}
+
 pub fn compile_fn(
     S(fn_, span): S<Function>,
     S(parent_expr, expr_span): S<Expr>,
