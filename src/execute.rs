@@ -38,7 +38,8 @@ pub fn interpret(
 ) {
     let mut graph = antisequence::graph::Graph::new();
     graph.add(
-        antisequence::graph::InputFastqOp::from_files([file1, file2]).unwrap_or_else(|e| panic!("{e}")),
+        antisequence::graph::InputFastqOp::from_files([file1, file2])
+            .unwrap_or_else(|e| panic!("{e}")),
     );
 
     compiled_data.interpret(&mut graph, &additional_args);
@@ -69,7 +70,11 @@ fn interpret_to_pipes(
     let stream1 = BufWriter::new(f1);
     let stream2 = BufWriter::new(f2);
 
-    let files = files1.iter().zip(files2.iter()).flat_map(|tup| std::iter::once(tup.0).chain(std::iter::once(tup.1))).collect::<Vec<_>>();
+    let files = files1
+        .iter()
+        .zip(files2.iter())
+        .flat_map(|tup| std::iter::once(tup.0).chain(std::iter::once(tup.1)))
+        .collect::<Vec<_>>();
 
     let mut graph = antisequence::graph::Graph::new();
     graph.add(
@@ -82,9 +87,7 @@ fn interpret_to_pipes(
 
     graph.run_with_threads(threads);
 
-
-
-    return SeqprocStats {
+    SeqprocStats {
         total_fragments: 0,
         failed_parsing: 0,
     }
@@ -192,7 +195,15 @@ pub fn read_pairs_to_fifo(
     let r2_fifo_clone = r2_fifo.clone();
 
     let join_handle: thread::JoinHandle<Result<SeqprocStats>> = thread::spawn(move || {
-        let seqproc_stats = interpret_to_pipes(r1, r2, r1_fifo_clone, r2_fifo_clone, 1, additional_args, compiled_data);
+        let seqproc_stats = interpret_to_pipes(
+            r1,
+            r2,
+            r1_fifo_clone,
+            r2_fifo_clone,
+            1,
+            additional_args,
+            compiled_data,
+        );
 
         // Explicitly check for and propagate any errors encountered in the
         // closing and deleting of the temporary directory.  The directory

@@ -115,12 +115,12 @@ fn parse_additional_args(arg: String, args: &[String]) -> PathBuf {
                 })
                 .clone(),
         )
-        .expect(&format!(
-            "Expected path as argument -- could not parse argument {n} as path."
-        )),
-        _ => PathBuf::from_str(&arg).expect(&format!(
-            "Expected path as argument -- could not parse {arg} as path."
-        )),
+        .unwrap_or_else(|_| {
+            panic!("Expected path as argument -- could not parse argument {n} as path.")
+        }),
+        _ => PathBuf::from_str(&arg).unwrap_or_else(|_| {
+            panic!("Expected path as argument -- could not parse {arg} as path.")
+        }),
     }
 }
 

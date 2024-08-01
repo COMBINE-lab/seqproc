@@ -76,6 +76,8 @@ pub enum Token {
     MapWithMismatch,
     /// `filter_within_dist`.
     FilterWithinDist,
+    /// `filter`
+    Filter,
     /// `hamming`.
     Hamming,
     /// `->`.
@@ -134,6 +136,7 @@ impl fmt::Display for Token {
             Map => f.write_str("map"),
             MapWithMismatch => f.write_str("map_with_mismatch"),
             FilterWithinDist => f.write_str("filter_within_dist"),
+            Filter => f.write_str("filter"),
             Hamming => f.write_str("hamming"),
             Barcode => f.write_char('b'),
             Umi => f.write_char('u'),
@@ -165,7 +168,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .ignore_then(text::ident())
         .then_ignore(just('>'))
         .map(|s: String| {
-            if s.starts_with("_") {
+            if s.starts_with('_') {
                 Token::Reserved(s)
             } else {
                 Token::Label(s)
@@ -213,6 +216,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "norm" => Token::Normalize,
         "map_with_mismatch" => Token::MapWithMismatch,
         "filter_within_dist" => Token::FilterWithinDist,
+        "filter" => Token::Filter,
         "map" => Token::Map,
         "hamming" => Token::Hamming,
         "self" => Token::Self_,
@@ -222,7 +226,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "x" => Token::Discard,
         "f" => Token::FixedSeq,
         _ => {
-            if s.starts_with("_") {
+            if s.starts_with('_') {
                 Token::Reserved(s)
             } else {
                 Token::Label(s)

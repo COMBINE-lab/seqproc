@@ -146,22 +146,26 @@ pub fn match_node(
     MatchAnyOp::new(tr_expr, patterns, match_type)
 }
 
-pub fn parse_file_filter<'a>(path: PathBuf) -> Patterns {
-    let file = File::open(path.clone()).expect(&format!(
-        "Expected file -- could not open {:?}",
-        path.file_name().unwrap()
-    ));
+pub fn parse_file_filter(path: PathBuf) -> Patterns {
+    let file = File::open(path.clone()).unwrap_or_else(|_| {
+        panic!(
+            "Expected file -- could not open {:?}",
+            path.file_name().unwrap()
+        )
+    });
     let reader = BufReader::new(file);
     let mut contents = vec![];
     for (i, line) in reader.lines().enumerate() {
-        let line = line.expect(&format!(
-            "Could not read line {i} in file {:?}.",
-            path.file_name().unwrap()
-        ));
+        let line = line.unwrap_or_else(|_| {
+            panic!(
+                "Could not read line {i} in file {:?}.",
+                path.file_name().unwrap()
+            )
+        });
         contents.push(Pattern::Expr {
             expr: Expr::from(line),
             attrs: vec![],
-        })
+        });
     }
 
     Patterns::new(FILTER, vec![""], contents)

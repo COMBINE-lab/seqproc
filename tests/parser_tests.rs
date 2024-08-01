@@ -471,3 +471,35 @@ fn ok_mid_label_underscore() {
     assert!(lex_err.is_empty());
     assert!(parser_err.is_empty());
 }
+
+#[test]
+fn filter_test() {
+    let src = "b_rc = filter(b[10], $0) 1{<brc>}2{r:}";
+
+    let (res, lex_err) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+
+    assert!(lex_err.is_empty());
+    assert!(parser_err.is_empty());
+}
+
+#[test]
+fn filter_test_too_many_args() {
+    let src = "b_rc = filter(b[10], $0, 1) 1{<brc>}2{r:}";
+
+    let (res, lex_err) = lexer().parse_recovery(src);
+
+    let res = res.unwrap();
+
+    let len = res.len();
+
+    let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
+    println!("{:?}", parser_err);
+    assert!(lex_err.is_empty());
+    assert_eq!(1, parser_err.len());
+}

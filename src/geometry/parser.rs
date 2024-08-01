@@ -69,7 +69,7 @@ pub enum Function {
     Map(String, S<Box<Expr>>),
     /// `map_with_mismatch(I, A, F, n)`
     MapWithMismatch(String, S<Box<Expr>>, usize),
-    /// `map_with_mismatch(I, A, F, n)`
+    /// `filter_within_dist(I, A, n)`
     FilterWithinDist(String, usize),
     /// `hamming(F, n)`
     Hamming(usize),
@@ -509,6 +509,7 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 .map_with_span(|_, span| span)
                 .then(
                     geom_piece
+                        .clone()
                         .then_ignore(just(Token::Comma))
                         .then(file.or(argument))
                         .then_ignore(just(Token::Comma))
@@ -523,6 +524,22 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                     )
                 })
                 .labelled("Filter within dist function"),
+            just(Token::Filter)
+                .map_with_span(|_, span| span)
+                .then(
+                    geom_piece
+                        .then_ignore(just(Token::Comma))
+                        .then(file.or(argument))
+                        .map_with_span(S)
+                        .delimited_by(just(Token::LParen), just(Token::RParen)),
+                )
+                .map(|(fn_span, S((geom_p, path), span))| {
+                    Expr::Function(
+                        S(Function::FilterWithinDist(path, 0), fn_span),
+                        S(Box::new(geom_p), span),
+                    )
+                })
+                .labelled("Filter function"),
         ))
     })
     .map_with_span(S);

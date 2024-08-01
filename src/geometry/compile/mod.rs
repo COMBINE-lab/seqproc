@@ -4,7 +4,7 @@ pub mod reads;
 mod transformation;
 pub mod utils;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write};
 
 use definitions::compile_definitions;
 use reads::compile_reads;
@@ -41,21 +41,21 @@ impl CompiledData {
 
                 let desc = geom.get_simplified_description_string();
 
-                if label.is_some() && !desc.is_empty() {
-                    map.insert(label.unwrap(), desc);
+                if let Some(label) = label {
+                    if !desc.is_empty() {
+                        map.insert(label, desc);
+                    }
                 }
             }
 
-            self.transformation
-                .unwrap()
-                .into_iter()
-                .enumerate()
-                .map(|(i, labels)| {
+            self.transformation.unwrap().into_iter().enumerate().fold(
+                String::new(),
+                |mut acc, (i, labels)| {
                     let geom_desc = labels
                         .into_iter()
                         .map(|l| {
                             let key = l
-                                .split(".")
+                                .split('.')
                                 .collect::<Vec<&str>>()
                                 .get(1)
                                 .unwrap()
@@ -65,23 +65,28 @@ impl CompiledData {
                         })
                         .collect::<String>();
 
-                    format!("{}{{{}}}", i + 1, geom_desc)
-                })
-                .collect::<String>()
+                    write!(&mut acc, "{}{{{}}}", i + 1, geom_desc)
+                        .expect("Should have been able to format!");
+
+                    acc
+                },
+            )
         } else {
             self.geometry
                 .into_iter()
                 .enumerate()
-                .map(|(i, geom)| {
-                    format!(
+                .fold(String::new(), |mut acc, (i, geom)| {
+                    write!(
+                        &mut acc,
                         "{}{{{}}}",
                         i + 1,
                         geom.into_iter()
                             .map(|g| g.get_simplified_description_string())
                             .collect::<String>()
                     )
+                    .expect("Should have been able to format!");
+                    acc
                 })
-                .collect::<String>()
         }
     }
 }
