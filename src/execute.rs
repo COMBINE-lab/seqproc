@@ -28,12 +28,12 @@ pub struct SeqprocStats {
 }
 
 pub fn interpret(
-    file1: String,
-    file2: String,
-    out1: String,
-    out2: String,
+    file1: &str,
+    file2: &str,
+    out1: &str,
+    out2: &str,
     threads: usize,
-    additional_args: Vec<String>,
+    additional_args: Vec<&str>,
     compiled_data: CompiledData,
 ) {
     let mut graph = antisequence::graph::Graph::new();
@@ -42,14 +42,19 @@ pub fn interpret(
             .unwrap_or_else(|e| panic!("{e}")),
     );
 
+    let additional_args = additional_args.into_iter().collect::<Vec<_>>();
+
     compiled_data.interpret(&mut graph, &additional_args);
 
     if out1.is_empty() && out2.is_empty() {
         graph.add(OutputFastqFileOp::from_file("/dev/null"));
     } else if out2.is_empty() {
-        graph.add(OutputFastqFileOp::from_file(out1));
+        graph.add(OutputFastqFileOp::from_file(out1.to_owned()));
     } else {
-        graph.add(OutputFastqFileOp::from_files([out1, out2]));
+        graph.add(OutputFastqFileOp::from_files([
+            out1.to_owned(),
+            out2.to_owned(),
+        ]));
     }
 
     graph.run_with_threads(threads);
@@ -61,7 +66,7 @@ fn interpret_to_pipes(
     out1: PathBuf,
     out2: PathBuf,
     threads: usize,
-    additional_args: Vec<String>,
+    additional_args: Vec<&str>,
     compiled_data: CompiledData,
 ) -> SeqprocStats {
     let f1 = File::create(out1).expect("Unable to open read 1 file");
@@ -75,6 +80,8 @@ fn interpret_to_pipes(
         .zip(files2.iter())
         .flat_map(|tup| std::iter::once(tup.0).chain(std::iter::once(tup.1)))
         .collect::<Vec<_>>();
+
+    let additional_args = additional_args.into_iter().collect::<Vec<_>>();
 
     let mut graph = antisequence::graph::Graph::new();
     graph.add(
@@ -94,7 +101,7 @@ fn interpret_to_pipes(
 }
 
 pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
-    let (tokens, mut errs) = lexer::lexer().parse_recovery(geom.clone());
+    let (tokens, mut errs) = lexer::lexer().parse_recovery(geom);
 
     let parse_errs = if let Some(tokens) = &tokens {
         let (ast, parse_errs) = parser().parse_recovery(Stream::from_iter(
@@ -128,12 +135,12 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
 
 pub fn read_pairs_to_file(
     compiled_data: CompiledData,
-    in1: String,
-    in2: String,
-    out1: String,
-    out2: String,
+    in1: &str,
+    in2: &str,
+    out1: &str,
+    out2: &str,
     threads: usize,
-    additional_args: Vec<String>,
+    additional_args: Vec<&str>,
 ) -> Result<SeqprocStats> {
     interpret(
         in1,
@@ -151,11 +158,11 @@ pub fn read_pairs_to_file(
     })
 }
 
-pub fn read_pairs_to_fifo(
+pub fn read_pairs_to_fifo<'a: 'static>(
     compiled_data: CompiledData,
     r1: Vec<String>,
     r2: Vec<String>,
-    additional_args: Vec<String>,
+    additional_args: Vec<&'a str>,
 ) -> Result<FifoSeqprocData> {
     if r1.len() != r2.len() {
         bail!(

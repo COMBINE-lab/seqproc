@@ -58,14 +58,20 @@ fn main() {
 
     let compiled_efgdl = compile_geom(geom.clone());
 
+    let additional_args = args
+        .additional
+        .iter()
+        .map(|a| a.as_str())
+        .collect::<Vec<_>>();
+
     match compiled_efgdl {
         Ok(geom) => interpret(
-            args.file1,
-            args.file2,
-            args.out1,
-            args.out2,
+            &args.file1,
+            &args.file2,
+            &args.out1,
+            &args.out2,
             args.threads,
-            args.additional,
+            additional_args,
             geom,
         ),
         Err(e) => handle_errors(e, geom),

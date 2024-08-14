@@ -67,6 +67,6 @@ pub fn handle_errors(errs: Vec<Simple<String>>, source: String) {
                 ),
         };
 
-        report.finish().print(Source::from(&source)).unwrap();
+        report.finish().print(Source::from(source.clone())).unwrap();
     });
 }

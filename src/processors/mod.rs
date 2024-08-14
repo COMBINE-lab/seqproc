@@ -5,7 +5,10 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{geometry::compile::functions::CompiledFunction, interpret::FILTER};
+use crate::{
+    geometry::compile::functions::CompiledFunction,
+    interpret::{LabelOrAttr, AMBIG, FILTER, MAPPED, SUB},
+};
 
 use antisequence::{
     expr::{label, TransformExpr},
@@ -13,6 +16,7 @@ use antisequence::{
     *,
 };
 use expr::Expr;
+use serde::Deserialize;
 
 use crate::Nucleotide;
 
@@ -90,8 +94,16 @@ pub fn cut_node(tr_expr: TransformExpr, index: antisequence::expr::Expr) -> CutO
     CutOp::new(tr_expr, index)
 }
 
-pub fn set_node(label_name: &str, expr: antisequence::expr::Expr) -> SetOp {
-    SetOp::new(label(label_name), expr)
+pub fn set_node(
+    label_or_attr: crate::interpret::LabelOrAttr<'_>,
+    expr: antisequence::expr::Expr,
+) -> SetOp {
+    use crate::interpret::LabelOrAttr;
+
+    match label_or_attr {
+        LabelOrAttr::Attr(attr) => SetOp::new(expr::attr(attr), expr),
+        LabelOrAttr::Label(label) => SetOp::new(expr::label(label), expr),
+    }
 }
 
 pub fn retain_node(expr: antisequence::expr::Expr) -> RetainOp {
@@ -117,17 +129,30 @@ pub fn trim_node(labels: impl IntoIterator<Item = antisequence::expr::Label>) ->
     TrimOp::new(labels)
 }
 
-pub fn map(
-    label: &str,
-    attr: &str,
-    file: String,
-    mismatch: usize,
-) -> Box<dyn antisequence::graph::GraphNode> {
-    todo!();
-    // let sel_expr = get_selector(label, attr);
-    // let tr_expr = TransformExpr::new(format!("{label} -> {label}.not_mapped").as_bytes()).unwrap();
+pub fn map(this_label: &str, patterns: Patterns, match_type: MatchType, graph: &mut Graph) {
+    let next_label: &str = &format!("{this_label}{MAPPED}");
 
-    // read.map(sel_expr, tr_expr, file, mismatch).boxed()
+    graph.add(match_node(
+        patterns,
+        this_label,
+        vec![next_label],
+        match_type,
+    ));
+
+    graph.add(set_node(
+        LabelOrAttr::Attr(&format!("{this_label}.{MAPPED}")),
+        Expr::from(antisequence::expr::attr(format!("{this_label}.{AMBIG}"))).not(),
+    ));
+
+    let mut mapping_graph = Graph::new();
+    mapping_graph.add(set_node(
+        LabelOrAttr::Label(next_label),
+        Expr::from(expr::attr(format!("{this_label}.{SUB}"))),
+    ));
+    graph.add(SelectOp::new(
+        Expr::from(expr::attr(&format!("{this_label}.{MAPPED}"))),
+        mapping_graph,
+    ));
 }
 
 pub fn match_node(
@@ -136,12 +161,7 @@ pub fn match_node(
     next_labels: Vec<&str>,
     match_type: MatchType,
 ) -> MatchAnyOp {
-    let tr_expr = match match_type {
-        PrefixAln { .. } => into_transform_expr(starting_label, next_labels),
-        ExactSearch | HammingSearch(_) => into_transform_expr(starting_label, next_labels),
-        Hamming(_) => into_transform_expr(starting_label, next_labels),
-        _ => unreachable!(),
-    };
+    let tr_expr = into_transform_expr(starting_label, next_labels);
 
     MatchAnyOp::new(tr_expr, patterns, match_type)
 }
@@ -162,11 +182,36 @@ pub fn parse_file_filter(path: PathBuf) -> Patterns {
                 path.file_name().unwrap()
             )
         });
-        contents.push(Pattern::Expr {
-            expr: Expr::from(line),
-            attrs: vec![],
+        contents.push(line);
+    }
+    Patterns::from_strs(contents).with_pattern_name(FILTER)
+}
+
+#[derive(Debug, Deserialize)]
+struct SeqprocMap {
+    sub_patt: String,
+    match_patt: String,
+}
+
+pub fn parse_file_match(path: PathBuf) -> Patterns {
+    let mut rdr = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .comment(Some(b'#'))
+        .has_headers(false)
+        .from_path(path)
+        .expect("cannot open mapping file");
+
+    let mut mappings = vec![];
+    for result in rdr.deserialize() {
+        let mapping: SeqprocMap = result.expect("Could not parse line in map file");
+
+        mappings.push(Pattern::Expr {
+            expr: Expr::bytes(mapping.match_patt.into()),
+            attrs: vec![Data::Bytes(mapping.sub_patt.into())],
         });
     }
 
-    Patterns::new(FILTER, vec![""], contents)
+    Patterns::new(mappings, vec![SUB])
+        .with_multimatch_name(AMBIG)
+        .with_pattern_name(MAPPED)
 }

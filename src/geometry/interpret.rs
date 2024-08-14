@@ -8,8 +8,12 @@ use antisequence::{
     *,
 };
 use chumsky::chain::Chain;
-use expr::{label_exists, Expr};
-use graph::{Graph, MatchType::Hamming, Threshold};
+use expr::Expr;
+use graph::{
+    Graph,
+    MatchType::{Exact, Hamming},
+    SelectOp, Threshold,
+};
 
 use crate::{
     compile::{
@@ -19,16 +23,21 @@ use crate::{
     },
     parser::{IntervalKind, IntervalShape},
     processors::*,
-    S,
+    Nucleotide, S,
 };
 
-use super::Nucleotide;
-
-// use these consts for left and right
 static VOID_LABEL: &str = "_";
 static NEXT_RIGHT: &str = "_r";
 static NEXT_LEFT: &str = "_l";
 pub static FILTER: &str = "_f";
+pub static MAPPED: &str = "_m";
+pub static AMBIG: &str = "ambig";
+pub static SUB: &str = "sub";
+
+pub enum LabelOrAttr<'a> {
+    Label(&'a str),
+    Attr(&'a str),
+}
 
 fn labels(read_label: &[&str]) -> (String, String) {
     let len = read_label.len();
@@ -46,7 +55,7 @@ fn labels(read_label: &[&str]) -> (String, String) {
 }
 
 impl<'a> CompiledData {
-    pub fn interpret<'b: 'a>(&'a self, graph: &'b mut Graph, additional_args: &[String]) {
+    pub fn interpret<'b: 'a>(&'a self, graph: &'a mut Graph, additional_args: &[&str]) {
         let Self {
             geometry,
             transformation,
@@ -65,7 +74,10 @@ impl<'a> CompiledData {
             for (i, tr) in transformation.iter().enumerate() {
                 let seq_name = format!("seq{}.*", i + 1);
                 let tr = format!("{{{}}}", tr.join("}{"));
-                graph.add(set_node(&seq_name, antisequence::expr::fmt_expr(tr)));
+                graph.add(set_node(
+                    LabelOrAttr::Label(&seq_name),
+                    antisequence::expr::fmt_expr(tr),
+                ));
             }
         };
     }
@@ -75,7 +87,7 @@ fn interpret_geometry(
     graph: &mut Graph,
     geometry: &[GeometryMeta],
     init_label: &str,
-    additional_args: &[String],
+    additional_args: &[&str],
 ) {
     let mut geometry_iter = geometry.iter();
 
@@ -102,19 +114,15 @@ fn interpret_geometry(
     }
 }
 
-fn parse_additional_args(arg: String, args: &[String]) -> PathBuf {
+fn parse_additional_args(arg: String, args: &[&str]) -> PathBuf {
+    let len = args.len();
     match arg.parse::<usize>() {
-        Ok(n) => PathBuf::from_str(
-            &args
-                .get(n)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Expected {n} additional arguments with `--additional` tag. Found only {}.",
-                        args.len()
-                    )
-                })
-                .clone(),
-        )
+        Ok(n) => PathBuf::from_str(args.get(n).unwrap_or_else(|| {
+            panic!(
+                "Expected {n} additional arguments with `--additional` tag. Found only {}.",
+                len
+            )
+        }))
         .unwrap_or_else(|_| {
             panic!("Expected path as argument -- could not parse argument {n} as path.")
         }),
@@ -127,9 +135,8 @@ fn parse_additional_args(arg: String, args: &[String]) -> PathBuf {
 fn execute_stack(
     stack: Vec<S<CompiledFunction>>,
     label: &str,
-    attr: &str,
     size: &IntervalShape,
-    additional_args: &[String],
+    additional_args: &[&str],
     graph: &mut Graph,
 ) {
     let range = if let IntervalShape::RangedLen(S((a, b), _)) = size {
@@ -145,33 +152,46 @@ fn execute_stack(
         IntervalShape::UnboundedLen => 0,
     };
 
-    let interval_name = if attr.is_empty() {
-        label
-    } else {
-        &[label, ".", attr].concat()
-    };
-
     for S(fn_, _) in stack.into_iter().rev() {
         match fn_ {
             CompiledFunction::Remove => {
-                graph.add(trim_node([antisequence::expr::label(interval_name)]));
+                graph.add(trim_node([antisequence::expr::label(label)]));
             }
             CompiledFunction::Hamming(_) => {
                 panic!("Hamming requires to be bound to a sequence cannot operate in isolation")
             }
             CompiledFunction::Map(file, fns) => {
-                let file = parse_additional_args(file, additional_args);
+                let file_path = parse_additional_args(file, additional_args);
+                let patterns = parse_file_match(file_path);
 
-                // map node
-                // let mapped = map(read, label, attr, file, 0);
-                execute_stack(fns, label, "not_mapped", size, additional_args, graph);
+                map(label, patterns, Exact, graph);
+
+                let mut fallback_graph = Graph::new();
+                execute_stack(fns, label, size, additional_args, &mut fallback_graph);
+
+                graph.add(SelectOp::new(
+                    Expr::from(expr::attr(&format!("{label}.{MAPPED}"))).not(),
+                    fallback_graph,
+                ));
             }
             CompiledFunction::MapWithMismatch(file, fns, mismatch) => {
-                let file = parse_additional_args(file, additional_args);
+                let file_path = parse_additional_args(file, additional_args);
+                let patterns = parse_file_match(file_path);
 
-                // map node
-                // let mapped = map(read, label, attr, file, mismatch);
-                execute_stack(fns, label, "not_mapped", size, additional_args, graph);
+                map(
+                    label,
+                    patterns,
+                    Hamming(Threshold::Count(interval_length - mismatch)),
+                    graph,
+                );
+
+                let mut fallback_graph = Graph::new();
+                execute_stack(fns, label, size, additional_args, &mut fallback_graph);
+
+                graph.add(SelectOp::new(
+                    Expr::from(expr::attr(&format!("{label}.{MAPPED}"))).not(),
+                    fallback_graph,
+                ));
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
                 let file_path = parse_additional_args(file, additional_args);
@@ -183,13 +203,17 @@ fn execute_stack(
                     vec![label],
                     Hamming(Threshold::Count(interval_length - mismatch)),
                 ));
+
                 graph.add(retain_node(
-                    expr::attr_exists(&[label, ".", FILTER].concat()).not(),
+                    expr::attr_exists([label, ".", FILTER].concat()).not(),
                 ));
             }
             // for the rest of the compliled functions which translate exactly to a single node
             _ => {
-                graph.add(set_node(interval_name, fn_.to_expr(interval_name, &range)));
+                graph.add(set_node(
+                    LabelOrAttr::Label(label),
+                    fn_.to_expr(label, &range),
+                ));
             }
         };
     }
@@ -216,7 +240,7 @@ impl<'a> GeometryMeta {
         }
     }
 
-    fn interpret_no_cut(&self, label: &[&str], additional_args: &[String], graph: &mut Graph) {
+    fn interpret_no_cut(&self, label: &[&str], additional_args: &[&str], graph: &mut Graph) {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -240,17 +264,17 @@ impl<'a> GeometryMeta {
             }
             IntervalShape::UnboundedLen => {
                 graph.add(set_node(
-                    &init_label,
+                    LabelOrAttr::Label(&init_label),
                     antisequence::expr::Expr::from(antisequence::expr::label(this_label.clone())),
                 ));
             }
             _ => unreachable!(),
         };
 
-        execute_stack(stack, &this_label, "", &size, additional_args, graph);
+        execute_stack(stack, &this_label, &size, additional_args, graph);
     }
 
-    fn interpret<'c: 'a>(&self, label: &[&str], additional_args: &[String], graph: &mut Graph) {
+    fn interpret<'c: 'a>(&self, label: &[&str], additional_args: &[&str], graph: &mut Graph) {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -297,13 +321,12 @@ impl<'a> GeometryMeta {
                     labels,
                     match_type,
                 ));
-                graph.add(retain_node(label_exists(this_label.clone())));
+                graph.add(retain_node(expr::label_exists(this_label.clone())));
             }
             IntervalShape::FixedLen(S(len, _)) => {
                 graph.add(cut_node(
                     into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
                     Expr::from(len),
-                    // LeftEnd(len),
                 ));
                 graph.add(valid_label_length(&this_label, len, None));
             }
@@ -311,7 +334,6 @@ impl<'a> GeometryMeta {
                 graph.add(cut_node(
                     into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
                     Expr::from(b),
-                    // LeftEnd(b),
                 ));
                 graph.add(valid_label_length(&this_label, a, Some(b)));
             }
@@ -319,30 +341,22 @@ impl<'a> GeometryMeta {
                 graph.add(cut_node(
                     into_transform_expr(&init_label, [VOID_LABEL, &this_label]),
                     Expr::from(0),
-                    // LeftEnd(0),
                 ));
                 graph.add(set_node(
-                    &init_label,
+                    LabelOrAttr::Label(&init_label),
                     antisequence::expr::Expr::from(antisequence::expr::label(this_label.clone())),
                 ));
             }
         };
 
-        execute_stack(
-            stack,
-            this_label.as_str(),
-            "",
-            &size,
-            additional_args,
-            graph,
-        );
+        execute_stack(stack, this_label.as_str(), &size, additional_args, graph);
     }
 
     fn interpret_dual(
         &self,
         prev: &Self,
         label: &mut Vec<&str>,
-        additional_args: &[String],
+        additional_args: &[&str],
         graph: &mut Graph,
     ) {
         // unpack label for self
@@ -391,9 +405,9 @@ impl<'a> GeometryMeta {
                     vec![&prev_label, &this_label, &next_label],
                     match_type,
                 ));
-                graph.add(retain_node(label_exists(this_label.clone())));
+                graph.add(retain_node(expr::label_exists(this_label.clone())));
 
-                execute_stack(stack, &this_label, "", &size, additional_args, graph);
+                execute_stack(stack, &this_label, &size, additional_args, graph);
             }
             _ => unreachable!(),
         };
