@@ -194,7 +194,6 @@ pub fn validate_composition(
             }),
             _ => Ok(S(ReturnType::Void, fn_span)),
         },
-        // todo: should this take only fixed length segments so to lead ot known ending length?
         CompiledFunction::Pad(..) | CompiledFunction::PadLeft(..) => match return_type {
             ReturnType::Void => Err(Error {
                 span: return_type_span,
@@ -243,6 +242,7 @@ pub fn validate_composition(
         CompiledFunction::FilterWithinDist(..) => match return_type {
             ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
             ReturnType::Ranged => Ok(S(ReturnType::Ranged, fn_span)),
+            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(

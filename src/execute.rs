@@ -75,17 +75,16 @@ fn interpret_to_pipes(
     let stream1 = BufWriter::new(f1);
     let stream2 = BufWriter::new(f2);
 
-    let files = files1
+    let readers = files1
         .iter()
-        .zip(files2.iter())
-        .flat_map(|tup| std::iter::once(tup.0).chain(std::iter::once(tup.1)))
-        .collect::<Vec<_>>();
+        .chain(files2.iter())
+        .map(|f| File::open(f).expect("Failed to open file"));
 
     let additional_args = additional_args.into_iter().collect::<Vec<_>>();
 
     let mut graph = antisequence::graph::Graph::new();
     graph.add(
-        antisequence::graph::InputFastqOp::from_files(files).unwrap_or_else(|e| panic!("{e}")),
+        antisequence::graph::InputFastqOp::from_readers(readers).unwrap_or_else(|e| panic!("{e}")),
     );
 
     compiled_data.interpret(&mut graph, &additional_args);
@@ -207,7 +206,7 @@ pub fn read_pairs_to_fifo<'a: 'static>(
             r2,
             r1_fifo_clone,
             r2_fifo_clone,
-            1,
+            6, // default to 6 threads
             additional_args,
             compiled_data,
         );

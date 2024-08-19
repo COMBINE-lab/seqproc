@@ -1,17 +1,14 @@
 use std::{path::PathBuf, str::FromStr};
 
 use antisequence::{
-    graph::{
-        MatchType::{ExactSearch, HammingSearch, PrefixAln},
-        Threshold::Frac,
-    },
+    graph::MatchType::{ExactSearch, HammingSearch, PrefixAln},
     *,
 };
 use chumsky::chain::Chain;
 use expr::Expr;
 use graph::{
     Graph,
-    MatchType::{Exact, Hamming},
+    MatchType::{Exact, ExactPrefix, Hamming, HammingPrefix},
     SelectOp, Threshold,
 };
 
@@ -294,25 +291,19 @@ impl<'a> GeometryMeta {
         // execute the requisite process here
         match size.clone() {
             IntervalShape::FixedSeq(S(seq, _)) => {
-                let labels;
+                let labels = vec![this_label.as_str(), &next_label];
                 let match_type = if !stack.is_empty() {
                     match stack.last().unwrap() {
                         S(CompiledFunction::Hamming(n), _) => {
-                            labels = vec!["_", &this_label, &next_label];
-                            let dist = Frac(1.0 - (*n as f64 / seq.len() as f64));
-                            HammingSearch(dist)
+                            HammingPrefix(Threshold::Count(seq.len() - n))
                         }
-                        _ => {
-                            labels = vec![&this_label, &next_label];
-                            PrefixAln {
-                                identity: 1.0,
-                                overlap: 1.0,
-                            }
-                        }
+                        _ => PrefixAln {
+                            identity: 1.0,
+                            overlap: 1.0,
+                        },
                     }
                 } else {
-                    labels = vec!["_", &this_label, &next_label];
-                    ExactSearch
+                    ExactPrefix
                 };
 
                 graph.add(match_node(
@@ -390,8 +381,7 @@ impl<'a> GeometryMeta {
                 let match_type = if !stack.is_empty() {
                     match stack.pop().unwrap() {
                         S(CompiledFunction::Hamming(n), _) => {
-                            let dist = Frac(1.0 - (n as f64 / seq.len() as f64));
-                            HammingSearch(dist)
+                            HammingSearch(Threshold::Count(seq.len() - n))
                         }
                         _ => ExactSearch,
                     }
