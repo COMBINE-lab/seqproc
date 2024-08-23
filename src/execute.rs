@@ -36,13 +36,22 @@ pub fn interpret(
     additional_args: Vec<&str>,
     compiled_data: CompiledData,
 ) {
+    let additional_args = additional_args.into_iter().collect::<Vec<_>>();
+
+    if let Some(transformations) = &compiled_data.transformation {
+        if transformations.len() == 2 && (out1.is_empty() || out2.is_empty()) {
+            tracing::error!(
+                "You defined a transformation into two files - you must provide two outputs"
+            );
+            return;
+        }
+    }
+
     let mut graph = antisequence::graph::Graph::new();
     graph.add(
         antisequence::graph::InputFastqOp::from_files([file1, file2])
             .unwrap_or_else(|e| panic!("{e}")),
     );
-
-    let additional_args = additional_args.into_iter().collect::<Vec<_>>();
 
     compiled_data.interpret(&mut graph, &additional_args);
 
@@ -102,23 +111,24 @@ fn interpret_to_pipes(
 pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
     let (tokens, mut errs) = lexer::lexer().parse_recovery(geom);
 
-    let parse_errs = if let Some(tokens) = &tokens {
-        let (ast, parse_errs) = parser().parse_recovery(Stream::from_iter(
+    let parse_errs = if let Some(tokens) = tokens {
+        match parser().parse(Stream::from_iter(
             tokens.len()..tokens.len() + 1,
-            tokens.clone().into_iter(),
-        ));
+            tokens.into_iter(),
+        )) {
+            Err(errs) => errs,
+            Ok(description) => {
+                let res = compile(description.clone());
 
-        if let Some(ast) = &ast {
-            let res = compile(ast.clone());
+                if let Err(e) = res {
+                    errs.push(Simple::custom(e.span, e.msg));
+                } else {
+                    return Ok(res.ok().unwrap());
+                };
 
-            if let Err(e) = res {
-                errs.push(Simple::custom(e.span, e.msg));
-            } else {
-                return Ok(res.ok().unwrap());
+                vec![]
             }
-        };
-
-        parse_errs
+        }
     } else {
         Vec::new()
     };
@@ -128,7 +138,6 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
         .map(|e| e.map(|c| c.to_string()))
         .chain(parse_errs.into_iter().map(|e| e.map(|tok| tok.to_string())))
         .collect::<Vec<_>>();
-
     Err(errors)
 }
 

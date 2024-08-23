@@ -136,7 +136,8 @@ pub fn compile(
     */
 
     if let Some(S(transform, span)) = transforms {
-        let (transformation, map) = compile_transformation(S(transform, span), map)?;
+        let (transformation, map) =
+            compile_transformation(S(transform, span), map, &numbered_labels)?;
 
         let transformation = label_transformation(transformation, &numbered_labels);
 

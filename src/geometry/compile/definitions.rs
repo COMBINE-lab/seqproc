@@ -16,9 +16,8 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
     loop {
         match expr.0 {
             Expr::Function(fn_, gp) => {
-                // parse the function and validate it
                 expr = gp.unboxed();
-                stack.push(compile_fn(fn_, expr.clone())?); // here is where we can compile the functions
+                stack.push(compile_fn(fn_, expr.clone())?);
             }
             Expr::Label(_) => {
                 return Err(Error {
@@ -26,6 +25,14 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
                     msg: "Unexpected label in definition block".to_string(),
                 })
             }
+            Expr::Self_ => return Err(Error {
+                span: expr.1,
+                msg: "Unexpected reference to 'self' in definition. 'self' is reserved for 'map' transformation.".to_string(),
+            }),
+            Expr::LabeledGeomPiece(S(label, span) , _) => return Err(Error {
+                span,
+                msg: format!("Unexpected labeled interval in a defintion block. Remove <{label}>, to make this a valid definition.")
+            }),
             _ => break,
         }
     }

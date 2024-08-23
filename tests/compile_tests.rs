@@ -470,7 +470,7 @@ fn compile_map_arguments() -> Result<(), Error> {
 fn compile_map_arguments_with_label() -> Result<(), Error> {
     let src = "
 brc = b[10-11]    
-1{map(<brc>>, \"file\", norm(self))}2{r<read>:}";
+1{map(<brc>, \"file\", norm(self))}2{r<read>:}";
 
     let (res, _) = lexer().parse_recovery(src);
 

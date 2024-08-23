@@ -22,9 +22,13 @@ pub enum Token {
     LBrace,
     /// `}`.
     RBrace,
+    /// '<'
+    LAngle,
+    /// '>'
+    RAngle,
     /// `,`.
     Comma,
-    /// `<label_text>`.
+    /// `label_text`.
     Label(String),
     /// `"file_path"`.
     File(String),
@@ -94,15 +98,18 @@ pub enum Token {
     C,
     /// Nucleotide `A`.
     A,
-    /// Reserved label beginning - cannot being label with '_'
+    /// Reserved label beginning - cannot begin label with '_'
     Reserved(String),
+    /// End of File token for parser
+    EOF,
 }
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Token::*;
         match self {
-            Reserved(s) => write!(f, "cannot prefix labed with _: {s}"),
+            EOF => write!(f, "EOF"),
+            Reserved(s) => write!(f, "cannot prefix labed with '_': {s}"),
             Num(n) => write!(f, "{n}"),
             LParen => f.write_char('('),
             RParen => f.write_char(')'),
@@ -110,8 +117,10 @@ impl fmt::Display for Token {
             RBracket => f.write_char(']'),
             LBrace => f.write_char('{'),
             RBrace => f.write_char('}'),
+            LAngle => f.write_char('<'),
+            RAngle => f.write_char('>'),
             Comma => f.write_char(','),
-            Label(s) => write!(f, "<{s}>"),
+            Label(s) => write!(f, "{s}"),
             A => f.write_char('A'),
             T => f.write_char('T'),
             G => f.write_char('G'),
@@ -162,18 +171,9 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         just('{').to(Token::LBrace),
         just('}').to(Token::RBrace),
         just(',').to(Token::Comma),
+        just('<').to(Token::LAngle),
+        just('>').to(Token::RAngle),
     ));
-
-    let label = just('<')
-        .ignore_then(text::ident())
-        .then_ignore(just('>'))
-        .map(|s: String| {
-            if s.starts_with('_') {
-                Token::Reserved(s)
-            } else {
-                Token::Label(s)
-            }
-        });
 
     let special = choice((
         just('=').to(Token::Equals),
@@ -237,7 +237,6 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     let token = nucs
         .or(argument)
         .or(ident)
-        .or(label)
         .or(transformto)
         .or(int)
         .or(ctrl)

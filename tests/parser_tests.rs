@@ -499,7 +499,7 @@ fn filter_test_too_many_args() {
     let len = res.len();
 
     let (_, parser_err) = parser().parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()));
-    println!("{:?}", parser_err);
+
     assert!(lex_err.is_empty());
     assert_eq!(1, parser_err.len());
 }

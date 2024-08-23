@@ -16,8 +16,16 @@ use crate::{
 pub fn compile_transformation(
     S(reads, span): S<Vec<S<Read>>>,
     mut map: HashMap<String, GeometryMeta>,
+    read_intervals: &[(Interval, usize)],
 ) -> Result<(Transformation, HashMap<String, GeometryMeta>), Error> {
     let mut transformation: Transformation = Vec::new();
+    let read_labels = read_intervals
+        .iter()
+        .filter_map(|(i, _)| match i {
+            Interval::Named(n) => Some(n),
+            Interval::Temporary(_) => None,
+        })
+        .collect::<Vec<_>>();
 
     for S(Read { exprs, .. }, _) in reads {
         let mut inner_transformation: Vec<String> = Vec::new();
@@ -29,6 +37,8 @@ pub fn compile_transformation(
             let label: Option<S<String>>;
 
             'inner: loop {
+                let generic_transformation_msg =
+                    "Only labels and transformed labels can be referenced in transformations";
                 match expr.0 {
                     Expr::Function(fn_, gp) => {
                         expr = gp.unboxed();
@@ -38,7 +48,14 @@ pub fn compile_transformation(
                         label = Some(l.clone());
                         break 'inner;
                     }
-                    _ => unimplemented!(),
+                    Expr::LabeledGeomPiece(_, _) | Expr::GeomPiece(_, _) => return Err(Error {
+                        span: expr.1,
+                        msg: format!("{} - Cannot construct intervals in a transformation", generic_transformation_msg)
+                    }),
+                    Expr::Self_ => return Err(Error {
+                        span: expr.1,
+                        msg: format!("{} - Misplaced reference of 'self', this is a reserved token for the 'map' function.", generic_transformation_msg),
+                    })
                 }
             }
 
@@ -57,8 +74,24 @@ pub fn compile_transformation(
                 });
             };
 
+            if !read_labels.contains(&&label) {
+                return Err(Error {
+                    span: label_span,
+                    msg: format!("Cannot transform a non-matched label: variable with name \"{label}\" was defined but never matched in read.")
+                });
+            }
+
             for fn_ in stack {
                 compiled_stack.push(compile_fn(fn_, expr.clone())?);
+            }
+
+            for fn_ in &gp.stack {
+                if let S(CompiledFunction::Remove, span) = fn_ {
+                    return Err(Error {
+                        span: span.clone(),
+                        msg: "Cannot reference a void interval after '->' - if you want to keep this interval then remove the 'remove' transformation.".to_string()
+                    });
+                }
             }
 
             let gp = GeometryMeta {

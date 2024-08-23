@@ -74,6 +74,8 @@ fn main() {
             additional_args,
             geom,
         ),
-        Err(e) => handle_errors(e, geom),
+        Err(e) => {
+            handle_errors(e, geom);
+        }
     }
 }
