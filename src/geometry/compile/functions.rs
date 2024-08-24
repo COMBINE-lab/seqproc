@@ -89,13 +89,16 @@ pub fn compile_fn(
     Ok(S(comp_fn, span))
 }
 
+/// expr: transformed interval with reference to 'self'
+/// parent_expr: outside interval which will acted on first
 fn compile_inner_expr(
     mut expr: S<Expr>,
     parent_expr: S<Expr>,
 ) -> Result<Vec<S<CompiledFunction>>, Error> {
     // if we are here in a map then the expr passed into the expr should be a geom_piece or labeled geom_piece
     // either way we can extract the size and type of it
-    let mut stack: Vec<S<CompiledFunction>> = Vec::new();
+    let mut self_stack: Vec<S<CompiledFunction>> = Vec::new();
+    let mut inner_stack: Vec<S<CompiledFunction>> = Vec::new();
 
     loop {
         match expr.0 {
@@ -104,7 +107,7 @@ fn compile_inner_expr(
                 expr = inner_expr.unboxed();
                 let inner_fn = compile_fn(inner_fn.clone(), expr.clone());
                 if inner_fn.is_ok() {
-                    stack.push(inner_fn.ok().unwrap());
+                    self_stack.push(inner_fn.ok().unwrap());
                 } else {
                     return Err(Error {
                         span: expr.1,
@@ -122,16 +125,31 @@ fn compile_inner_expr(
     }
 
     let geom_piece = {
-        let S(mut expr, span) = parent_expr;
+        let S(mut expr, mut span) = parent_expr;
         loop {
             match expr {
+                Expr::Function(fn_, fn_expr) => {
+                    expr = fn_expr.unboxed().0;
+                    span = fn_.1.clone();
+                    let compiled_fn = compile_fn(fn_.clone(), S(expr.clone(), span.clone()));
+                    if compiled_fn.is_ok() {
+                        inner_stack.push(compiled_fn.ok().unwrap());
+                    } else {
+                        return Err(Error {
+                            span,
+                            msg: "Invalid function composition".to_string(),
+                        });
+                    }
+                }
                 Expr::LabeledGeomPiece(_, b) => {
                     let S(gp, _) = b.unboxed();
                     expr = gp.clone();
                 }
                 Expr::GeomPiece(_, _) => break,
-                Expr::Label(_) => todo!(),
-                _ => todo!(), // throw error
+                _ => return Err(Error {
+                    span,
+                    msg: "Something internal went wrong -- please post EFGDL specification on Github issues".to_string(),
+                })
             };
         }
 
@@ -149,13 +167,15 @@ fn compile_inner_expr(
         }
     };
 
-    // check this and return result from this function
-    let gm = GeometryMeta {
+    GeometryMeta {
         expr: S(geom_piece, expr.1),
-        stack,
-    };
+        stack: self_stack
+            .clone()
+            .into_iter()
+            .chain(inner_stack.into_iter())
+            .collect::<Vec<_>>(),
+    }
+    .validate_expr()?;
 
-    gm.validate_expr()?;
-
-    Ok(gm.stack)
+    Ok(self_stack)
 }

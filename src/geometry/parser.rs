@@ -586,7 +586,7 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
             just(Token::Map)
                 .map_with_span(|_, span| span)
                 .then(
-                    geom_piece
+                    transformed_pieces
                         .clone()
                         .then_ignore(just(Token::Comma))
                         .map_err_with_span(|t, span| throw(t, comma(span)))
@@ -609,7 +609,7 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
             just(Token::MapWithMismatch)
                 .map_with_span(|_, span| span)
                 .then(
-                    geom_piece
+                    transformed_pieces
                         .clone()
                         .then_ignore(just(Token::Comma))
                         .map_err_with_span(|t, span| throw(t, comma(span)))

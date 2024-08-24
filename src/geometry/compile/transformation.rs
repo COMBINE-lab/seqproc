@@ -94,6 +94,15 @@ pub fn compile_transformation(
                 }
             }
 
+            // if label is removed just remove the label from the transformation
+            if let Some(S(fn_, _)) = compiled_stack.first() {
+                if &CompiledFunction::Remove != fn_ {
+                    inner_transformation.push(label.clone());
+                };
+            } else {
+                inner_transformation.push(label.clone());
+            }
+
             let gp = GeometryMeta {
                 expr: gp.expr.clone(),
                 stack: compiled_stack
@@ -105,9 +114,7 @@ pub fn compile_transformation(
 
             gp.validate_expr()?;
 
-            map.insert(label.clone(), gp);
-
-            inner_transformation.push(label);
+            map.insert(label, gp);
         }
 
         transformation.push(inner_transformation);
