@@ -1,4 +1,9 @@
-use std::{fs::File, io::BufWriter, path::PathBuf, thread};
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::{Path, PathBuf},
+    thread,
+};
 
 use antisequence::graph::*;
 use anyhow::{bail, Result};
@@ -28,10 +33,10 @@ pub struct SeqprocStats {
 }
 
 pub fn interpret(
-    file1: &str,
-    file2: &str,
-    out1: &str,
-    out2: &str,
+    file1: &Path,
+    file2: &Path,
+    out1: &Path,
+    out2: &Path,
     threads: usize,
     additional_args: Vec<&str>,
     compiled_data: CompiledData,
@@ -39,7 +44,9 @@ pub fn interpret(
     let additional_args = additional_args.into_iter().collect::<Vec<_>>();
 
     if let Some(transformations) = &compiled_data.transformation {
-        if transformations.len() == 2 && (out1.is_empty() || out2.is_empty()) {
+        if transformations.len() == 2
+            && (out1.as_os_str().is_empty() || out2.as_os_str().is_empty())
+        {
             tracing::error!(
                 "You defined a transformation into two files - you must provide two outputs"
             );
@@ -48,22 +55,31 @@ pub fn interpret(
     }
 
     let mut graph = antisequence::graph::Graph::new();
+    let file1_str = file1.to_str().unwrap_or("");
+    let file2_str = file2.to_str().unwrap_or("");
     graph.add(
-        antisequence::graph::InputFastqOp::from_files([file1, file2])
+        antisequence::graph::InputFastqOp::from_files([file1_str, file2_str])
             .unwrap_or_else(|e| panic!("{e}")),
     );
 
     compiled_data.interpret(&mut graph, &additional_args);
 
-    if out1.is_empty() && out2.is_empty() {
-        graph.add(OutputFastqFileOp::from_file("/dev/null"));
-    } else if out2.is_empty() {
-        graph.add(OutputFastqFileOp::from_file(out1.to_owned()));
-    } else {
-        graph.add(OutputFastqFileOp::from_files([
-            out1.to_owned(),
-            out2.to_owned(),
-        ]));
+    let out1_str = out1.to_str().unwrap_or("");
+    let out2_str = out2.to_str().unwrap_or("");
+
+    match (out1_str, out2_str) {
+        ("", "") => {
+            graph.add(OutputFastqFileOp::from_file("/dev/null"));
+        }
+        (out1_str, "") => {
+            graph.add(OutputFastqFileOp::from_file(out1_str.to_owned()));
+        }
+        (out1_str, out2_str) => {
+            graph.add(OutputFastqFileOp::from_files([
+                out1_str.to_owned(),
+                out2_str.to_owned(),
+            ]));
+        }
     }
 
     graph.run_with_threads(threads);
@@ -143,10 +159,10 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
 
 pub fn read_pairs_to_file(
     compiled_data: CompiledData,
-    in1: &str,
-    in2: &str,
-    out1: &str,
-    out2: &str,
+    in1: &Path,
+    in2: &Path,
+    out1: &Path,
+    out2: &Path,
     threads: usize,
     additional_args: Vec<&str>,
 ) -> Result<SeqprocStats> {

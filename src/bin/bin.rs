@@ -1,5 +1,6 @@
 use clap::arg;
 use std::io;
+use std::path::PathBuf;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use seqproc::{
@@ -10,28 +11,28 @@ use seqproc::{
 /// General puprose sequence preprocessor
 #[derive(Debug, clap::Parser)]
 pub struct Args {
-    /// FGDL string
+    /// Path to a file containing the EFGDL specification
     #[arg(short, long)]
-    geom: String,
+    geom: PathBuf,
 
     /// r1 fastq file
     #[arg(short = '1', long)]
-    file1: String,
+    file1: PathBuf,
 
     /// r2 fastq file
     #[arg(short = '2', long)]
-    file2: String,
+    file2: PathBuf,
 
     /// r1 out fastq file
     #[arg(short = 'o', long, default_value = "")]
-    out1: String,
+    out1: PathBuf,
 
     /// r2 out fastq file
     #[arg(short = 'w', long, default_value = "")]
-    out2: String,
+    out2: PathBuf,
 
     /// number of threads to use
-    #[arg(short, long, default_value = "1")]
+    #[arg(short, long, default_value_t = 1)]
     threads: usize,
 
     #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
