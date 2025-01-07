@@ -1,8 +1,10 @@
 use antisequence::{iter_fastq2, Reads};
+use anyhow::Context;
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::{prelude::*, Stream};
 use clap::arg;
 use std::io;
+use std::path::PathBuf;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use seqproc::{
@@ -11,12 +13,14 @@ use seqproc::{
     parser::parser,
 };
 
-/// General puprose sequence preprocessor
+/// seqproc, a general puprose sequence preprocessor
 #[derive(Debug, clap::Parser)]
+#[command(about, author, version)]
+#[command(arg_required_else_help = true)]
 pub struct Args {
-    /// FGDL string
+    /// Path to FGDL file
     #[arg(short, long)]
-    geom: String,
+    geom: PathBuf,
 
     /// r1 fastq file
     #[arg(short = '1', long)]
@@ -62,7 +66,7 @@ pub fn interpret(args: Args, compiled_data: &CompiledData) {
     read.run_with_threads(threads);
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     // set up the logging. Here we will take the
     // logging level from the environment variable if
     // it is set. Otherwise we will set the default
@@ -78,7 +82,8 @@ fn main() {
 
     let args: Args = <Args as clap::Parser>::parse();
 
-    let geom = std::fs::read_to_string(&args.geom).unwrap();
+    let geom = std::fs::read_to_string(&args.geom)
+        .with_context(|| format!("failed to open EGDFL file {}", &args.geom.display()))?;
 
     let (tokens, mut errs) = lexer::lexer().parse_recovery(&*geom);
 
@@ -173,4 +178,5 @@ fn main() {
 
             report.finish().print(Source::from(&geom)).unwrap();
         });
+    Ok(())
 }
