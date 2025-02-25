@@ -1,8 +1,5 @@
 use std::{
-    fs::File,
-    io::BufWriter,
-    path::{Path, PathBuf},
-    thread,
+    fs::File, io::BufWriter, panic, path::{Path, PathBuf}, thread
 };
 
 use antisequence::graph::*;

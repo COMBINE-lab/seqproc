@@ -1,7 +1,9 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, str::FromStr, usize};
 
 use antisequence::{
-    graph::MatchType::{ExactSearch, HammingSearch, PrefixAln},
+    graph::MatchType::{
+        self, ExactBoundedMatch, ExactSearch, HammingBoundedMatch, HammingSearch, PrefixAln,
+    },
     *,
 };
 use chumsky::chain::Chain;
@@ -90,17 +92,43 @@ fn interpret_geometry(
 
     let mut label: Vec<&str> = vec![init_label];
 
+    // keep a running length that we have parsed to far
+    // TODO: this may need to be tested more
+    let mut min_start_idx = 0;
+
     while let Some(gp) = geometry_iter.next() {
-        let (_, size, _, _) = gp.unpack();
+        let (interval_type, size, _, _) = gp.unpack();
 
         match size {
-            IntervalShape::FixedSeq(_) | IntervalShape::FixedLen(_) => {
+            IntervalShape::FixedSeq(S(v, _)) => {
+                match interval_type {
+                    IntervalKind::Discard => (),
+                    _ => min_start_idx += v.len(),
+                }
                 gp.interpret(&label, additional_args, graph);
             }
-            IntervalShape::RangedLen(_) | IntervalShape::UnboundedLen => {
+            IntervalShape::FixedLen(S(len, _)) => {
+                match interval_type {
+                    IntervalKind::Discard => (),
+                    _ => min_start_idx += len,
+                }
+                gp.interpret(&label, additional_args, graph);
+            }
+            // in the case of a ranged length we add the minimum of the range to the min_idx
+            // then match within the bounds of the ranged len
+            IntervalShape::RangedLen(S((from, _), _)) => {
+                min_start_idx += from;
                 // by rules of geometry this should either be None or a sequence
                 if let Some(next) = geometry_iter.next() {
-                    next.interpret_dual(gp, &mut label, additional_args, graph);
+                    next.interpret_dual(gp, &mut label, additional_args, graph, &mut min_start_idx);
+                } else {
+                    gp.interpret(&label, additional_args, graph);
+                }
+            }
+            IntervalShape::UnboundedLen => {
+                // by rules of geometry this should either be None or a sequence
+                if let Some(next) = geometry_iter.next() {
+                    next.interpret_dual(gp, &mut label, additional_args, graph, &mut min_start_idx);
                 } else {
                     gp.interpret(&label, additional_args, graph);
                 }
@@ -349,11 +377,18 @@ impl<'a> GeometryMeta {
         label: &mut Vec<&str>,
         additional_args: &[&str],
         graph: &mut Graph,
+        range_start: &mut usize,
     ) {
         // unpack label for self
         let (_, size, this_label, mut stack) = self.unpack();
-        let (_, _, prev_label, _) = prev.unpack();
+        let (_, prev_shape, prev_label, _) = prev.unpack();
         // execute the processing for next
+
+        // if it is an unbounded beginning then we should do search
+        let prev_len_offset = match prev_shape {
+            IntervalShape::RangedLen(S((start, end), _)) => Some(end - start),
+            _ => None,
+        };
 
         let (init_label, cur_label) = labels(label);
         let seq_name = label.first().unwrap();
@@ -376,18 +411,10 @@ impl<'a> GeometryMeta {
 
         match size.clone() {
             IntervalShape::FixedSeq(S(seq, _)) => {
+                let seq_len = seq.len();
                 // check if the first function on the stack is a hamming search
                 // else do an exact match
-                let match_type = if !stack.is_empty() {
-                    match stack.pop().unwrap() {
-                        S(CompiledFunction::Hamming(n), _) => {
-                            HammingSearch(Threshold::Count(seq.len() - n))
-                        }
-                        _ => ExactSearch,
-                    }
-                } else {
-                    ExactSearch
-                };
+                let match_type = get_match_type(prev_len_offset, &mut stack, seq_len, range_start);
 
                 graph.add(match_node(
                     Patterns::from_strs([Nucleotide::as_str(&seq)]),
@@ -398,6 +425,10 @@ impl<'a> GeometryMeta {
                 graph.add(retain_node(expr::label_exists(this_label.clone())));
 
                 execute_stack(stack, &this_label, &size, additional_args, graph);
+
+                // update range_start
+                // TODO: this needs to be tested for unbounded beginning segments
+                *range_start += prev_len_offset.unwrap_or(0) + seq_len;
             }
             _ => unreachable!(),
         };
@@ -405,5 +436,47 @@ impl<'a> GeometryMeta {
         // call interpret for self
         // this is just an unbounded or ranged segment. No cut just set or validate
         prev.interpret_no_cut(&left_label, additional_args, graph);
+    }
+}
+
+fn get_match_type(
+    offset_len: Option<usize>,
+    stack: &mut Vec<S<CompiledFunction>>,
+    seq_len: usize,
+    range_start: &mut usize,
+) -> MatchType {
+    match offset_len {
+        Some(offset) => {
+            if !stack.is_empty() {
+                match stack.pop().unwrap() {
+                    S(CompiledFunction::Hamming(n), _) => HammingBoundedMatch {
+                        threshold: Threshold::Count(seq_len - n),
+                        from: *range_start,
+                        to: *range_start + seq_len + offset,
+                    },
+                    _ => ExactBoundedMatch {
+                        from: *range_start,
+                        to: *range_start + seq_len + offset,
+                    },
+                }
+            } else {
+                ExactBoundedMatch {
+                    from: *range_start,
+                    to: *range_start + seq_len + offset,
+                }
+            }
+        }
+        None => {
+            if !stack.is_empty() {
+                match stack.pop().unwrap() {
+                    S(CompiledFunction::Hamming(n), _) => {
+                        HammingSearch(Threshold::Count(seq_len - n))
+                    }
+                    _ => ExactSearch,
+                }
+            } else {
+                ExactSearch
+            }
+        }
     }
 }

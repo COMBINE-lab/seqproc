@@ -24,12 +24,12 @@ pub struct Args {
     file2: PathBuf,
 
     /// r1 out fastq file
-    #[arg(short = 'o', long, default_value = "")]
-    out1: PathBuf,
+    #[arg(short = 'o', long)]
+    out1: Option<PathBuf>,
 
     /// r2 out fastq file
-    #[arg(short = 'w', long, default_value = "")]
-    out2: PathBuf,
+    #[arg(short = 'w', long)]
+    out2: Option<PathBuf>,
 
     /// number of threads to use
     #[arg(short, long, default_value_t = 1)]
@@ -65,12 +65,19 @@ fn main() {
         .map(|a| a.as_str())
         .collect::<Vec<_>>();
 
+    let (out1, out2) = match (args.out1, args.out2) {
+        (Some(o1), Some(o2)) => (o1, o2),
+        (Some(o1), None) => (o1, PathBuf::new()),
+        (None, Some(o2)) => (PathBuf::new(), o2),
+        (_, _) => (PathBuf::new(), PathBuf::new()),
+    };
+
     match compiled_efgdl {
         Ok(geom) => interpret(
             &args.file1,
             &args.file2,
-            &args.out1,
-            &args.out2,
+            &out1,
+            &out2,
             args.threads,
             additional_args,
             geom,
