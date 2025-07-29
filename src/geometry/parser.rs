@@ -199,7 +199,8 @@ pub struct Description {
     pub transforms: Option<S<Vec<S<Read>>>>,
 }
 
-pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clone {
+pub fn parser<'src>(
+) -> impl Parser<'src, &'src [Token], Description, extra::Err<Rich<'src, Token>>> + Clone {
     /*
        Start with creating combinators and
        a recursive definition of a geom_piece
@@ -234,41 +235,43 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
     };
 
     let inline_label = label
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(
+                Rich::custom(
                     span,
                     "Found delimiters '<' and '>' which must delimit a label.",
                 ),
             )
         })
         .delimited_by(just(Token::LAngle), just(Token::RAngle))
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(t, missing_delimiter(Token::RAngle, span, Some("label")))
         })
-        .map_with_span(|l, span| Expr::Label(S(l, span)))
+        .map_with(|l, extra| Expr::Label(S(l, extra.span())))
         .labelled("label");
 
-    let label = label.map_with_span(S).labelled("label");
+    let label = label
+        .map_with(|s, state| S(s, state.span()))
+        .labelled("label");
 
     let self_ = just(Token::Self_).to(Expr::Self_).labelled("self");
 
     let range = num
         .then_ignore(just(Token::Dash))
         .then(num)
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(
+                Rich::custom(
                     span,
                     "Expected a numerical literal after '-' for a ranged length interval.",
                 ),
             )
         })
-        .map_with_span(|(a, b), span| IntervalShape::RangedLen(S((a, b), span)))
+        .map_with(|(a, b), state| IntervalShape::RangedLen(S((a, b), state.span())))
         .delimited_by(just(Token::LBracket), just(Token::RBracket))
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
                 missing_delimiter(Token::RBracket, span, Some("variable length interval")),
@@ -276,18 +279,18 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
         });
 
     let fixed_len = num
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(
+                Rich::custom(
                     span,
                     "Expecting a length specifier '[<num>-<num>]', or '[<num>]'.",
                 ),
             )
         })
-        .map_with_span(|n, span| IntervalShape::FixedLen(S(n, span)))
+        .map_with(|n, state| IntervalShape::FixedLen(S(n, state.span())))
         .delimited_by(just(Token::LBracket), just(Token::RBracket))
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
                 missing_delimiter(Token::LBracket, span, Some("fixed length interval")),
@@ -298,18 +301,18 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
     let seq = nuc
         .repeated()
         .at_least(1)
-        .map_err_with_span(|t, span| {
+        .collect::<Vec<_>>()
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "A fragment must contain at least one ATGCU character"),
+                Rich::custom(span, "A fragment must contain at least one ATGCU character"),
             )
-        })
-        .collect::<Vec<_>>();
+        });
 
     let nucstr = seq
-        .map_with_span(|nucstr, span| IntervalShape::FixedSeq(S(nucstr, span)))
+        .map_with(|nucstr, state| IntervalShape::FixedSeq(S(nucstr, state.span())))
         .delimited_by(just(Token::LBracket), just(Token::RBracket))
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
                 missing_delimiter(Token::LBracket, span, Some("fragment specifier")),
@@ -318,18 +321,18 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
         .labelled("nucstr");
 
     let unbounded = piece_type
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "Specify interval with either 'b'/'u'/'f'/'r'/'x'."),
+                Rich::custom(span, "Specify interval with either 'b'/'u'/'f'/'r'/'x'."),
             )
         })
         .then(inline_label.clone().or_not())
         .then_ignore(just(Token::Colon))
-        .map_with_span(|(type_, label), span| {
+        .map_with(|(type_, label), state| {
             let expr = Expr::GeomPiece(type_, IntervalShape::UnboundedLen);
             if let Some(Expr::Label(label)) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
+                Expr::LabeledGeomPiece(label, S(Box::new(expr), state.span()))
             } else {
                 expr
             }
@@ -337,27 +340,27 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
         .labelled("unbound_seg");
 
     let ranged = piece_type
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "Specify interval with either 'b'/'u'/'f'/'r'/'x'."),
+                Rich::custom(span, "Specify interval with either 'b'/'u'/'f'/'r'/'x'."),
             )
         })
         .then(inline_label.clone().or_not())
         .then(range)
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(
+                Rich::custom(
                     span,
                     "Expecting a length specifier either ':', '[<num>-<num>]', or '[<num>]'.",
                 ),
             )
         })
-        .map_with_span(|((type_, label), range), span| {
+        .map_with(|((type_, label), range), state| {
             let expr = Expr::GeomPiece(type_, range);
             if let Some(Expr::Label(label)) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
+                Expr::LabeledGeomPiece(label, S(Box::new(expr), state.span()))
             } else {
                 expr
             }
@@ -365,27 +368,27 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
         .labelled("ranged_len_seg");
 
     let fixed = piece_type
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "Specify interval with either 'b'/'u'/'f'/'r'/'x'."),
+                Rich::custom(span, "Specify interval with either 'b'/'u'/'f'/'r'/'x'."),
             )
         })
         .then(inline_label.clone().or_not())
         .then(fixed_len)
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(
+                Rich::custom(
                     span,
                     "Expecting a length specifier either ':', '[<num>-<num>]', or '[<num>]'.",
                 ),
             )
         })
-        .map_with_span(|((type_, label), len), span| {
+        .map_with(|((type_, label), len), state| {
             let expr = Expr::GeomPiece(type_, len);
             if let Some(Expr::Label(label)) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
+                Expr::LabeledGeomPiece(label, S(Box::new(expr), state.span()))
             } else {
                 expr
             }
@@ -396,16 +399,16 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
         .to(IntervalKind::FixedSeq)
         .then(inline_label.clone().or_not())
         .then(nucstr)
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "Expecting a sequence to match delimited by '[ .. ]'."),
+                Rich::custom(span, "Expecting a sequence to match delimited by '[ .. ]'."),
             )
         })
-        .map_with_span(|((type_, label), nucs), span| {
+        .map_with(|((type_, label), nucs), state| {
             let expr = Expr::GeomPiece(type_, nucs);
             if let Some(Expr::Label(label)) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
+                Expr::LabeledGeomPiece(label, S(Box::new(expr), state.span()))
             } else {
                 expr
             }
@@ -424,69 +427,69 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
 
     let transformed_pieces = recursive(|transformed_pieces| {
         let transformed_pieces = transformed_pieces
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Invalid declaration of interval")));
+            .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Invalid declaration of interval")));
 
         let recursive_num_arg = transformed_pieces
             .clone()
             .then_ignore(just(Token::Comma))
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a ',' to separate arguments.")))
+            .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a ',' to separate arguments.")))
             .then(num)
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as a second argument.")))
-            .map_with_span(S)
+            .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a numerical literal as a second argument.")))
+            .map_with(|s, state| S(s, state.span()))
             .delimited_by(just(Token::LParen), just(Token::RParen))
-            .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, None)));
+            .map_err_with_state(|t, span, _| throw(t, missing_delimiter(Token::LParen, span, None)));
 
         let recursive_num_nuc_args = transformed_pieces
             .clone()
             .then_ignore(just(Token::Comma))
-            .map_err_with_span(|t, span| throw(t, comma(span)))
+            .map_err_with_state(|t, span, _| throw(t, comma(span)))
             .then(num)
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as a second argument.")))
+            .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a numerical literal as a second argument.")))
             .then_ignore(just(Token::Comma))
-            .map_err_with_span(|t, span| throw(t, comma(span)))
+            .map_err_with_state(|t, span, _| throw(t, comma(span)))
             .then(nuc)
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected an ATGCU literal as a third argument.")))
-            .map_with_span(S)
+            .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected an ATGCU literal as a third argument.")))
+        .map_with(|s, state| S(s, state.span()))
             .delimited_by(just(Token::LParen), just(Token::RParen))
-            .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, None)));
+            .map_err_with_state(|t, span, _| throw(t, missing_delimiter(Token::LParen, span, None)));
 
         let recursive_no_arg = transformed_pieces
             .clone()
-            .map_with_span(S)
+        .map_with(|s, state| S(s, state.span()))
             .delimited_by(just(Token::LParen), just(Token::RParen))
-            .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, None)));
+            .map_err_with_state(|t, span, _| throw(t, missing_delimiter(Token::LParen, span, None)));
 
         choice((
             geom_piece.clone()
-                .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Unexpected error when creating an interval."))),
+                .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Unexpected error when creating an interval."))),
             just(Token::Remove)
-                .map_with_span(|_, span| S(Function::Remove, span))
+                .map_with(|_, state| S(Function::Remove, state.span()))
                 .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("remove"),
             just(Token::Normalize)
-                .map_with_span(|_, span| S(Function::Normalize, span))
+                .map_with(|_, state| S(Function::Normalize, state.span()))
                 .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("norm"),
             just(Token::Hamming)
-                .map_with_span(|_, span| span)
+                .map_with(|_, state| state.span())
                 .then(
                     geom_piece
                         .clone()
-                        .map_err_with_span(|t, span| {
-                            throw(t, Simple::custom(span, "Expected a fragment specified interval as the first argument - 'hamming' cannot take a transformed interval."))
+                        .map_err_with_state(|t, span, _| {
+                            throw(t, Rich::custom(span, "Expected a fragment specified interval as the first argument - 'hamming' cannot take a transformed interval."))
                         })
                         .then_ignore(just(Token::Comma))
-                        .then(num).map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numeric literal as a second argument.")))
-                        .map_with_span(S)
+                        .then(num).map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a numeric literal as a second argument.")))
                         .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'hamming'")))),
+                        .map_with(|s, state| S(s, state.span()))
+                        .map_err_with_state(|t, span, _| throw(t, missing_delimiter(Token::LParen, span, Some("'hamming'")))),
                 )
-                .map_err_with_span(|t, span| {
-                    throw(t, Simple::custom(span, "Missing argument for hamming - "))
+                .map_err_with_state(|t, span, _| {
+                    throw(t, Rich::custom(span, "Missing argument for hamming - "))
                 })
-                .map(|(fn_span, S((geom_p, num), span))| {
+                .map_with(|(fn_span, S((geom_p, num), span)), _| {
                     Expr::Function(
                         S(Function::Hamming(num), fn_span),
                         S(Box::new(geom_p), span),
@@ -494,9 +497,9 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("hamming"),
             just(Token::Truncate)
-                .map_with_span(|_, span| span)
+                .map_with(|_, state| state.span())
                 .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
+                .map_with(|(fn_span, S((geom_p, num), span)), _| {
                     Expr::Function(
                         S(Function::Truncate(num), fn_span),
                         S(Box::new(geom_p), span),
@@ -504,9 +507,9 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("trunc"),
             just(Token::TruncateLeft)
-                .map_with_span(|_, span| span)
+                .map_with(|_, state| state.span())
                 .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
+                .map_with(|(fn_span, S((geom_p, num), span)), _| {
                     Expr::Function(
                         S(Function::TruncateLeft(num), fn_span),
                         S(Box::new(geom_p), span),
@@ -514,9 +517,9 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("trunc_left"),
             just(Token::TruncateTo)
-                .map_with_span(|_, span| span)
+                .map_with(|_, state| state.span())
                 .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
+                .map_with(|(fn_span, S((geom_p, num), span)), _| {
                     Expr::Function(
                         S(Function::TruncateTo(num), fn_span),
                         S(Box::new(geom_p), span),
@@ -524,9 +527,9 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("trunc_to"),
             just(Token::TruncateToLeft)
-                .map_with_span(|_, span| span)
+             .map_with(|_, state| state.span())
                 .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
+                .map_with(|(fn_span, S((geom_p, num), span)), _| {
                     Expr::Function(
                         S(Function::TruncateToLeft(num), fn_span),
                         S(Box::new(geom_p), span),
@@ -534,9 +537,9 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("trunc_to_left"),
             just(Token::Pad)
-                .map_with_span(|_, span| span)
+           .map_with(|_, state| state.span())
                 .then(recursive_num_nuc_args.clone())
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
+                .map_with(|(fn_span, S(((geom_p, num), nuc), span)), _| {
                     Expr::Function(
                         S(Function::Pad(num, nuc), fn_span),
                         S(Box::new(geom_p), span),
@@ -544,9 +547,9 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("pad"),
             just(Token::PadLeft)
-                .map_with_span(|_, span| span)
+        .map_with(|_, state| state.span())
                 .then(recursive_num_nuc_args.clone())
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
+                .map_with(|(fn_span, S(((geom_p, num), nuc), span)), _| {
                     Expr::Function(
                         S(Function::PadLeft(num, nuc), fn_span),
                         S(Box::new(geom_p), span),
@@ -554,9 +557,9 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("pad_left"),
             just(Token::PadTo)
-                .map_with_span(|_, span| span)
+        .map_with(|_, state| state.span())
                 .then(recursive_num_nuc_args.clone())
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
+                .map_with(|(fn_span, S(((geom_p, num), nuc), span)), _| {
                     Expr::Function(
                         S(Function::PadTo(num, nuc), fn_span),
                         S(Box::new(geom_p), span),
@@ -564,9 +567,9 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("pad_to"),
             just(Token::PadToLeft)
-                .map_with_span(|_, span| span)
+         .map_with(|_, state| state.span())
                 .then(recursive_num_nuc_args)
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
+                .map_with(|(fn_span, S(((geom_p, num), nuc), span)), _| {
                     Expr::Function(
                         S(Function::PadToLeft(num, nuc), fn_span),
                         S(Box::new(geom_p), span),
@@ -574,32 +577,32 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("pad_to_left"),
             just(Token::Reverse)
-                .map_with_span(|_, span| S(Function::Reverse, span))
+                .map_with(|_, state| S(Function::Reverse, state.span()))
                 .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("rev"),
             just(Token::ReverseComp)
-                .map_with_span(|_, span| S(Function::ReverseComp, span))
+                .map_with(|_, state| S(Function::ReverseComp, state.span()))
                 .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("revcomp"),
             just(Token::Map)
-                .map_with_span(|_, span| span)
+                .map_with(|_, state| state.span())
                 .then(
                     transformed_pieces
                         .clone()
                         .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .map_err_with_state(|t, span, _| throw(t, comma(span)))
                         .then(file.or(argument))
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
+                        .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
                         .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(transformed_pieces.clone().map_with_span(S))
-                        .map_with_span(S)
+                        .map_err_with_state(|t, span, _| throw(t, comma(span)))
+                        .then(transformed_pieces.clone().map_with(|s, state| S(s, state.span())))
+                                 .map_with(|s, state| S(s, state.span()))
                         .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'map'")))),
+                        .map_err_with_state(|t, span, _| throw(t, missing_delimiter(Token::LParen, span, Some("'map'")))),
                 )
-                .map(|(fn_span, S(((geom_p, path), self_expr), span))| {
+                .map_with(|(fn_span, S(((geom_p, path), self_expr), span)), _| {
                     Expr::Function(
                         S(Function::Map(path, self_expr.boxed()), fn_span),
                         S(Box::new(geom_p), span),
@@ -607,26 +610,26 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("map"),
             just(Token::MapWithMismatch)
-                .map_with_span(|_, span| span)
+                .map_with(|_, state| state.span())
                 .then(
                     transformed_pieces
                         .clone()
                         .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .map_err_with_state(|t, span, _| throw(t, comma(span)))
                         .then(file.or(argument))
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
+                        .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
                         .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(transformed_pieces.clone().map_with_span(S))
+                        .map_err_with_state(|t, span, _| throw(t, comma(span)))
+                        .then(transformed_pieces.clone().map_with(|s, state| S(s, state.span())))
                         .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .map_err_with_state(|t, span, _| throw(t, comma(span)))
                         .then(num)
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as the allowable mismatch when mapping interval.")))
-                        .map_with_span(S)
+                        .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a numerical literal as the allowable mismatch when mapping interval.")))
+                                 .map_with(|s, state| S(s, state.span()))
                         .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'map_with_mismatch'")))),
+                        .map_err_with_state(|t, span, _| throw(t, missing_delimiter(Token::LParen, span, Some("'map_with_mismatch'")))),
                 )
-                .map(|(fn_span, S((((geom_p, path), self_expr), num), span))| {
+                .map_with(|(fn_span, S((((geom_p, path), self_expr), num), span)), _| {
                     Expr::Function(
                         S(
                             Function::MapWithMismatch(path, self_expr.boxed(), num),
@@ -637,22 +640,22 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("map_dist"),
             just(Token::FilterWithinDist)
-                .map_with_span(|_, span| span)
+                .map_with(|_, state| state.span())
                 .then(
                     geom_piece
                         .clone()
                         .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .map_err_with_state(|t, span, _| throw(t, comma(span)))
                         .then(file.or(argument))
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
+                        .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
                         .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .map_err_with_state(|t, span, _| throw(t, comma(span)))
                         .then(num)
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as the allowable mismatch when filtering interval.")))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen)).map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("filter_with_mismatch")))),
+                        .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a numerical literal as the allowable mismatch when filtering interval.")))
+                                 .map_with(|s, state| S(s, state.span()))
+                        .delimited_by(just(Token::LParen), just(Token::RParen)).map_err_with_state(|t, span, _| throw(t, missing_delimiter(Token::LParen, span, Some("filter_with_mismatch")))),
                 )
-                .map(|(fn_span, S(((geom_p, path), num), span))| {
+                .map_with(|(fn_span, S(((geom_p, path), num), span)), _| {
                     Expr::Function(
                         S(Function::FilterWithinDist(path, num), fn_span),
                         S(Box::new(geom_p), span),
@@ -660,17 +663,17 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 })
                 .labelled("filter_dist"),
             just(Token::Filter)
-                .map_with_span(|_, span| span)
+                .map_with(|_, state| state.span())
                 .then(
                     geom_piece
                         .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .map_err_with_state(|t, span, _| throw(t, comma(span)))
                         .then(file.or(argument))
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen)).map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'filter'")))),
+                        .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
+                                 .map_with(|s, state| S(s, state.span()))
+                        .delimited_by(just(Token::LParen), just(Token::RParen)).map_err_with_state(|t, span, _| throw(t, missing_delimiter(Token::LParen, span, Some("'filter'")))),
                 )
-                .map(|(fn_span, S((geom_p, path), span))| {
+                .map_with(|(fn_span, S((geom_p, path), span)),_| {
                     Expr::Function(
                         S(Function::FilterWithinDist(path, 0), fn_span),
                         S(Box::new(geom_p), span),
@@ -679,127 +682,134 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 .labelled("filter"),
         ))
     })
-    .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Invalid construction of an interval")))
-    .map_with_span(S);
+    .map_err_with_state(|t, span, _| throw(t, Rich::custom(span, "Invalid construction of an interval")))
+             .map_with(|s, state| S(s, state.span()));
 
     let definitions = label
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "Expected a label to begin a definition."),
+                Rich::custom(span, "Expected a label to begin a definition."),
             )
         })
         .then_ignore(just(Token::Equals))
         .then(transformed_pieces.clone())
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Error creating variable declaration"),
-            )
+        .map_err_with_state(|t, span, _| {
+            throw(t, Rich::custom(span, "Error creating variable declaration"))
         })
-        .map_with_span(|(label, geom_p), span| {
+        .map_with(|(label, geom_p), state| {
             S(
                 Definition {
                     label,
                     expr: geom_p,
                 },
-                span,
+                state.span(),
             )
         })
         .repeated()
-        .map_with_span(S);
+        .collect()
+        .map_with(|s, state| S(s, state.span()));
 
     let reads = num
-        .map_err_with_span(|t, span| {
-            throw(t, Simple::custom(span, "Expected a number to start a read"))
+        .map_err_with_state(|t, span, _| {
+            throw(t, Rich::custom(span, "Expected a number to start a read"))
         })
-        .map_with_span(S)
+        .map_with(|s, state| S(s, state.span()))
         .then(
             transformed_pieces
                 .clone()
                 .labelled("transformed_pieces_for_reads")
                 .repeated()
                 .at_least(1)
+                .collect()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace))
-                .map_err_with_span(|t, span| {
+                .map_err_with_state(|t, span, _| {
                     throw(t, missing_delimiter(Token::LBrace, span, Some("reads")))
                 }),
         )
-        .map_with_span(|(n, read), span| {
+        .map_with(|(n, read), state| {
             S(
                 Read {
                     index: n,
                     exprs: read,
                 },
-                span,
+                state.span(),
             )
         })
         .repeated()
         .exactly(2)
-        .map_err_with_span(|t, span| {
+        .collect::<Vec<_>>()
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "Must provide two reads - only found one"),
+                Rich::custom(span, "Must provide two reads - only found one"),
             )
-        })
-        .collect::<Vec<_>>();
+        });
 
     let transform_read = num
-        .map_with_span(S)
+        .map_with(|s, state| S(s, state.span()))
         .then(
             transformed_pieces
                 .clone()
                 .repeated()
                 .at_least(1)
+                .collect()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace))
-                .map_err_with_span(|t, span| {
+                .map_err_with_state(|t, span, _| {
                     throw(
                         t,
                         missing_delimiter(Token::LBrace, span, Some("transformation")),
                     )
                 }),
         )
-        .map_with_span(|(n, read), span| {
+        .map_with(|(n, read), state| {
             S(
                 Read {
                     index: n,
                     exprs: read,
                 },
-                span,
+                state.span(),
             )
         });
 
     let transformation = choice((
         end().map(|()| None),
         just(Token::TransformTo)
-            .then(transform_read.repeated().at_least(1).at_most(2).then(end()))
-            .map_with_span(|(_, (val, _)), span| Some(S(val, span))),
+            .then(
+                transform_read
+                    .repeated()
+                    .at_least(1)
+                    .at_most(2)
+                    .collect()
+                    .then(end()),
+            )
+            .map_with(|(_, (val, _)), state| Some(S(val, state.span()))),
     ));
 
     definitions
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "Error while parsing EFGDL specification."),
+                Rich::custom(span, "Error while parsing EFGDL specification."),
             )
         })
-        .then(reads.map_with_span(S))
+        .then(reads.map_with(|s, state| S(s, state.span())))
         .then(transformation)
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "Error while parsing EFGDL specification."),
+                Rich::custom(span, "Error while parsing EFGDL specification."),
             )
         })
-        .map(|((definitions, reads), transforms)| Description {
+        .map_with(|((definitions, reads), transforms), _| Description {
             definitions,
             reads,
             transforms,
         })
-        .map_err_with_span(|t, span| {
+        .map_err_with_state(|t, span, _| {
             throw(
                 t,
-                Simple::custom(span, "Error while parsing EFGDL specification."),
+                Rich::custom(span, "Error while parsing EFGDL specification."),
             )
         })
 }

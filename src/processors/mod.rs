@@ -150,7 +150,7 @@ pub fn map(this_label: &str, patterns: Patterns, match_type: MatchType, graph: &
         Expr::from(expr::attr(format!("{this_label}.{SUB}"))),
     ));
     graph.add(SelectOp::new(
-        Expr::from(expr::attr(&format!("{this_label}.{MAPPED}"))),
+        Expr::from(expr::attr(format!("{this_label}.{MAPPED}"))),
         mapping_graph,
     ));
 }

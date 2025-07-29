@@ -113,10 +113,10 @@ impl GeometryMeta {
             }
         };
 
-        let mut return_type = S(expr_type, expr_span.clone());
+        let mut return_type = S(expr_type, *expr_span);
 
         for S(fn_, span) in self.stack.iter().rev() {
-            return_type = validate_composition(S(fn_, span.clone()), return_type, &expr.size)?;
+            return_type = validate_composition(S(fn_, *span), return_type, &expr.size)?;
         }
 
         Ok(())
@@ -304,7 +304,7 @@ impl GeometryMeta {
 
 impl IntervalShape {
     pub fn update_size_to(&self, n: usize) -> Self {
-        IntervalShape::FixedLen(S(n, 0..1))
+        IntervalShape::FixedLen(S(n, (0..1).into()))
     }
 
     pub fn update_size_add(self, n: usize) -> Self {

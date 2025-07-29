@@ -5,16 +5,23 @@ use seqproc::lexer::{lexer, Token};
 fn nucs() {
     let src = "GCA";
 
-    let expected_res = vec![(Token::G, 0..1), (Token::C, 1..2), (Token::A, 2..3)];
+    let expected_res = vec![
+        (Token::G, SimpleSpan::from(0..1)),
+        (Token::C, SimpleSpan::from(1..2)),
+        (Token::A, SimpleSpan::from(2..3)),
+    ];
 
-    assert_eq!(expected_res, lexer().parse(src).unwrap());
+    assert_eq!(expected_res, lexer().parse(src).into_output().unwrap());
 }
 
 #[test]
 fn token() {
     let src = "1";
 
-    assert_eq!(vec![(Token::Num(1), 0..1)], lexer().parse(src).unwrap());
+    assert_eq!(
+        vec![(Token::Num(1), SimpleSpan::from(0..1))],
+        lexer().parse(src).unwrap()
+    );
 }
 
 #[test]
@@ -23,12 +30,12 @@ fn tokens() {
 
     assert_eq!(
         vec![
-            (Token::Label("bc1".to_string()), 0..3),
-            (Token::Equals, 4..5),
-            (Token::Barcode, 6..7),
-            (Token::LBracket, 7..8),
-            (Token::Num(10), 8..10),
-            (Token::RBracket, 10..11),
+            (Token::Label("bc1".to_string()), SimpleSpan::from(0..3)),
+            (Token::Equals, SimpleSpan::from(4..5)),
+            (Token::Barcode, SimpleSpan::from(6..7)),
+            (Token::LBracket, SimpleSpan::from(7..8)),
+            (Token::Num(10), SimpleSpan::from(8..10)),
+            (Token::RBracket, SimpleSpan::from(10..11)),
         ],
         lexer().parse(src).unwrap()
     );
@@ -38,7 +45,7 @@ fn tokens() {
 fn fail() {
     let src = "1 ? 2";
 
-    let (_, err) = lexer().parse_recovery(src);
+    let (_, err) = lexer().parse(src).into_output_errors();
 
     assert_eq!(err.len(), 1);
 }
@@ -47,11 +54,11 @@ fn fail() {
 fn label() {
     let src = "barcode";
 
-    let (res, err) = lexer().parse_recovery(src);
+    let (res, err) = lexer().parse(src).into_output_errors();
 
     assert_eq!(err.len(), 0);
     assert_eq!(
-        vec![(Token::Label("barcode".to_string()), 0..7)],
+        vec![(Token::Label("barcode".to_string()), SimpleSpan::from(0..7))],
         res.unwrap()
     );
 }
@@ -60,7 +67,7 @@ fn label() {
 fn precidence() {
     let src = "b[1-2] -> 1{}";
 
-    let (res, err) = lexer().parse_recovery(src);
+    let (res, err) = lexer().parse(src).into_output_errors();
 
     assert_eq!(err.len(), 0);
 
@@ -87,7 +94,7 @@ fn precidence() {
 fn map_vs_with_mismatch() {
     let src = "map()map_with_mismatch()";
 
-    let (res, err) = lexer().parse_recovery(src);
+    let (res, err) = lexer().parse(src).into_output_errors();
 
     assert_eq!(err.len(), 0);
 
@@ -110,7 +117,7 @@ fn map_vs_with_mismatch() {
 fn arguments() {
     let src = "map(f[ATG], $0, self)";
 
-    let (res, err) = lexer().parse_recovery(src);
+    let (res, err) = lexer().parse(src).into_output_errors();
     dbg!(&err);
     assert_eq!(err.len(), 0);
 

@@ -50,11 +50,11 @@ pub fn compile_transformation(
                     }
                     Expr::LabeledGeomPiece(_, _) | Expr::GeomPiece(_, _) => return Err(Error {
                         span: expr.1,
-                        msg: format!("{} - Cannot construct intervals in a transformation", generic_transformation_msg)
+                        msg: format!("{generic_transformation_msg} - Cannot construct intervals in a transformation")
                     }),
                     Expr::Self_ => return Err(Error {
                         span: expr.1,
-                        msg: format!("{} - Misplaced reference of 'self', this is a reserved token for the 'map' function.", generic_transformation_msg),
+                        msg: format!("{generic_transformation_msg} - Misplaced reference of 'self', this is a reserved token for the 'map' function."),
                     })
                 }
             }
@@ -88,7 +88,7 @@ pub fn compile_transformation(
             for fn_ in &gp.stack {
                 if let S(CompiledFunction::Remove, span) = fn_ {
                     return Err(Error {
-                        span: span.clone(),
+                        span: *span,
                         msg: "Cannot reference a void interval after '->' - if you want to keep this interval then remove the 'remove' transformation.".to_string()
                     });
                 }

@@ -1,130 +1,101 @@
-use std::ops::Range;
-
-use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
-use chumsky::{error::SimpleReason, prelude::*};
+use ariadne::{Color, Label, Report, ReportKind, Source};
+use chumsky::{error::RichReason, prelude::*};
 
 use crate::lexer::Token;
 
-pub fn handle_errors(errs: Vec<Simple<String>>, source: String) {
+pub fn handle_errors(errs: Vec<Rich<'_, String>>, source: String) {
     // error recovery
     errs.into_iter().for_each(|e| {
-        let report = Report::build(ReportKind::Error, (), e.span().start);
-
-        let report = match e.reason() {
-            chumsky::error::SimpleReason::Custom(msg) => report
-                .with_message("Parsing and Compiling EFGDL")
-                .with_label(
-                    Label::new(e.span())
-                        .with_message(format!("{}", msg.fg(Color::Red)))
-                        .with_color(Color::Red),
-                ),
-            chumsky::error::SimpleReason::Unclosed { span, delimiter } => report
-                .with_message(format!(
-                    "Unclosed delimiter {}",
-                    delimiter.fg(Color::Yellow)
-                ))
-                .with_label(
-                    Label::new(span.clone())
-                        .with_message(format!(
-                            "Unclosed delimiter {}",
-                            delimiter.fg(Color::Yellow)
-                        ))
-                        .with_color(Color::Yellow),
-                )
-                .with_label(
-                    Label::new(e.span())
-                        .with_message(format!(
-                            "Must be closed before this {}",
-                            e.found()
-                                .unwrap_or(&"end of file".to_string())
-                                .fg(Color::Red)
-                        ))
-                        .with_color(Color::Red),
-                ),
-            chumsky::error::SimpleReason::Unexpected => {
-                report.with_message(format!(
-                    "{}, expected {}",
-                    if e.found().is_some() {
-                        "Unexpected token in input"
-                    } else {
-                        "Unexpected end of input"
-                    },
-                    if e.expected().len() == 0 {
-                        "something else".to_string()
-                    } else {
-                        e.expected()
-                            .map(|expected| match expected {
-                                Some(expected) => expected.to_string(),
-                                None => "end of input".to_string(),
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    }
-                ))
-            }
+        Report::build(ReportKind::Error, ((), e.span().into_range()))
+            .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+            .with_message(e.to_string())
             .with_label(
-                Label::new(e.span())
-                    .with_message(format!(
-                        "Unexpected token {}",
-                        e.found()
-                            .unwrap_or(&"end of file".to_string())
-                            .fg(Color::Red)
-                    ))
+                Label::new(((), e.span().into_range()))
+                    .with_message(e.reason().to_string())
                     .with_color(Color::Red),
-            ),
-        };
-
-        report.finish().print(Source::from(source.clone())).unwrap();
+            )
+            .with_labels(e.contexts().map(|(label, span)| {
+                Label::new(((), span.into_range()))
+                    .with_message(format!("while parsing this {label}"))
+                    .with_color(Color::Yellow)
+            }))
+            .finish()
+            .print(Source::from(&source))
+            .unwrap();
     });
 }
 
-pub fn missing_delimiter(token: Token, span: Range<usize>, obj: Option<&str>) -> Simple<Token> {
+pub fn missing_delimiter<'a>(token: Token, span: SimpleSpan, obj: Option<&str>) -> Rich<'a, Token> {
     let msg = |d1, d2| match obj {
         Some(obj) => format!("Missing delimitter for {obj} - delimit with '{d1} .. {d2}'."),
         None => format!("Missing delimtter - delimit with '{d1} .. {d2}'."),
     };
 
     match token {
-        Token::RParen | Token::LParen => Simple::custom(span, msg('(', ')')),
-        Token::RBrace | Token::LBrace => Simple::custom(span, msg('{', '}')),
-        Token::RBracket | Token::LBracket => Simple::custom(span, msg('[', ']')),
-        Token::RAngle | Token::LAngle => Simple::custom(span, msg('<', '>')),
-        _ => Simple::custom(span, "Missing delimitter"),
+        Token::RParen | Token::LParen => Rich::custom(span, msg('(', ')')),
+        Token::RBrace | Token::LBrace => Rich::custom(span, msg('{', '}')),
+        Token::RBracket | Token::LBracket => Rich::custom(span, msg('[', ']')),
+        Token::RAngle | Token::LAngle => Rich::custom(span, msg('<', '>')),
+        _ => Rich::custom(span, "Missing delimitter"),
     }
 }
 
-pub fn comma(span: Range<usize>) -> Simple<Token> {
-    Simple::custom(span, "Expected a ',' to separate arguments.")
+pub fn comma<'a>(span: SimpleSpan) -> Rich<'a, Token> {
+    Rich::custom(span, "Expected a ',' to separate arguments.")
 }
 
-pub fn throw(prev_err: Simple<Token>, next_err: Simple<Token>) -> Simple<Token> {
-    let expected = prev_err
-        .expected()
-        .map(|expected| match expected {
-            Some(expected) => expected.to_string(),
-            None => "end of input".to_string(),
-        })
-        .collect::<Vec<_>>();
-
-    if expected.len() == 1 {
-        let expected = expected.first().unwrap();
+pub fn throw<'a>(prev_err: Rich<'a, Token>, next_err: Rich<'a, Token>) -> Rich<'a, Token> {
+    if prev_err.expected().len() > 0 {
+        let expected = prev_err.clone();
         let range = prev_err.span();
         let start = range.start;
 
-        let msg = match expected.as_str() {
-            ":" => {
-                Some("Unfinished interval - add a ':' or specify interval with different length.")
-            }
-            _ => None,
+        let msg = match prev_err.clone().into_reason() {
+            chumsky::error::RichReason::Custom(msg) => match msg.as_str() {
+                ":" => Some(String::from(
+                    "Unfinished interval - add a ':' or specify interval with different length.",
+                )),
+                _ => None,
+            },
+            chumsky::error::RichReason::ExpectedFound {
+                expected,
+                found: o_found,
+            } => match o_found {
+                Some(found) => match found {
+                    chumsky::util::Maybe::Ref(r_t) => Some(format!(
+                        "Expected {} but found: {}.",
+                        expected
+                            .iter()
+                            .map(|exp| format!("{exp}"))
+                            .collect::<String>(),
+                        r_t
+                    )),
+                    chumsky::util::Maybe::Val(t) => Some(format!(
+                        "Expected {} but found: {}.",
+                        expected
+                            .iter()
+                            .map(|exp| format!("{exp}"))
+                            .collect::<String>(),
+                        t
+                    )),
+                },
+                None => Some(format!(
+                    "Expected {} but found nothing.",
+                    expected
+                        .iter()
+                        .map(|exp| format!("{exp}"))
+                        .collect::<String>()
+                )),
+            },
         };
 
         if let Some(msg) = msg {
-            return Simple::custom(start - 1..start - 1 + expected.len(), msg);
+            return Rich::custom((start..start + expected.span().end).into(), msg);
         }
     }
 
     match prev_err.reason() {
-        SimpleReason::Custom(_) => prev_err,
+        RichReason::Custom(_) => prev_err,
         _ => next_err,
     }
 }

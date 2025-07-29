@@ -1,10 +1,14 @@
 use std::{
-    fs::File, io::BufWriter, panic, path::{Path, PathBuf}, thread
+    fs::File,
+    io::BufWriter,
+    panic,
+    path::{Path, PathBuf},
+    thread,
 };
 
 use antisequence::graph::*;
 use anyhow::{bail, Result};
-use chumsky::{prelude::Simple, Parser, Stream};
+use chumsky::{error::Rich, Parser};
 use nix::sys::stat;
 use nix::unistd;
 use tempfile::tempdir;
@@ -121,36 +125,54 @@ fn interpret_to_pipes(
     }
 }
 
-pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
-    let (tokens, mut errs) = lexer::lexer().parse_recovery(geom);
+pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, String>>> {
+    let parse_res = lexer::lexer().parse(&geom);
 
-    let parse_errs = if let Some(tokens) = tokens {
-        match parser().parse(Stream::from_iter(
-            tokens.len()..tokens.len() + 1,
-            tokens.into_iter(),
-        )) {
-            Err(errs) => errs,
-            Ok(description) => {
-                let res = compile(description.clone());
-
-                if let Err(e) = res {
-                    errs.push(Simple::custom(e.span, e.msg));
-                } else {
-                    return Ok(res.ok().unwrap());
-                };
-
-                vec![]
-            }
-        }
-    } else {
-        Vec::new()
+    let lex_errors = match parse_res.clone().into_result() {
+        Ok(_) => vec![],
+        Err(errs) => errs,
     };
 
-    let errors = errs
+    let parse_errors = match parse_res.into_result() {
+        Ok(tokens) => {
+            let input_tokens = tokens.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
+            let parser_instance = parser();
+            match parser_instance.parse(input_tokens.as_slice()).into_result() {
+                Err(errs) => errs
+                    .into_iter()
+                    .map(|e| Rich::<String>::custom(*e.span(), e.reason().to_string()))
+                    .collect::<Vec<_>>(),
+                Ok(description) => {
+                    let res = compile(description.clone());
+
+                    if let Err(e) = res {
+                        vec![Rich::<String>::custom(e.span, e.msg)]
+                    } else {
+                        return Ok(res.ok().unwrap());
+                    };
+
+                    vec![]
+                }
+            }
+        }
+        Err(err) => err
+            .iter()
+            .map(|rich_err| {
+                Rich::<String>::custom(*rich_err.span(), format!("{}", rich_err.reason()))
+            })
+            .collect::<Vec<_>>(),
+    };
+
+    let errors = lex_errors
         .into_iter()
-        .map(|e| e.map(|c| c.to_string()))
-        .chain(parse_errs.into_iter().map(|e| e.map(|tok| tok.to_string())))
+        .map(|e| Rich::custom(*e.span(), e.reason().to_string()))
+        .chain(
+            parse_errors
+                .into_iter()
+                .map(|e| Rich::custom(*e.span(), e.reason().to_string())),
+        )
         .collect::<Vec<_>>();
+
     Err(errors)
 }
 
