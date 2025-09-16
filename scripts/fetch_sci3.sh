@@ -50,17 +50,22 @@ R2_URL="https://${FILES[1]}"
 R1_GZ="$OUT_DIR/${ACC}_1.fastq.gz"
 R2_GZ="$OUT_DIR/${ACC}_2.fastq.gz"
 
-if [[ ! -f "$R1_GZ" ]]; then
-  echo "[fetch_sci3] Downloading R1 -> $R1_GZ"
-  curl -L --fail --progress-bar "$R1_URL" -o "$R1_GZ"
-else
-  echo "[fetch_sci3] R1 already exists: $R1_GZ (skipping download)"
-fi
-if [[ ! -f "$R2_GZ" ]]; then
-  echo "[fetch_sci3] Downloading R2 -> $R2_GZ"
-  curl -L --fail --progress-bar "$R2_URL" -o "$R2_GZ"
-else
-  echo "[fetch_sci3] R2 already exists: $R2_GZ (skipping download)"
+# If STREAM_ONLY=1, we will not download full FASTQs. Instead we stream and build subsets only.
+STREAM_ONLY="${STREAM_ONLY:-0}"
+
+if [[ "$STREAM_ONLY" != "1" ]]; then
+  if [[ ! -f "$R1_GZ" ]]; then
+    echo "[fetch_sci3] Downloading R1 -> $R1_GZ"
+    curl -L --fail --progress-bar "$R1_URL" -o "$R1_GZ"
+  else
+    echo "[fetch_sci3] R1 already exists: $R1_GZ (skipping download)"
+  fi
+  if [[ ! -f "$R2_GZ" ]]; then
+    echo "[fetch_sci3] Downloading R2 -> $R2_GZ"
+    curl -L --fail --progress-bar "$R2_URL" -o "$R2_GZ"
+  else
+    echo "[fetch_sci3] R2 already exists: $R2_GZ (skipping download)"
+  fi
 fi
 
 # Choose a decompressor available on macOS/Linux
@@ -78,7 +83,11 @@ R2_OUT_SMALL="$OUT_DIR/${ACC}_2_${N_READS}k.fastq.gz"
 if [[ ! -f "$R1_OUT_SMALL" ]]; then
   echo "[fetch_sci3] Creating subset R1 (${N_READS} reads) -> $R1_OUT_SMALL"
   set +o pipefail
-  eval "$DECOMP \"$R1_GZ\"" | head -n "$LINES" | gzip -c > "$R1_OUT_SMALL" || true
+  if [[ "$STREAM_ONLY" == "1" ]]; then
+    curl -L --fail --progress-bar "$R1_URL" | gzip -dc | head -n "$LINES" | gzip -c > "$R1_OUT_SMALL" || true
+  else
+    eval "$DECOMP \"$R1_GZ\"" | head -n "$LINES" | gzip -c > "$R1_OUT_SMALL" || true
+  fi
   set -o pipefail
 else
   echo "[fetch_sci3] Subset R1 already exists: $R1_OUT_SMALL (skipping)"
@@ -86,7 +95,11 @@ fi
 if [[ ! -f "$R2_OUT_SMALL" ]]; then
   echo "[fetch_sci3] Creating subset R2 (${N_READS} reads) -> $R2_OUT_SMALL"
   set +o pipefail
-  eval "$DECOMP \"$R2_GZ\"" | head -n "$LINES" | gzip -c > "$R2_OUT_SMALL" || true
+  if [[ "$STREAM_ONLY" == "1" ]]; then
+    curl -L --fail --progress-bar "$R2_URL" | gzip -dc | head -n "$LINES" | gzip -c > "$R2_OUT_SMALL" || true
+  else
+    eval "$DECOMP \"$R2_GZ\"" | head -n "$LINES" | gzip -c > "$R2_OUT_SMALL" || true
+  fi
   set -o pipefail
 else
   echo "[fetch_sci3] Subset R2 already exists: $R2_OUT_SMALL (skipping)"

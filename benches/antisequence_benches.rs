@@ -242,7 +242,7 @@ brc1  = b[9-10]
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/sci3")
     });
 
-    // Parse runs from env or default to 7206..=7215
+    // Parse runs from env or default to SRR7827206..=SRR7827215
     let runs: Vec<String> = if let Ok(run_list) = std::env::var("SCI3_RUNS") {
         run_list
             .split(',')
@@ -250,7 +250,7 @@ brc1  = b[9-10]
             .filter(|s| !s.is_empty())
             .collect()
     } else {
-        (7206..=7215).map(|n| format!("SRR7827{}", n)).collect()
+        (7827206..=7827215).map(|n| format!("SRR{}", n)).collect()
     };
 
     // For each run, try to find subset files with common suffixes, then full files as fallback

@@ -98,3 +98,52 @@ export SCI3_R2=seqproc/data/sci3/SRR7827206_2_10k.fastq.gz
   ```
   target/criterion/antisequence_sci_rna_seq3_disk/sci3_ENA_10k/new/estimates.json
   ```
+
+
+---
+# How to Check whether your optimization sped up or slowed down
+
+Compare to the saved “preopt” baseline (runs all benches)
+From seqproc/:
+```bash
+cargo bench --bench antisequence_benches -- --baseline preopt
+```
+Only the on-disk ENA 10k bench
+```bash
+cargo bench --bench antisequence_benches -- sci3_ENA_10k -- --baseline preopt
+```
+Only the multi-run aggregate
+```bash
+cargo bench --bench antisequence_benches -- sci3_ENA_multi -- --baseline preopt
+```
+Optional: save a new “postopt” baseline (so you can compare runs later)
+```bash
+cargo bench --bench antisequence_benches -- --baseline preopt --save-baseline postopt
+```
+Open the HTML report
+```bash
+open target/criterion/report/index.html
+```
+Fetch additional SRR accessions and run the multi-run bench
+From the repo root, fetch 10k-read subsets for SRR7827206–SRR7827215:
+```bash
+for acc in SRR7827{206..215}; do ./seqproc/scripts/fetch_sci3.sh "$acc" 10000; done
+```
+Run the aggregate multi-run bench (it will auto-detect which runs exist in seqproc/data/sci3/)
+```bash
+cd seqproc
+cargo bench --bench antisequence_benches -- sci3_ENA_multi
+```
+Optional: explicitly point to the data dir and run list (not required if you used the defaults above)
+```bash
+export SCI3_DIR="$PWD/data/sci3"
+export SCI3_RUNS="SRR7827206,SRR7827207,SRR7827208,SRR7827209,SRR7827210,SRR7827211,SRR7827212,SRR7827213,SRR7827214,SRR7827215"
+cargo bench --bench antisequence_benches -- sci3_ENA_multi
+```
+
+Notes
+
+The fetch script downloads both mates, creates 10k subsets, and places them in seqproc/data/sci3/.
+You can run individual per-run benches too, e.g.:
+cargo bench --bench antisequence_benches -- sci3_ENA_SRR7827206
+Criterion will print % change vs baseline and also generate the HTML report under target/criterion/.
