@@ -14,3 +14,6 @@ target/
 
 # mac files
 .DS_store
+
+# local data
+data/

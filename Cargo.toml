@@ -15,7 +15,7 @@ name = "seqproc"
 path = "src/bin/bin.rs"
 
 [dependencies]
-antisequence = { git = "https://github.com/noahcape/ANTISEQUENCE.git", branch = 'dev' }
+antisequence = { path = "../ANTISEQUENCE" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tracing = "0.1.37"
 ariadne = "0.3.0"
@@ -31,9 +31,15 @@ serde = {version = "1.0.207", features = ["derive"]}
 assert_cmd = "2.0.12"
 similar-asserts = "1.5.0"
 tempdir = "0.3.7"
+criterion = { version = "0.5" }
+md5 = "0.7"
 
 [lints.rust]
 rust_2018_idioms = "warn"
 
 [lints.clippy]
 semicolon_if_nothing_returned = "warn"
+
+[[bench]]
+name = "antisequence_benches"
+harness = false
