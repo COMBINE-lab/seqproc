@@ -100,7 +100,35 @@ export SCI3_R2=seqproc/data/sci3/SRR7827206_2_10k.fastq.gz
   ```
 
 
----
+## Benchmark helper scripts
+
+Use the helper scripts in the `seqproc/` root to simplify saving a baseline and running comparisons across ALL benches.
+
+- Save a baseline (default name: `preopt`):
+  ```bash
+  ./set_benchmark.sh preopt
+  ```
+
+- Compare against a baseline (runs all benches):
+  ```bash
+  ./run_benchmark.sh preopt
+  ```
+
+- Compare and save a new baseline (e.g., after optimizations):
+  ```bash
+  ./run_benchmark.sh preopt postopt
+  ```
+
+What baseline names mean:
+- `preopt`: A snapshot taken before your optimization work. Treat this as your "before" reference.
+- `postopt`: A snapshot taken after your optimization work. Treat this as your "after" reference. You can create multiple named snapshots over time if desired.
+
+Notes:
+- The scripts ensure the sci3 on-disk 10k subset exists. If missing, they call `scripts/fetch_sci3.sh` in streaming mode to create:
+  - `data/sci3/SRR7827206_1_10k.fastq.gz`
+  - `data/sci3/SRR7827206_2_10k.fastq.gz`
+- The scripts run all benches defined in `benches/antisequence_benches.rs`, including the on-disk and multi-run variants (if data present).
+
 # How to Check whether your optimization sped up or slowed down
 
 Compare to the saved “preopt” baseline (runs all benches)
