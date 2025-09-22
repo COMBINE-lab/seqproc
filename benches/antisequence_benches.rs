@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::time::Duration;
 
 use antisequence::graph::*;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
@@ -7,6 +8,135 @@ use seqproc::execute::compile_geom;
 fn nuc(i: usize) -> u8 {
     const N: [u8; 4] = [b'A', b'C', b'G', b'T'];
     N[i & 3]
+}
+
+fn large_enabled() -> bool {
+    std::env::var("ANTISEQ_LARGE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn bench_10x_large(c: &mut Criterion) {
+    if !large_enabled() { return; }
+    let geom = "1{b[16]u[10]}2{r:}".to_string();
+    let compiled = compile_geom(geom).expect("compile geom");
+
+    let mut group = c.benchmark_group("antisequence_10x_trivial_1M");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(15));
+    group.bench_function("10x_N=1000000", |b| {
+        b.iter_batched(
+            || {
+                let (r1, r2) = make_fastq_pair_10x(1_000_000);
+                vec![Cursor::new(r1), Cursor::new(r2)]
+            },
+            |readers| {
+                let mut graph = Graph::new();
+                graph.add(InputFastqOp::from_readers(readers).unwrap());
+                compiled.interpret(&mut graph, &Vec::<&str>::new());
+                let sink1 = std::io::sink();
+                let sink2 = std::io::sink();
+                graph.add(OutputFastqOp::from_writers([sink1, sink2]));
+                graph.run_with_threads(1);
+            },
+            BatchSize::LargeInput,
+        )
+    });
+    group.finish();
+}
+
+fn bench_sci3_large(c: &mut Criterion) {
+    if !large_enabled() { return; }
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1  = b[9-10]
+1{<brc1><anchor>u[8]b[10]}2{r:}
+"#.to_string();
+    let compiled = compile_geom(geom).expect("compile geom");
+
+    let mut group = c.benchmark_group("antisequence_sci_rna_seq3_1M");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(15));
+    group.bench_function("sci3_N=1000000", |b| {
+        b.iter_batched(
+            || {
+                let (r1, r2) = make_fastq_pair_sci3(1_000_000);
+                vec![Cursor::new(r1), Cursor::new(r2)]
+            },
+            |readers| {
+                let mut graph = Graph::new();
+                graph.add(InputFastqOp::from_readers(readers).unwrap());
+                compiled.interpret(&mut graph, &Vec::<&str>::new());
+                let sink1 = std::io::sink();
+                let sink2 = std::io::sink();
+                graph.add(OutputFastqOp::from_writers([sink1, sink2]));
+                graph.run_with_threads(1);
+            },
+            BatchSize::LargeInput,
+        )
+    });
+    group.finish();
+}
+
+fn bench_sci3_tolerant_large(c: &mut Criterion) {
+    if !large_enabled() { return; }
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1  = norm(b[9-10])
+1{<brc1> hamming(<anchor>, 1) u[8] b[10]}2{r:}
+"#.to_string();
+    let compiled = compile_geom(geom).expect("compile geom");
+
+    let mut group = c.benchmark_group("antisequence_sci_rna_seq3_tolerant_1M");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(20));
+    group.bench_function("sci3_tol_N=1000000", |b| {
+        b.iter_batched(
+            || {
+                let (r1, r2) = make_fastq_pair_sci3(1_000_000);
+                vec![Cursor::new(r1), Cursor::new(r2)]
+            },
+            |readers| {
+                let mut graph = Graph::new();
+                graph.add(InputFastqOp::from_readers(readers).unwrap());
+                compiled.interpret(&mut graph, &Vec::<&str>::new());
+                let sink1 = std::io::sink();
+                let sink2 = std::io::sink();
+                graph.add(OutputFastqOp::from_writers([sink1, sink2]));
+                graph.run_with_threads(1);
+            },
+            BatchSize::LargeInput,
+        )
+    });
+    group.finish();
+}
+
+fn bench_sci3_disk_1m(c: &mut Criterion) {
+    let r1 = match std::env::var("SCI3_R1_1M").ok() { Some(p) => p, None => return };
+    let r2 = match std::env::var("SCI3_R2_1M").ok() { Some(p) => p, None => return };
+
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1  = b[9-10]
+1{<brc1><anchor>u[8]b[10]}2{r:}
+"#.to_string();
+    let compiled = compile_geom(geom).expect("compile geom");
+
+    let mut group = c.benchmark_group("antisequence_sci_rna_seq3_disk_1M");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(20));
+    group.bench_function("sci3_ENA_1M", |b| {
+        b.iter(|| {
+            let mut graph = Graph::new();
+            graph.add(InputFastqOp::from_files([r1.as_str(), r2.as_str()]).unwrap());
+            compiled.interpret(&mut graph, &Vec::<&str>::new());
+            let sink1 = std::io::sink();
+            let sink2 = std::io::sink();
+            graph.add(OutputFastqOp::from_writers([sink1, sink2]));
+            graph.run_with_threads(1);
+        })
+    });
+    group.finish();
 }
 
 fn make_fastq_pair_10x(num_reads: usize) -> (Vec<u8>, Vec<u8>) {
@@ -322,5 +452,15 @@ brc1  = b[9-10]
     group.finish();
 }
 
-criterion_group!(benches, bench_10x, bench_sci3, bench_sci3_tolerant, bench_sci3_disk, bench_sci3_disk_multi);
+criterion_group!(benches,
+    bench_10x,
+    bench_sci3,
+    bench_sci3_tolerant,
+    bench_sci3_disk,
+    bench_sci3_disk_multi,
+    bench_10x_large,
+    bench_sci3_large,
+    bench_sci3_tolerant_large,
+    bench_sci3_disk_1m
+);
 criterion_main!(benches);

@@ -9,11 +9,17 @@ set -euo pipefail
 #   ./run_benchmark.sh preopt
 #   ./run_benchmark.sh preopt postopt
 # If NEW_BASELINE_NAME is provided, we will also save a new baseline after running.
+# Defaults:
+#   ANTISEQ_BATCH_SIZE=1024 (override to change), ANTISEQ_LARGE=1 (run 1M benches).
 
 BASELINE="${1:-preopt}"
 SAVE_BASELINE="${2:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
+
+# Default env for batched, large-run benches unless explicitly overridden by the user.
+export ANTISEQ_BATCH_SIZE=${ANTISEQ_BATCH_SIZE:-1024}
+export ANTISEQ_LARGE=${ANTISEQ_LARGE:-1}
 
 # Ensure the sci3 on-disk 10k defaults exist so the disk benches run.
 R1_DEFAULT="${SCRIPT_DIR}/data/sci3/SRR7827206_1_10k.fastq.gz"
@@ -26,12 +32,12 @@ if [[ ! -f "${R1_DEFAULT}" || ! -f "${R2_DEFAULT}" ]]; then
 fi
 
 # Run and compare against a baseline for ALL benches in benches/antisequence_benches.rs
+echo "[run_benchmark] Comparing against baseline '${BASELINE}'"
+cargo bench --bench antisequence_benches -- --baseline "${BASELINE}"
+
 if [[ -n "${SAVE_BASELINE}" ]]; then
-  echo "[run_benchmark] Comparing against baseline '${BASELINE}' and saving new baseline '${SAVE_BASELINE}'"
-  cargo bench --bench antisequence_benches -- --baseline "${BASELINE}" --save-baseline "${SAVE_BASELINE}"
-else
-  echo "[run_benchmark] Comparing against baseline '${BASELINE}'"
-  cargo bench --bench antisequence_benches -- --baseline "${BASELINE}"
+  echo "[run_benchmark] Saving new baseline '${SAVE_BASELINE}'"
+  cargo bench --bench antisequence_benches -- --save-baseline "${SAVE_BASELINE}"
 fi
 
 cat <<EOF

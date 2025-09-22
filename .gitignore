@@ -17,3 +17,13 @@ target/
 
 # local data
 data/
+
+# # benchmark data
+# benchmarks/
+
+# # benchmark results
+# target/criterion
+
+# # benchmark scripts
+# run_benchmark.sh
+# set_benchmark.sh
