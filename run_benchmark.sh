@@ -31,6 +31,9 @@ if [[ ! -f "${R1_DEFAULT}" || ! -f "${R2_DEFAULT}" ]]; then
   }
 fi
 
+printf "\n==> Running correctness tests (cargo test)\n\n"
+cargo test
+
 # Run and compare against a baseline for ALL benches in benches/antisequence_benches.rs
 echo "[run_benchmark] Comparing against baseline '${BASELINE}'"
 cargo bench --bench antisequence_benches -- --baseline "${BASELINE}"

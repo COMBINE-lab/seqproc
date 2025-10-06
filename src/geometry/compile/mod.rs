@@ -91,7 +91,12 @@ impl CompiledData {
     }
 }
 
-// this should be more of a compile and also should return a kind of
+/// Converts a parsed Description into CompiledData, performing validation and optional transformation.
+///
+/// Calls compile_definitions, then compile_reads to build a geometry map.
+/// If transforms are present, runs compile_transformation and labels it.
+///
+/// Returns CompiledData { geometry, transformation } or Error.
 pub fn compile(
     Description {
         definitions,
@@ -99,7 +104,7 @@ pub fn compile(
         transforms,
     }: Description,
 ) -> Result<CompiledData, Error> {
-    // validate defintion block
+    // validate definition block
     let map = {
         let def_res = compile_definitions(definitions);
 

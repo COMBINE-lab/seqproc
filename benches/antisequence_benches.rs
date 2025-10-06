@@ -22,7 +22,7 @@ fn bench_10x_large(c: &mut Criterion) {
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_10x_trivial_1M");
-    group.sample_size(10);
+    group.sample_size(50);
     group.measurement_time(Duration::from_secs(15));
     group.bench_function("10x_N=1000000", |b| {
         b.iter_batched(
@@ -55,7 +55,7 @@ brc1  = b[9-10]
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3_1M");
-    group.sample_size(10);
+    group.sample_size(50);
     group.measurement_time(Duration::from_secs(15));
     group.bench_function("sci3_N=1000000", |b| {
         b.iter_batched(
@@ -88,7 +88,7 @@ brc1  = norm(b[9-10])
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3_tolerant_1M");
-    group.sample_size(10);
+    group.sample_size(50);
     group.measurement_time(Duration::from_secs(20));
     group.bench_function("sci3_tol_N=1000000", |b| {
         b.iter_batched(
@@ -123,7 +123,7 @@ brc1  = b[9-10]
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3_disk_1M");
-    group.sample_size(10);
+    group.sample_size(50);
     group.measurement_time(Duration::from_secs(20));
     group.bench_function("sci3_ENA_1M", |b| {
         b.iter(|| {
@@ -231,6 +231,8 @@ fn bench_10x(c: &mut Criterion) {
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_10x_trivial");
+    group.sample_size(50);
+    group.measurement_time(Duration::from_secs(10));
     for &n in &[1_000usize, 10_000] {
         group.bench_function(format!("10x_N={}", n), |b| {
             b.iter_batched(
@@ -265,6 +267,8 @@ brc1  = b[9-10]
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3");
+    group.sample_size(50);
+    group.measurement_time(Duration::from_secs(10));
     for &n in &[1_000usize, 10_000] {
         group.bench_function(format!("sci3_N={}", n), |b| {
             b.iter_batched(
@@ -298,6 +302,8 @@ brc1  = norm(b[9-10])
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3_tolerant");
+    group.sample_size(50);
+    group.measurement_time(Duration::from_secs(10));
     for &n in &[1_000usize, 10_000] {
         group.bench_function(format!("sci3_tol_N={}", n), |b| {
             b.iter_batched(

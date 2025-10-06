@@ -9,30 +9,37 @@ use crate::{
     S,
 };
 
-/// validate definitions there should be no labels, just labeled geom peices and functions
+/// validate definitions there should be no labels, just labeled geom pieces and functions
 fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, Error> {
     let mut stack: Vec<S<CompiledFunction>> = vec![];
 
     loop {
+        // Peel off function wrapper
         match expr.0 {
             Expr::Function(fn_, gp) => {
-                expr = gp.unboxed();
-                stack.push(compile_fn(fn_, expr.clone())?);
+                expr = gp.unboxed();                            // Unbox the geometry piece
+                stack.push(compile_fn(fn_, expr.clone())?);     // Compile the function we just peeled off
             }
             Expr::Label(_) => {
-                return Err(Error {
+                return Err(Error {      // Err since there was a label in the definition block
                     span: expr.1,
                     msg: "Unexpected label in definition block".to_string(),
                 })
             }
-            Expr::Self_ => return Err(Error {
-                span: expr.1,
-                msg: "Unexpected reference to 'self' in definition. 'self' is reserved for 'map' transformation.".to_string(),
-            }),
-            Expr::LabeledGeomPiece(S(label, span) , _) => return Err(Error {
-                span,
-                msg: format!("Unexpected labeled interval in a defintion block. Remove <{label}>, to make this a valid definition.")
-            }),
+            Expr::Self_ => {            // Err since 'self' is reserved for 'map' transformation
+                return Err(Error {
+                    span: expr.1,
+                    msg: "Unexpected reference to 'self' in definition. 'self' is reserved for 'map' transformation.".to_string(),
+                })
+            },
+            Expr::LabeledGeomPiece(S(label, span) , _) => {    
+                // Err since there was a labeled interval in the definition block
+                // Inline label bindings inside defs are forbidden; the label should be the left-hand definition identifier
+                return Err(Error {
+                    span,
+                    msg: format!("Unexpected labeled interval in a definition block. Remove <{label}>, to make this a valid definition.")
+                })
+            },
             _ => break,
         }
     }
