@@ -26,7 +26,7 @@ if ! command -v samply >/dev/null 2>&1; then
 fi
 
 # Default to batching and 1M benches unless overridden
-export ANTISEQ_BATCH_SIZE=${ANTISEQ_BATCH_SIZE:-1024}
+export ANTISEQ_CHUNK_SIZE=${ANTISEQ_CHUNK_SIZE:-1024}
 export ANTISEQ_LARGE=${ANTISEQ_LARGE:-1}
 
 if [[ -n "${FILTER}" ]]; then

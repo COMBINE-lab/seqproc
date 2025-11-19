@@ -1,0 +1,49 @@
+antisequence_10x_trivial/10x_N=1000
+                        time:   [1.0962 ms 1.2482 ms 1.4958 ms]
+                        change: [-0.5041% +5.7941% +15.230%] (p = 0.17 > 0.05)
+                        No change in performance detected.
+Found 10 outliers among 50 measurements (20.00%)
+  4 (8.00%) high mild
+  6 (12.00%) high severe
+antisequence_10x_trivial/10x_N=10000
+                        time:   [9.4925 ms 10.251 ms 11.113 ms]
+                        change: [+65.607% +74.976% +82.792%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 14 outliers among 50 measurements (28.00%)
+  3 (6.00%) low severe
+  5 (10.00%) low mild
+  3 (6.00%) high mild
+  3 (6.00%) high severe
+
+antisequence_sci_rna_seq3/sci3_N=1000
+                        time:   [1.4800 ms 1.5506 ms 1.6428 ms]
+                        change: [+8.8367% +14.364% +19.689%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 7 outliers among 50 measurements (14.00%)
+  4 (8.00%) high mild
+  3 (6.00%) high severe
+antisequence_sci_rna_seq3/sci3_N=10000
+                        time:   [14.428 ms 15.051 ms 15.721 ms]
+                        change: [+9.8558% +13.840% +17.999%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 4 outliers among 50 measurements (8.00%)
+  2 (4.00%) high mild
+  2 (4.00%) high severe
+
+antisequence_10x_trivial_1M/10x_N=1000000
+                        time:   [1.1402 s 1.1747 s 1.2108 s]
+                        change: [+104.94% +110.47% +116.62%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+
+antisequence_sci_rna_seq3_1M/sci3_N=1000000
+                        time:   [1.1267 s 1.1964 s 1.2585 s]
+                        change: [+64.883% +75.523% +84.642%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 8 outliers among 25 measurements (32.00%)
+  4 (16.00%) low severe
+  2 (8.00%) high mild
+  2 (8.00%) high severe
+

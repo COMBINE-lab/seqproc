@@ -8,13 +8,13 @@ set -euo pipefail
 #
 # Notes:
 # - Honors existing repo scripts if present (run_benchmark.sh / set_benchmark.sh).
-# - By default uses batching with ANTISEQ_BATCH_SIZE=1024 (override via env).
+# - By default uses batching with ANTISEQ_CHUNK_SIZE=1024 (override via env).
 # - By default this runs 1M-read benches (ANTISEQ_LARGE=1). To disable, set ANTISEQ_LARGE=0.
 
 BASELINE=${1:-}
 NEW_BASELINE=${2:-}
 
-export ANTISEQ_BATCH_SIZE=${ANTISEQ_BATCH_SIZE:-1024}
+export ANTISEQ_CHUNK_SIZE=${ANTISEQ_CHUNK_SIZE:-1024}
 export ANTISEQ_LARGE=${ANTISEQ_LARGE:-1}
 # You can also tune input prefetching:
 # export ANTISEQ_PREFETCH=${ANTISEQ_PREFETCH:-256}

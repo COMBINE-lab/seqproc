@@ -1,0 +1,3 @@
+brc = b[2]
+1{<brc>}2{r<read>:}
+ -> 1{<brc>}2{<read>}

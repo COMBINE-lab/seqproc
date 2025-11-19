@@ -10,7 +10,7 @@ set -euo pipefail
 #   ./run_benchmark.sh preopt postopt
 # If NEW_BASELINE_NAME is provided, we will also save a new baseline after running.
 # Defaults:
-#   ANTISEQ_BATCH_SIZE=1024 (override to change), ANTISEQ_LARGE=1 (run 1M benches).
+#   ANTISEQ_CHUNK_SIZE=1024 (override to change), ANTISEQ_LARGE=1 (run 1M benches).
 
 BASELINE="${1:-preopt}"
 SAVE_BASELINE="${2:-}"
@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
 # Default env for batched, large-run benches unless explicitly overridden by the user.
-export ANTISEQ_BATCH_SIZE=${ANTISEQ_BATCH_SIZE:-1024}
+export ANTISEQ_CHUNK_SIZE=${ANTISEQ_CHUNK_SIZE:-1024}
 export ANTISEQ_LARGE=${ANTISEQ_LARGE:-1}
 
 # Ensure the sci3 on-disk 10k defaults exist so the disk benches run.
@@ -31,8 +31,10 @@ if [[ ! -f "${R1_DEFAULT}" || ! -f "${R2_DEFAULT}" ]]; then
   }
 fi
 
-printf "\n==> Running correctness tests (cargo test)\n\n"
-cargo test
+if [[ "${SEQPROC_SKIP_TESTS:-0}" != "1" ]]; then
+  printf "\n==> Running correctness tests (cargo test)\n\n"
+  cargo test
+fi
 
 # Run and compare against a baseline for ALL benches in benches/antisequence_benches.rs
 echo "[run_benchmark] Comparing against baseline '${BASELINE}'"

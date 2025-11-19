@@ -1,0 +1,50 @@
+antisequence_10x_trivial/10x_N=1000
+                        time:   [678.04 µs 684.05 µs 693.66 µs]
+                        change: [-34.752% -32.685% -30.498%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 50 measurements (8.00%)
+  1 (2.00%) high mild
+  3 (6.00%) high severe
+antisequence_10x_trivial/10x_N=10000
+                        time:   [5.7419 ms 5.7889 ms 5.8481 ms]
+                        change: [+49.897% +56.636% +63.963%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 50 measurements (10.00%)
+  3 (6.00%) high mild
+  2 (4.00%) high severe
+
+antisequence_sci_rna_seq3/sci3_N=1000
+                        time:   [768.80 µs 771.08 µs 774.32 µs]
+                        change: [-41.982% -40.962% -39.987%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 50 measurements (18.00%)
+  5 (10.00%) high mild
+  4 (8.00%) high severe
+antisequence_sci_rna_seq3/sci3_N=10000
+                        time:   [5.9687 ms 6.0451 ms 6.1472 ms]
+                        change: [+31.560% +34.025% +36.599%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 50 measurements (10.00%)
+  4 (8.00%) high mild
+  1 (2.00%) high severe
+
+antisequence_10x_trivial_1M/10x_N=1000000
+                        time:   [287.70 ms 288.43 ms 289.41 ms]
+                        change: [+26.043% +26.464% +26.857%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+
+antisequence_10x_trivial_10M/10x_N=10000000
+                        time:   [2.8222 s 2.8384 s 2.8515 s]
+                        change: [+24.798% +26.016% +27.120%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+
+antisequence_sci_rna_seq3_1M/sci3_N=1000000
+                        time:   [325.01 ms 331.06 ms 337.53 ms]
+                        change: [-4.6248% -2.7371% -0.7502%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+
+antisequence_sci_rna_seq3_10M/sci3_N=10000000
+                        time:   [3.1426 s 3.1852 s 3.2696 s]
+                        change: [-4.3678% -2.2785% +0.1068%] (p = 0.07 > 0.05)
+                        No change in performance detected.
+

@@ -1,0 +1,15 @@
+antisequence_10x_file_out/10x_file_N=1000
+                        time:   [1.0902 ms 1.0963 ms 1.1080 ms]
+                        change: [-8.1808% -1.8926% +2.6181%] (p = 0.61 > 0.05)
+                        No change in performance detected.
+Found 3 outliers among 50 measurements (6.00%)
+  3 (6.00%) high severe
+antisequence_10x_file_out/10x_file_N=10000
+                        time:   [10.511 ms 10.519 ms 10.527 ms]
+                        change: [+1.2311% +3.1078% +4.6113%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 7 outliers among 50 measurements (14.00%)
+  1 (2.00%) low mild
+  1 (2.00%) high mild
+  5 (10.00%) high severe
+

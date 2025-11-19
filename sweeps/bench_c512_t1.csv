@@ -1,0 +1,9 @@
+timestamp,benchmark,time_mid_seconds
+2025-11-19T14:15:05-05:00,antisequence_10x_trivial/10x_N=1000,0.00066974
+2025-11-19T14:15:05-05:00,antisequence_10x_trivial/10x_N=10000,0.0046923
+2025-11-19T14:15:05-05:00,antisequence_sci_rna_seq3/sci3_N=1000,0.0009318099999999999
+2025-11-19T14:15:05-05:00,antisequence_sci_rna_seq3/sci3_N=10000,0.007163999999999999
+2025-11-19T14:15:05-05:00,antisequence_10x_trivial_1M/10x_N=1000000,0.43883999999999995
+2025-11-19T14:15:05-05:00,antisequence_10x_trivial_10M/10x_N=10000000,4.3519
+2025-11-19T14:15:05-05:00,antisequence_sci_rna_seq3_1M/sci3_N=1000000,0.65006
+2025-11-19T14:15:05-05:00,antisequence_sci_rna_seq3_10M/sci3_N=10000000,6.3969

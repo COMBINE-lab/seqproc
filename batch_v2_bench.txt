@@ -1,0 +1,106 @@
+
+==> Running correctness tests (cargo test)
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test regression_10x_r2_exact_match ... ok
+test regression_sci3_strict_anchor_mismatch_drops_reads ... ok
+test regression_sci3_tolerant_anchor_mismatch_passes_reads ... ok
+test regression_sci3_anchor_content_and_r2_match ... ok
+test regression_multithread_consistency_10x ... ok
+test regression_multithread_consistency_sci3 ... ok
+test regression_10x_trivial ... ok
+test regression_sci3_nontrivial ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+
+running 28 tests
+test discard_as_void ... ok
+test compile_description ... ok
+test fail_description ... ok
+test compile_map_arguments_with_label ... ok
+test duplicate_def ... ok
+test def_block_fail ... ok
+test fail_norm ... ok
+test compile_map_arguments ... ok
+test fail_remove ... ok
+test expr_unwrap ... ok
+test fail_reuse_label ... ok
+test fail_label_composition ... ok
+test no_err ... ok
+test label_replacement ... ok
+test invalid_geom_one ... ok
+test no_variable ... ok
+test invalid_geom_two ... ok
+test ok_definition ... ok
+test test_desc_with_remove ... ok
+test test_simplified_geom ... ok
+test pass_composition ... ok
+test test_desc_with_pad ... ok
+test stack_orientation ... ok
+test test_desc_with_trunc ... ok
+test test_simplified_geom_from_def ... ok
+test valid_geom ... ok
+test test_simplified_geom_with_transformation ... ok
+test transform_update_map ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test run_tests ... FAILED
+
+failures:
+
+---- run_tests stdout ----
+Running `/Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/target/debug/seqproc -g /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/fgdl/bounded_match.fgdl -1 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/bounded_match/bounded_match_l.fastq -2 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/bounded_match/bounded_match_r.fastq -o /var/folders/qh/979p4vyn73b4fm3gsbbk8ypw0000gn/T/seqproc_test_out.oI6w1Fq4nKdd/bounded_match.fastq -t 6`
+Status: exit status: 0
+Test passed
+Running `/Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/target/debug/seqproc -g /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/fgdl/match.fgdl -1 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/match/match_l.fastq -2 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/match/match_r.fastq -o /var/folders/qh/979p4vyn73b4fm3gsbbk8ypw0000gn/T/seqproc_test_out.oI6w1Fq4nKdd/match.fastq -t 6`
+Status: exit status: 0
+Test passed
+Running `/Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/target/debug/seqproc -g /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/fgdl/pad.fgdl -1 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/pad/pad_l.fastq -2 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/pad/pad_r.fastq -o /var/folders/qh/979p4vyn73b4fm3gsbbk8ypw0000gn/T/seqproc_test_out.oI6w1Fq4nKdd/pad.fastq -t 6`
+Status: exit status: 0
+Test passed
+Running `/Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/target/debug/seqproc -g /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/fgdl/map.fgdl -1 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/map/map_l.fastq -2 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/map/map_r.fastq -o /var/folders/qh/979p4vyn73b4fm3gsbbk8ypw0000gn/T/seqproc_test_out.oI6w1Fq4nKdd/map.fastq -t 6 -a /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/map/map.tsv`
+Status: exit status: 0
+Test failed!
+Differences (-actual|+expected):
+ CGCGCGCGC
+ +
+ IIIIIIIII
+ @read7
+-
++ATGATGATAA
+ +
+-
++IIIIIIIIII
+
+Running `/Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/target/debug/seqproc -g /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/fgdl/filter.fgdl -1 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/filter/filter_l.fastq -2 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/filter/filter_r.fastq -o /var/folders/qh/979p4vyn73b4fm3gsbbk8ypw0000gn/T/seqproc_test_out.oI6w1Fq4nKdd/filter.fastq -t 6 -a /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/filter/filter.txt`
+Status: exit status: 0
+Test passed
+Running `/Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/target/debug/seqproc -g /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/fgdl/trunc.fgdl -1 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/trunc/trunc_l.fastq -2 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/trunc/trunc_r.fastq -o /var/folders/qh/979p4vyn73b4fm3gsbbk8ypw0000gn/T/seqproc_test_out.oI6w1Fq4nKdd/trunc.fastq -t 6`
+Status: exit status: 0
+Test passed
+Running `/Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/target/debug/seqproc -g /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/fgdl/revcomp.fgdl -1 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/revcomp/revcomp_l.fastq -2 /Users/elanfisher/Desktop/fall2025/combine-lab/seqproc/tests/test_data/in/revcomp/revcomp_r.fastq -o /var/folders/qh/979p4vyn73b4fm3gsbbk8ypw0000gn/T/seqproc_test_out.oI6w1Fq4nKdd/revcomp.fastq -t 6`
+Status: exit status: 0
+Test passed
+Error: DiffErr
+
+
+failures:
+    run_tests
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+

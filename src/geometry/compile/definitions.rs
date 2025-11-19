@@ -49,7 +49,7 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
             GeometryPiece {
                 type_,
                 size,
-                label: Some(label.to_owned()),
+                label: Some(label.to_owned()),      // Attach the label to the geometry piece as the expr base
             },
             span,
         )
@@ -57,9 +57,9 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
         unreachable!()
     };
 
-    let gp = GeometryMeta { expr: gp, stack };
+    let gp = GeometryMeta { expr: gp, stack };      // Now we have the geometry piece and the stack of functions
 
-    gp.validate_expr().map(|()| gp)
+    gp.validate_expr().map(|()| gp)      // Validate the function composition against the geometry piece
 }
 
 pub fn compile_definitions(

@@ -1,0 +1,55 @@
+antisequence_10x_trivial/10x_N=1000
+                        time:   [968.52 µs 979.40 µs 990.29 µs]
+                        change: [-8.4409% -5.6476% -2.9650%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 50 measurements (6.00%)
+  2 (4.00%) low mild
+  1 (2.00%) high mild
+antisequence_10x_trivial/10x_N=10000
+                        time:   [3.3079 ms 3.3211 ms 3.3385 ms]
+                        change: [-11.792% -6.2749% -0.2148%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Found 9 outliers among 50 measurements (18.00%)
+  2 (4.00%) high mild
+  7 (14.00%) high severe
+
+antisequence_sci_rna_seq3/sci3_N=1000
+                        time:   [1.3503 ms 1.3582 ms 1.3661 ms]
+                        change: [+1.5972% +3.1963% +4.6752%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 50 measurements (10.00%)
+  2 (4.00%) high mild
+  3 (6.00%) high severe
+antisequence_sci_rna_seq3/sci3_N=10000
+                        time:   [4.5257 ms 4.5627 ms 4.6301 ms]
+                        change: [-0.7638% +1.4539% +3.9423%] (p = 0.23 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 50 measurements (8.00%)
+  4 (8.00%) high severe
+
+antisequence_10x_trivial_1M/10x_N=1000000
+                        time:   [224.79 ms 226.16 ms 226.94 ms]
+                        change: [-1.6135% -1.2538% -0.8316%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+
+antisequence_10x_trivial_10M/10x_N=10000000
+                        time:   [2.2315 s 2.2425 s 2.2658 s]
+                        change: [-1.1219% -0.0741% +0.9487%] (p = 0.89 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+
+antisequence_sci_rna_seq3_1M/sci3_N=1000000
+                        time:   [338.54 ms 340.08 ms 342.22 ms]
+                        change: [-0.5961% -0.0851% +0.4672%] (p = 0.81 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 25 measurements (8.00%)
+  2 (8.00%) high severe
+
+antisequence_sci_rna_seq3_10M/sci3_N=10000000
+                        time:   [3.2835 s 3.3106 s 3.3524 s]
+                        change: [-1.8443% -1.0871% -0.2335%] (p = 0.02 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+

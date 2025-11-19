@@ -1,0 +1,41 @@
+antisequence_10x_trivial/10x_N=1000
+                        time:   [1.2451 ms 1.3758 ms 1.5163 ms]
+                        change: [+3.4826% +10.137% +17.581%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 10 outliers among 50 measurements (20.00%)
+  4 (8.00%) high mild
+  6 (12.00%) high severe
+antisequence_10x_trivial/10x_N=10000
+                        time:   [10.026 ms 10.705 ms 11.577 ms]
+                        change: [-17.764% -10.960% -4.2137%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 50 measurements (12.00%)
+  3 (6.00%) low mild
+  1 (2.00%) high mild
+  2 (4.00%) high severe
+
+antisequence_sci_rna_seq3/sci3_N=1000
+                        time:   [1.6529 ms 1.7439 ms 1.8558 ms]
+                        change: [+14.854% +19.721% +24.675%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 8 outliers among 50 measurements (16.00%)
+  2 (4.00%) high mild
+  6 (12.00%) high severe
+antisequence_sci_rna_seq3/sci3_N=10000
+                        time:   [16.955 ms 17.658 ms 18.395 ms]
+                        change: [+29.315% +33.078% +37.347%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 50 measurements (10.00%)
+  4 (8.00%) high mild
+  1 (2.00%) high severe
+
+antisequence_10x_trivial_1M/10x_N=1000000
+                        time:   [1.0903 s 1.1118 s 1.1289 s]
+                        change: [+8.4499% +11.942% +15.059%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+
+antisequence_sci_rna_seq3_1M/sci3_N=1000000
+                        time:   [1.3855 s 1.4164 s 1.4487 s]
+                        change: [+10.485% +13.173% +15.813%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+

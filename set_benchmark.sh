@@ -29,8 +29,8 @@ fi
 # sci3 disk (ENA subset), and multi-run disk aggregate (if data present).
 # Additionally, enable 1M-read synthetic benches by default via ANTISEQ_LARGE=1.
 # You can override by exporting ANTISEQ_LARGE=0 before calling this script.
- echo "[set_benchmark] Saving Criterion baseline (ANTISEQ_BATCH_SIZE=${ANTISEQ_BATCH_SIZE:-1024}, ANTISEQ_LARGE=${ANTISEQ_LARGE:-1}): ${BASELINE}"
-ANTISEQ_BATCH_SIZE=${ANTISEQ_BATCH_SIZE:-1024} ANTISEQ_LARGE=${ANTISEQ_LARGE:-1} cargo bench --bench antisequence_benches -- --save-baseline "${BASELINE}"
+ echo "[set_benchmark] Saving Criterion baseline (ANTISEQ_CHUNK_SIZE=${ANTISEQ_CHUNK_SIZE:-1024}, ANTISEQ_LARGE=${ANTISEQ_LARGE:-1}): ${BASELINE}"
+ANTISEQ_CHUNK_SIZE=${ANTISEQ_CHUNK_SIZE:-1024} ANTISEQ_LARGE=${ANTISEQ_LARGE:-1} cargo bench --bench antisequence_benches -- --save-baseline "${BASELINE}"
 
 cat <<EOF
 
@@ -44,5 +44,5 @@ Optionally save a post-optimization baseline:
 Notes:
 - To include the on-disk 1M ENA bench, set SCI3_R1_1M and SCI3_R2_1M to gzipped FASTQ paths before running.
 - To disable 1M synthetic benches, run: ANTISEQ_LARGE=0 ./set_benchmark.sh ${BASELINE}
-- To change batch size, set ANTISEQ_BATCH_SIZE (default 1024)
+- To change batch size, set ANTISEQ_CHUNK_SIZE (default 1024)
 EOF
