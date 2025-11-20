@@ -1,0 +1,20 @@
+# splitcode config approximating the sci-RNA-seq3 antisequence geometry
+# R1: variable barcode (9-10 nt) + anchor CAGAGC + UMI[8] + trailing b[10]
+# R2: cDNA, passed through.
+#
+# Here we define a single tag group "anchor" that looks for the fixed
+# sequence CAGAGC in file #0 (R1), anywhere in the read. We then use
+# @extract to grab an 8-nt UMI immediately downstream of the anchor.
+#
+# NOTE: This is an approximation of seqproc's geometry; it exercises
+# similar anchor/UMI logic but does not attempt to normalize or label
+# the variable-length barcode region explicitly.
+
+@extract <splitcode_sci_rna_seq3[9-10]>{{anchor}}
+@extract {{anchor}}8<splitcode_sci_rna_seq3[10]>
+@extract {{anchor}}<splitcode_sci_rna_seq3[8]>
+
+# Tab-delimited tag table header:
+# group	id	tag	distances	next	maxFindsG	location
+group	id	tag	distances	next	maxFindsG	location
+anchor	anchor	CAGAGC	0	-	1	0:9:16
