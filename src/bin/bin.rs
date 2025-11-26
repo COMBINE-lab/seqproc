@@ -1,11 +1,12 @@
 use clap::arg;
+use std::fs::File;
 use std::io;
 use std::path::PathBuf;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use seqproc::{
     error::handle_errors,
-    execute::{compile_geom, interpret},
+    execute::{compile_geom, read_pairs_to_file},
 };
 
 /// General puprose sequence preprocessor
@@ -34,6 +35,10 @@ pub struct Args {
     /// number of threads to use
     #[arg(short, long, default_value_t = 1)]
     threads: usize,
+
+    /// Optional path where JSON summary statistics will be written
+    #[arg(short = 's', long = "summary")]
+    summary: Option<PathBuf>,
 
     #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     additional: Vec<String>,
@@ -73,15 +78,64 @@ fn main() {
     };
 
     match compiled_efgdl {
-        Ok(geom) => interpret(
-            &args.file1,
-            &args.file2,
-            &out1,
-            &out2,
-            args.threads,
-            additional_args,
-            geom,
-        ),
+        Ok(geom) => {
+            // If no summary file is requested, preserve the existing behavior and
+            // just run the transformation without collecting stats.
+            if args.summary.is_none() {
+                return seqproc::execute::interpret(
+                    &args.file1,
+                    &args.file2,
+                    &out1,
+                    &out2,
+                    args.threads,
+                    additional_args,
+                    geom,
+                );
+            }
+
+            // When a summary file is requested, run through read_pairs_to_file so
+            // that we obtain SeqprocStats, then write them as JSON.
+            let summary_path = args.summary.unwrap();
+
+            // For stats collection we need concrete output paths. If the user did
+            // not supply any, mirror the behavior of interpret() by discarding
+            // output to /dev/null.
+            let mut out1_stats = out1.clone();
+            let mut out2_stats = out2.clone();
+            if out1_stats.as_os_str().is_empty() {
+                out1_stats = PathBuf::from("/dev/null");
+            }
+            if out2_stats.as_os_str().is_empty() {
+                out2_stats = PathBuf::from("/dev/null");
+            }
+
+            let mut stats = match read_pairs_to_file(
+                geom,
+                &args.file1,
+                &args.file2,
+                &out1_stats,
+                &out2_stats,
+                args.threads,
+                additional_args,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Error while running seqproc: {e}");
+                    return;
+                }
+            };
+
+            let call = std::env::args().collect::<Vec<_>>().join(" ");
+            stats.call = Some(call);
+
+            if let Ok(file) = File::create(&summary_path) {
+                if let Err(e) = serde_json::to_writer_pretty(file, &stats) {
+                    eprintln!("Failed to write summary JSON to {:?}: {}", summary_path, e);
+                }
+            } else {
+                eprintln!("Failed to create summary file at {:?}", summary_path);
+            }
+        }
         Err(e) => {
             handle_errors(e, geom);
         }

@@ -7,6 +7,7 @@ use anyhow::{bail, Result};
 use chumsky::{prelude::Simple, Parser, Stream};
 use nix::sys::stat;
 use nix::unistd;
+use serde::Serialize;
 use tempfile::tempdir;
 use tracing::info;
 
@@ -23,10 +24,34 @@ pub struct FifoSeqprocData {
     pub join_handle: thread::JoinHandle<Result<SeqprocStats>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SeqprocStats {
+    pub seqproc_version: String,
+    pub call: Option<String>,
+
+    pub n_fastqs: u32,
+    pub n_processed: u64,
+    pub n_reads_max: u64,
+
     pub total_fragments: u64,
     pub failed_parsing: u64,
+    pub read_length_mean: Vec<f64>,
+    pub read_length_min: Vec<u64>,
+    pub read_length_max: Vec<u64>,
+    pub match_distance_stats: Vec<MatchDistanceStats>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MatchDistanceStats {
+    pub label: String,
+    pub unmatched: u64,
+    pub distance_histogram: Vec<DistanceBin>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DistanceBin {
+    pub distance: usize,
+    pub count: u64,
 }
 
 pub fn interpret(
@@ -115,9 +140,99 @@ fn interpret_to_pipes(
 
     graph.run_with_threads(threads);
 
+    let input_stats = graph.input_stats();
+
+    let (n_fastqs, n_processed, n_reads_max, read_length_min, read_length_max, read_length_mean) =
+        if let Some(s) = input_stats {
+            let n_fastqs = s.n_fastqs as u32;
+
+            let mut read_length_min_u64 = Vec::with_capacity(s.n_fastqs);
+            let mut read_length_max_u64 = Vec::with_capacity(s.n_fastqs);
+            let mut read_length_mean_f64 = Vec::with_capacity(s.n_fastqs);
+
+            let mut max_count = 0usize;
+
+            for i in 0..s.n_fastqs {
+                let count = *s.read_counts.get(i).unwrap_or(&0);
+                if count > max_count {
+                    max_count = count;
+                }
+
+                let min = *s.read_length_min.get(i).unwrap_or(&0);
+                let max = *s.read_length_max.get(i).unwrap_or(&0);
+                let sum = *s.read_length_sum.get(i).unwrap_or(&0);
+
+                read_length_min_u64.push(min as u64);
+                read_length_max_u64.push(max as u64);
+
+                let mean = if count > 0 {
+                    sum as f64 / (count as f64)
+                } else {
+                    0.0
+                };
+                read_length_mean_f64.push(mean);
+            }
+
+            let n_processed = max_count as u64;
+            let n_reads_max = n_processed;
+
+            (
+                n_fastqs,
+                n_processed,
+                n_reads_max,
+                read_length_min_u64,
+                read_length_max_u64,
+                read_length_mean_f64,
+            )
+        } else {
+            (0, 0, 0, Vec::new(), Vec::new(), Vec::new())
+        };
+
+    let match_distance_stats = graph
+        .match_distance_counts()
+        .into_iter()
+        .map(|c| {
+            let matched_total: u64 = c.counts.iter().map(|&x| x as u64).sum();
+            let unmatched = (c.total as u64).saturating_sub(matched_total);
+
+            let distance_histogram = c
+                .counts
+                .into_iter()
+                .enumerate()
+                .filter_map(|(distance, count)| {
+                    if count == 0 {
+                        None
+                    } else {
+                        Some(DistanceBin {
+                            distance,
+                            count: count as u64,
+                        })
+                    }
+                })
+                .collect();
+
+            MatchDistanceStats {
+                label: c.label,
+                unmatched,
+                distance_histogram,
+            }
+        })
+        .collect();
+
     SeqprocStats {
-        total_fragments: 0,
+        seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
+        call: None,
+
+        n_fastqs,
+        n_processed,
+        n_reads_max,
+
+        total_fragments: n_processed,
         failed_parsing: 0,
+        read_length_mean,
+        read_length_min,
+        read_length_max,
+        match_distance_stats,
     }
 }
 
@@ -163,20 +278,20 @@ pub fn read_pairs_to_file(
     threads: usize,
     additional_args: Vec<&str>,
 ) -> Result<SeqprocStats> {
-    interpret(
-        in1,
-        in2,
-        out1,
-        out2,
+    let files1 = vec![in1.to_str().unwrap_or("").to_owned()];
+    let files2 = vec![in2.to_str().unwrap_or("").to_owned()];
+
+    let stats = interpret_to_pipes(
+        files1,
+        files2,
+        out1.to_path_buf(),
+        out2.to_path_buf(),
         threads,
         additional_args,
         compiled_data,
     );
 
-    Ok(SeqprocStats {
-        total_fragments: 0,
-        failed_parsing: 0,
-    })
+    Ok(stats)
 }
 
 pub fn read_pairs_to_fifo<'a: 'static>(

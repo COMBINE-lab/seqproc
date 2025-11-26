@@ -1123,6 +1123,7 @@ dependencies = [
  "md5",
  "nix",
  "serde",
+ "serde_json",
  "similar-asserts",
  "tempdir",
  "tempfile",

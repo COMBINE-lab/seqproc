@@ -1,0 +1,6 @@
+# Split-seq config
+@extract 1:0<umi[10]>,1:10<b3[8]>,1:48<b2[8]>,1:78<b1[8]>
+
+group	id	tag	distances	next	maxFindsG	location
+gL2	L2	GTGGCCGATGTTTCGCATCGGCGTACGACT	0	-	1	-
+gL1	L1	ATCCACGTGCTTGAGACTGTGG	0	-	1	-
