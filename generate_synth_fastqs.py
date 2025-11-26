@@ -126,6 +126,60 @@ def make_fastq_pair_sci3(
     return ("".join(lines_r1), "".join(lines_r2))
 
 
+def make_fastq_pair_splitseq(num_reads: int) -> tuple[str, str]:
+    """
+    R1: 60bp cDNA (Bio)
+    R2: 86bp Tech (UMI 10 + R3 8 + L2 30 + R2 8 + L1 22 + R1 8)
+    Structure based on SPLiT-seq tutorial positions.
+    """
+    # Linker 2 (between R3 and R2)
+    linker2 = "GTGGCCGATGTTTCGCATCGGCGTACGACT"
+    # Linker 1 (between R2 and R1)
+    linker1 = "ATCCACGTGCTTGAGACTGTGG"
+
+    lines_r1 = []
+    lines_r2 = []
+
+    for i in range(num_reads):
+        lines_r1.append(f"@r{i}\n")
+        lines_r2.append(f"@r{i}\n")
+
+        # R1: cDNA 60bp
+        seq_r1 = []
+        for j in range(60):
+            seq_r1.append(nuc(i + j * 7 + 3))
+        seq_r1_str = "".join(seq_r1)
+        lines_r1.append(seq_r1_str + "\n")
+        lines_r1.append("+\n")
+        lines_r1.append("I" * 60 + "\n")
+
+        # R2: UMI(10) + R3(8) + L2(30) + R2(8) + L1(22) + R1(8)
+        seq_r2 = []
+        # UMI 10
+        for j in range(10):
+            seq_r2.append(nuc(i + j * 11 + 1))
+        # R3 8
+        for j in range(8):
+            seq_r2.append(nuc(i + j * 13 + 2))
+        # Linker 2 (30)
+        seq_r2.append(linker2)
+        # R2 8
+        for j in range(8):
+            seq_r2.append(nuc(i + j * 17 + 3))
+        # Linker 1 (22)
+        seq_r2.append(linker1)
+        # R1 8
+        for j in range(8):
+            seq_r2.append(nuc(i + j * 19 + 4))
+
+        seq_r2_str = "".join(seq_r2)
+        lines_r2.append(seq_r2_str + "\n")
+        lines_r2.append("+\n")
+        lines_r2.append("I" * len(seq_r2_str) + "\n")
+
+    return ("".join(lines_r1), "".join(lines_r2))
+
+
 def write_pair(r1: str, r2: str, out_dir: Path, prefix: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     r1_path = out_dir / f"{prefix}_R1.fastq"
@@ -144,9 +198,9 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--protocol",
-        choices=["10x", "sci3", "both"],
-        default="both",
-        help="Which protocol(s) to generate",
+        choices=["10x", "sci3", "split_seq", "both", "all"],
+        default="all",
+        help="Which protocol(s) to generate (default: all)",
     )
     p.add_argument(
         "--run-sizes",
@@ -192,8 +246,10 @@ def main() -> None:
     if args.anchor_hamming1_prob + args.anchor_bad_prob > 1.0 + 1e-9:
         raise SystemExit("anchor_hamming1_prob + anchor_bad_prob must be <= 1.0")
 
-    do_10x = args.protocol in {"10x", "both"}
-    do_sci3 = args.protocol in {"sci3", "both"}
+    do_all = args.protocol == "all"
+    do_10x = args.protocol in {"10x", "both"} or do_all
+    do_sci3 = args.protocol in {"sci3", "both"} or do_all
+    do_split = args.protocol == "split_seq" or do_all
 
     for n in args.run_sizes:
         if do_10x:
@@ -206,6 +262,9 @@ def main() -> None:
                 args.anchor_bad_prob,
             )
             write_pair(r1, r2, out_dir, prefix=f"sci3_N{n}")
+        if do_split:
+            r1, r2 = make_fastq_pair_splitseq(n)
+            write_pair(r1, r2, out_dir, prefix=f"split_seq_N{n}")
 
 
 if __name__ == "__main__":

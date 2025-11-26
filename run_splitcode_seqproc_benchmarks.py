@@ -13,18 +13,24 @@ PROTOCOL_INPUT_NAME = {
     "10x": "10x",
     "sci3": "sci3",
     "sci3_tolerant": "sci3",
+    "split_seq": "split_seq",
+    "split_seq_v1": "split_seq_v1",
 }
 
 PROTOCOL_GEOM_NAME = {
     "10x": "10x.geom",
     "sci3": "sci3.geom",
     "sci3_tolerant": "sci3_tolerant.geom",
+    "split_seq": "split_seq.geom",
+    "split_seq_v1": "split_seq_v1.geom",
 }
 
 PROTOCOL_SPLITCODE_CONFIG_NAME = {
     "10x": "splitcode_10x.txt",
     "sci3": "splitcode_sci3.txt",
     "sci3_tolerant": "splitcode_sci3_tolerant.txt",
+    "split_seq": "splitcode_split_seq.txt",
+    "split_seq_v1": "splitcode_split_seq_v1.txt",
 }
 
 
@@ -79,6 +85,11 @@ def parse_args() -> argparse.Namespace:
         help="cargo executable to use for running seqproc binary",
     )
     p.add_argument(
+        "--seqproc-save-stats",
+        action="store_true",
+        help="If set, pass --summary to seqproc and save JSON stats per benchmark run",
+    )
+    p.add_argument(
         "--data-dir",
         type=str,
         default="data/bench",
@@ -88,9 +99,9 @@ def parse_args() -> argparse.Namespace:
         "--protocols",
         type=str,
         nargs="+",
-        choices=["10x", "sci3", "sci3_tolerant"],
+        choices=["10x", "sci3", "sci3_tolerant", "split_seq", "split_seq_v1"],
         default=["10x", "sci3"],
-        help="Which protocols to benchmark (10x, sci3, sci3_tolerant)",
+        help="Which protocols to benchmark (10x, sci3, sci3_tolerant, split_seq, split_seq_v1)",
     )
     return p.parse_args()
 
@@ -135,28 +146,31 @@ def main() -> None:
                     ]
                 )
 
-                run(
-                    " ".join(
-                        [
-                            python_exe,
-                            shlex.quote(str(bench_helper)),
-                            "--tool",
-                            "splitcode",
-                            "--protocol",
-                            protocol,
-                            "--run-size",
-                            str(n),
-                            "--threads",
-                            str(t),
-                            "--runs",
-                            str(args.runs),
-                            "--out-csv",
-                            shlex.quote(args.out_csv),
-                            "--",
-                            split_cmd,
-                        ]
+                try:
+                    run(
+                        " ".join(
+                            [
+                                python_exe,
+                                shlex.quote(str(bench_helper)),
+                                "--tool",
+                                "splitcode",
+                                "--protocol",
+                                protocol,
+                                "--run-size",
+                                str(n),
+                                "--threads",
+                                str(t),
+                                "--runs",
+                                str(args.runs),
+                                "--out-csv",
+                                shlex.quote(args.out_csv),
+                                "--",
+                                split_cmd,
+                            ]
+                        )
                     )
-                )
+                except subprocess.CalledProcessError:
+                    print(f"[warning] splitcode benchmark failed for {protocol} N={n} T={t}")
 
                 # seqproc benchmark via cargo run --bin seqproc
                 # Assumes there is a geom file for each protocol in seqproc/, e.g. 10x.geom, sci3.geom, sci3_tolerant.geom
@@ -165,28 +179,37 @@ def main() -> None:
                     print(f"[skip seqproc] Missing geom file {geom_path}; create it to benchmark seqproc for {protocol}")
                     continue
 
-                seqproc_cmd = " ".join(
-                    [
-                        shlex.quote(args.seqproc_cargo),
-                        "run",
-                        "--release",
-                        "--bin",
-                        "seqproc",
-                        "--",
-                        "--geom",
-                        shlex.quote(str(geom_path)),
-                        "--file1",
-                        shlex.quote(str(r1)),
-                        "--file2",
-                        shlex.quote(str(r2)),
-                        "--threads",
-                        str(t),
-                        "--out1",
-                        "/dev/null",
-                        "--out2",
-                        "/dev/null",
-                    ]
-                )
+                # Base seqproc command (no stats by default).
+                seqproc_cmd_parts = [
+                    shlex.quote(args.seqproc_cargo),
+                    "run",
+                    "--release",
+                    "--bin",
+                    "seqproc",
+                    "--",
+                    "--geom",
+                    shlex.quote(str(geom_path)),
+                    "--file1",
+                    shlex.quote(str(r1)),
+                    "--file2",
+                    shlex.quote(str(r2)),
+                    "--threads",
+                    str(t),
+                    "--out1",
+                    "/dev/null",
+                    "--out2",
+                    "/dev/null",
+                ]
+
+                # Optionally save seqproc JSON stats via --summary.
+                if args.seqproc_save_stats:
+                    stats_path = HERE / "data" / "bench_mismatch" / f"seqproc_{protocol}_N{n}_T{t}_stats.json"
+                    seqproc_cmd_parts.extend([
+                        "--summary",
+                        shlex.quote(str(stats_path)),
+                    ])
+
+                seqproc_cmd = " ".join(seqproc_cmd_parts)
 
                 run(
                     " ".join(

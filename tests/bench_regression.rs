@@ -365,3 +365,102 @@ brc1  = b[9-10]
     fs::remove_file(out1).ok();
     fs::remove_file(out2).ok();
 }
+
+
+#[test]
+fn stats_sci3_exact_anchor_distance_zero() {
+    // For the standard sci3 geometry with an exact anchor, all accepted reads
+    // should have edit distance 0 at the anchor-matching node.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = PathBuf::from(tmp.path());
+    let (in1, in2) = write_fastq_pair_sci3(&dir, 50);
+    let out1 = dir.join("out1_sci3_stats_exact.fastq");
+    let out2 = dir.join("out2_sci3_stats_exact.fastq");
+
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1  = b[9-10]
+1{<brc1><anchor>u[8]b[10]}2{r:}
+"#.to_string();
+    let compiled = compile_geom(geom).expect("compile_geom");
+
+    let stats = read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![])
+        .expect("read_pairs_to_file");
+
+    assert!(!stats.match_distance_stats.is_empty());
+
+    let total_reads = 50u64;
+
+    // Find the stats entry whose total count matches the number of reads
+    let anchor_entry = stats
+        .match_distance_stats
+        .iter()
+        .find(|s| s.distance_histogram.iter().map(|b| b.count).sum::<u64>() == total_reads)
+        .expect("expected one stats entry with total count == total_reads");
+
+    // All mass should be at distance 0
+    let zero_count = anchor_entry
+        .distance_histogram
+        .iter()
+        .find(|b| b.distance == 0)
+        .map(|b| b.count)
+        .unwrap_or(0);
+    assert_eq!(zero_count, total_reads);
+
+    for bin in anchor_entry
+        .distance_histogram
+        .iter()
+        .filter(|b| b.distance != 0)
+    {
+        assert_eq!(bin.count, 0, "expected zero for distance {}", bin.distance);
+    }
+}
+
+#[test]
+fn stats_sci3_tolerant_anchor_mismatch_distance_one() {
+    // For the tolerant sci3 geometry with a 1-nt-mismatched anchor and
+    // Hamming tolerance 1, all accepted reads should have distance 1 at the
+    // anchor-matching node.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = PathBuf::from(tmp.path());
+    let (in1, in2) = write_fastq_pair_sci3_mismatch_anchor(&dir, 40);
+    let out1 = dir.join("out1_sci3_stats_tol.fastq");
+    let out2 = dir.join("out2_sci3_stats_tol.fastq");
+
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1  = b[9-10]
+1{<brc1> hamming(<anchor>, 1) u[8] b[10]}2{r:}
+"#.to_string();
+    let compiled = compile_geom(geom).expect("compile_geom");
+
+    let stats = read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![])
+        .expect("read_pairs_to_file");
+
+    assert!(!stats.match_distance_stats.is_empty());
+
+    let total_reads = 40u64;
+
+    // Find the stats entry whose total count matches the number of reads
+    let anchor_entry = stats
+        .match_distance_stats
+        .iter()
+        .find(|s| s.distance_histogram.iter().map(|b| b.count).sum::<u64>() == total_reads)
+        .expect("expected one stats entry with total count == total_reads");
+
+    let one_count = anchor_entry
+        .distance_histogram
+        .iter()
+        .find(|b| b.distance == 1)
+        .map(|b| b.count)
+        .unwrap_or(0);
+    assert_eq!(one_count, total_reads);
+
+    for bin in anchor_entry
+        .distance_histogram
+        .iter()
+        .filter(|b| b.distance != 1)
+    {
+        assert_eq!(bin.count, 0, "expected zero for distance {}", bin.distance);
+    }
+}
