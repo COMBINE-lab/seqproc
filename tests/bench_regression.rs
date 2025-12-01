@@ -464,3 +464,36 @@ brc1  = b[9-10]
         assert_eq!(bin.count, 0, "expected zero for distance {}", bin.distance);
     }
 }
+
+#[test]
+fn regression_fixedseq_linker_hamming_prefix_no_panic() {
+    // Regression test for Hamming applied to a named FixedSeq linker.
+    //
+    // Geometry:
+    //   linker = f[ACGTAC]
+    //   1{hamming(<linker>, 2) r:}2{r:}
+    //
+    // This used to be able to leave a Hamming function on the GeometryMeta
+    // stack and trigger a panic in execute_stack. The main assertion here
+    // is simply that the pipeline runs to completion without error.
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = PathBuf::from(tmp.path());
+
+    // Reuse the existing 10x synthetic generator; any reads are fine as long
+    // as the graph executes end‑to‑end.
+    let (in1, in2) = write_fastq_pair_10x(&dir, 20);
+    let out1 = dir.join("out1_linker_hamm.fastq");
+    let out2 = dir.join("out2_linker_hamm.fastq");
+
+    let geom = r#"
+linker = f[ACGTAC]
+1{hamming(<linker>, 2) r:}2{r:}
+"#.to_string();
+
+    let compiled = compile_geom(geom).expect("compile_geom");
+
+    // The key property: this must not panic inside interpret / execute_stack.
+    read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![])
+        .expect("read_pairs_to_file should succeed for linker Hamming geometry");
+}
