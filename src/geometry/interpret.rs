@@ -320,15 +320,16 @@ impl<'a> GeometryMeta {
         match size.clone() {
             IntervalShape::FixedSeq(S(seq, _)) => {
                 let labels = vec![this_label.as_str(), &next_label];
-                let match_type = if !stack.is_empty() {
-                    match stack.last().unwrap() {
-                        S(CompiledFunction::Hamming(n), _) => {
-                            HammingPrefix(Threshold::Count(seq.len() - n))
-                        }
-                        _ => PrefixAln {
-                            identity: 1.0,
-                            overlap: 1.0,
-                        },
+
+                // Determine how we should perform the prefix match based on the top of the stack:
+                let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
+                    let n = *n;
+                    stack.pop();
+                    HammingPrefix(Threshold::Count(seq.len() - n))
+                } else if !stack.is_empty() {
+                    PrefixAln {
+                        identity: 1.0,
+                        overlap: 1.0,
                     }
                 } else {
                     ExactPrefix
