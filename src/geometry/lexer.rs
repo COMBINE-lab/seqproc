@@ -84,6 +84,10 @@ pub enum Token {
     Filter,
     /// `hamming`.
     Hamming,
+    /// `search`.
+    Search,
+    /// `search_whitelist`.
+    SearchWhitelist,
     /// `->`.
     TransformTo,
     /// `$n`, where `n` is a numeric literal.
@@ -147,6 +151,8 @@ impl fmt::Display for Token {
             FilterWithinDist => f.write_str("filter_within_dist"),
             Filter => f.write_str("filter"),
             Hamming => f.write_str("hamming"),
+            Search => f.write_str("search"),
+            SearchWhitelist => f.write_str("search_whitelist"),
             Barcode => f.write_char('b'),
             Umi => f.write_char('u'),
             Discard => f.write_char('x'),
@@ -219,6 +225,8 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "filter" => Token::Filter,
         "map" => Token::Map,
         "hamming" => Token::Hamming,
+        "search" => Token::Search,
+        "search_whitelist" => Token::SearchWhitelist,
         "self" => Token::Self_,
         "b" => Token::Barcode,
         "u" => Token::Umi,

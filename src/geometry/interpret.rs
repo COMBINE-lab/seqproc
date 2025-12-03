@@ -126,10 +126,142 @@ fn interpret_geometry(
                 }
             }
             IntervalShape::UnboundedLen => {
-                // by rules of geometry this should either be None or a sequence
-                if let Some(next) = geometry_iter.next() {
-                    next.interpret_dual(gp, &mut label, additional_args, graph, &mut min_start_idx);
+                // Mini-backtracking: scan ahead to find the first FixedSeq anchor.
+                // Collect any intermediate FixedLen intervals so we can slice them
+                // out of the "before anchor" region after the search.
+                let mut intermediate_fixed: Vec<&GeometryMeta> = Vec::new();
+                let mut anchor: Option<&GeometryMeta> = None;
+                let mut lookahead = geometry_iter.clone();
+
+                while let Some(piece) = lookahead.next() {
+                    let (_, piece_size, _, piece_stack) = piece.unpack();
+                    match piece_size {
+                        IntervalShape::FixedSeq(_) => {
+                            anchor = Some(piece);
+                            break;
+                        }
+                        IntervalShape::FixedLen(_) => {
+                            // Check if this FixedLen has SearchWhitelist - makes it an anchor
+                            let has_search_whitelist = piece_stack.iter().any(|s| {
+                                matches!(s.0, CompiledFunction::SearchWhitelist(_, _, _))
+                            });
+                            if has_search_whitelist {
+                                anchor = Some(piece);
+                                break;
+                            } else {
+                                intermediate_fixed.push(piece);
+                            }
+                        }
+                        _ => {
+                            // Hit another variable-length segment; stop scanning.
+                            break;
+                        }
+                    }
+                }
+
+                if let Some(anchor_gp) = anchor {
+                    // Consume all the pieces we scanned past.
+                    for _ in 0..intermediate_fixed.len() {
+                        geometry_iter.next();
+                    }
+                    // Consume the anchor itself.
+                    geometry_iter.next();
+
+                    // Use interpret_dual to search for the anchor and create
+                    // the 3-way split: prev_label (before anchor), anchor, next_label (after).
+                    anchor_gp.interpret_dual(
+                        gp,
+                        &mut label,
+                        additional_args,
+                        graph,
+                        &mut min_start_idx,
+                    );
+
+                    // Now slice the prev_label region into the intermediate FixedLen pieces.
+                    // After interpret_dual, the "before anchor" region is labeled as either
+                    // the unbounded segment's label or `{cur_label}_l`.
+                    if !intermediate_fixed.is_empty() {
+                        let (_, _, unbounded_label, _) = gp.unpack();
+                        let seq_name = label.first().unwrap();
+                        let (_, cur_label) = labels(&label);
+
+                        let prev_region_label = if let Some(l) = unbounded_label {
+                            format!("{seq_name}{l}")
+                        } else {
+                            format!("{cur_label}{NEXT_LEFT}")
+                        };
+
+                        // We need to slice from the RIGHT side of prev_region_label
+                        // because the FixedLen pieces are adjacent to the anchor.
+                        // E.g., for "r: u[2] b[2] f[ACG]" with read "XXTTGGACG":
+                        //   prev_region_label = "XXTTGG" (6 chars)
+                        //   We want: discard "XX", then umi="TT", bc="GG"
+                        // So we cut from the right: bc is last 2, umi is 2 before that.
+
+                        // Calculate total length of intermediate fixed segments
+                        let total_fixed_len: usize = intermediate_fixed
+                            .iter()
+                            .map(|p| {
+                                if let IntervalShape::FixedLen(S(len, _)) = p.unpack().1 {
+                                    len
+                                } else {
+                                    0
+                                }
+                            })
+                            .sum();
+
+                        // First, cut off the "true unbounded" prefix from the fixed portion.
+                        // The fixed portion is the last `total_fixed_len` bases of prev_region_label.
+                        // Use negative index to cut from the right.
+                        let fixed_region_label = format!("{cur_label}_fixed");
+                        graph.add(cut_node(
+                            into_transform_expr(
+                                &prev_region_label,
+                                [VOID_LABEL, fixed_region_label.as_str()],
+                            ),
+                            Expr::from(-(total_fixed_len as isize)),
+                        ));
+
+                        // Now slice the fixed_region_label into individual pieces from left to right.
+                        let mut slice_label = fixed_region_label.clone();
+                        for (i, piece) in intermediate_fixed.iter().enumerate() {
+                            let (piece_type, piece_size, piece_label, piece_stack) = piece.unpack();
+                            if let IntervalShape::FixedLen(S(len, _)) = piece_size {
+                                let this_label = if let Some(l) = piece_label {
+                                    format!("{seq_name}{l}")
+                                } else {
+                                    format!("{cur_label}_p{i}")
+                                };
+
+                                let is_last = i == intermediate_fixed.len() - 1;
+                                let next_slice_label = if is_last {
+                                    VOID_LABEL.to_string()
+                                } else {
+                                    format!("{cur_label}_slice{}", i + 1)
+                                };
+
+                                graph.add(cut_node(
+                                    into_transform_expr(
+                                        &slice_label,
+                                        [this_label.as_str(), next_slice_label.as_str()],
+                                    ),
+                                    Expr::from(len),
+                                ));
+                                graph.add(valid_label_length(&this_label, len, None));
+
+                                // Execute any stack functions on this piece
+                                let mut stack = piece_stack;
+                                if piece_type == IntervalKind::Discard {
+                                    stack.push(S(CompiledFunction::Remove, 0..1));
+                                }
+                                execute_stack(stack, &this_label, &piece_size, additional_args, graph);
+
+                                slice_label = next_slice_label;
+                            }
+                        }
+                    }
                 } else {
+                    // No FixedSeq anchor found; treat as a normal unbounded segment.
                     gp.interpret(&label, additional_args, graph);
                 }
             }
@@ -319,36 +451,105 @@ impl<'a> GeometryMeta {
         // execute the requisite process here
         match size.clone() {
             IntervalShape::FixedSeq(S(seq, _)) => {
-                let labels = vec![this_label.as_str(), &next_label];
+                // Check if Search is on the stack - forces global search instead of prefix match
+                let has_search = stack.iter().any(|s| matches!(s.0, CompiledFunction::Search));
 
-                // Determine how we should perform the prefix match based on the top of the stack:
-                let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
-                    let n = *n;
-                    stack.pop();
-                    HammingPrefix(Threshold::Count(seq.len() - n))
-                } else if !stack.is_empty() {
-                    PrefixAln {
-                        identity: 1.0,
-                        overlap: 1.0,
-                    }
+                if has_search {
+                    // Remove Search from stack (it's a modifier, not an operation)
+                    stack.retain(|s| !matches!(s.0, CompiledFunction::Search));
+
+                    // For search, we need 3-way split: before, anchor, after
+                    let prev_label = format!("{cur_label}{NEXT_LEFT}");
+                    let labels = vec![prev_label.as_str(), this_label.as_str(), &next_label];
+
+                    // Determine match type - HammingSearch if Hamming is on stack, else ExactSearch
+                    let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
+                        let n = *n;
+                        stack.pop();
+                        HammingSearch(Threshold::Count(seq.len() - n))
+                    } else {
+                        ExactSearch
+                    };
+
+                    graph.add(match_node(
+                        Patterns::from_strs([Nucleotide::as_str(&seq)]),
+                        &init_label,
+                        labels,
+                        match_type,
+                    ));
+                    graph.add(retain_node(expr::label_exists(this_label.clone())));
                 } else {
-                    ExactPrefix
-                };
+                    // Original prefix matching behavior
+                    let labels = vec![this_label.as_str(), &next_label];
 
-                graph.add(match_node(
-                    Patterns::from_strs([Nucleotide::as_str(&seq)]),
-                    &init_label,
-                    labels,
-                    match_type,
-                ));
-                graph.add(retain_node(expr::label_exists(this_label.clone())));
+                    // Determine how we should perform the prefix match based on the top of the stack:
+                    let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
+                        let n = *n;
+                        stack.pop();
+                        HammingPrefix(Threshold::Count(seq.len() - n))
+                    } else if !stack.is_empty() {
+                        PrefixAln {
+                            identity: 1.0,
+                            overlap: 1.0,
+                        }
+                    } else {
+                        ExactPrefix
+                    };
+
+                    graph.add(match_node(
+                        Patterns::from_strs([Nucleotide::as_str(&seq)]),
+                        &init_label,
+                        labels,
+                        match_type,
+                    ));
+                    graph.add(retain_node(expr::label_exists(this_label.clone())));
+                }
             }
             IntervalShape::FixedLen(S(len, _)) => {
-                graph.add(cut_node(
-                    into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
-                    Expr::from(len),
-                ));
-                graph.add(valid_label_length(&this_label, len, None));
+                // Check if SearchWhitelist is on the stack - forces global whitelist search
+                let search_whitelist_idx = stack.iter().position(|s| {
+                    matches!(s.0, CompiledFunction::SearchWhitelist(_, _, _))
+                });
+
+                if let Some(idx) = search_whitelist_idx {
+                    // Extract SearchWhitelist parameters
+                    let (file_path, max_dist, _max_pos) = if let CompiledFunction::SearchWhitelist(ref f, d, mp) = stack[idx].0 {
+                        (f.clone(), d, mp)
+                    } else {
+                        unreachable!()
+                    };
+                    stack.remove(idx);
+
+                    // Load whitelist patterns from file
+                    let path = parse_additional_args(file_path, additional_args);
+                    let patterns = parse_file_filter(path);
+
+                    // For search_whitelist, we need 3-way split: before, barcode, after
+                    let prev_label = format!("{cur_label}{NEXT_LEFT}");
+                    let labels = vec![prev_label.as_str(), this_label.as_str(), &next_label];
+
+                    // Use HammingSearch with the specified max distance
+                    let match_type = if max_dist > 0 {
+                        HammingSearch(Threshold::Count(len - max_dist))
+                    } else {
+                        ExactSearch
+                    };
+
+                    graph.add(match_node(
+                        patterns,
+                        &init_label,
+                        labels,
+                        match_type,
+                    ));
+                    graph.add(retain_node(expr::label_exists(this_label.clone())));
+                } else {
+                    // Original fixed-position cut behavior
+                    graph.add(cut_node(
+                        into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
+                        Expr::from(len),
+                    ));
+                    graph.add(valid_label_length(&this_label, len, None));
+                }
             }
             IntervalShape::RangedLen(S((a, b), _)) => {
                 graph.add(cut_node(
@@ -431,6 +632,68 @@ impl<'a> GeometryMeta {
                 // TODO: this needs to be tested for unbounded beginning segments
                 *range_start += prev_len_offset.unwrap_or(0) + seq_len;
             }
+            IntervalShape::FixedLen(S(len, _)) => {
+                // This is a barcode-anchored search (SearchWhitelist)
+                // Extract SearchWhitelist parameters from stack
+                let search_whitelist_idx = stack.iter().position(|s| {
+                    matches!(s.0, CompiledFunction::SearchWhitelist(_, _, _))
+                });
+
+                if let Some(idx) = search_whitelist_idx {
+                    let (file_path, max_dist, max_pos) = if let CompiledFunction::SearchWhitelist(ref f, d, mp) = stack[idx].0 {
+                        (f.clone(), d, mp)
+                    } else {
+                        unreachable!()
+                    };
+                    stack.remove(idx);
+
+                    // Load whitelist patterns from file
+                    let path = parse_additional_args(file_path, additional_args);
+                    let patterns = parse_file_filter(path);
+
+                    // Use HammingSearch with the specified max distance for barcode search
+                    let match_type = if max_dist > 0 {
+                        HammingSearch(Threshold::Count(len - max_dist))
+                    } else {
+                        ExactSearch
+                    };
+
+                    // If max_pos is specified, constrain the search to the first max_pos bytes
+                    if let Some(max_p) = max_pos {
+                        // Use ExactBoundedMatch to search only in first max_p positions
+                        // Note: BoundedMatch uses inclusive range from..=to, so use max_p-1
+                        let to_inclusive = if max_p > 0 { max_p - 1 } else { 0 };
+                        let bounded_match_type = match match_type {
+                            HammingSearch(threshold) => HammingBoundedMatch { from: 0, to: to_inclusive, threshold },
+                            ExactSearch => ExactBoundedMatch { from: 0, to: to_inclusive },
+                            _ => match_type,
+                        };
+                        graph.add(match_node(
+                            patterns,
+                            &init_label,
+                            vec![&prev_label, &this_label, &next_label],
+                            bounded_match_type,
+                        ));
+                    } else {
+                        // No position constraint - search entire read
+                        graph.add(match_node(
+                            patterns,
+                            &init_label,
+                            vec![&prev_label, &this_label, &next_label],
+                            match_type,
+                        ));
+                    }
+
+                    graph.add(retain_node(expr::label_exists(this_label.clone())));
+
+                    execute_stack(stack, &this_label, &size, additional_args, graph);
+
+                    // update range_start
+                    *range_start += prev_len_offset.unwrap_or(0) + len;
+                } else {
+                    unreachable!("FixedLen in interpret_dual must have SearchWhitelist");
+                }
+            }
             _ => unreachable!(),
         };
 
@@ -446,37 +709,49 @@ fn get_match_type(
     seq_len: usize,
     range_start: &mut usize,
 ) -> MatchType {
+    // Check if Search modifier is present - forces global search regardless of predecessor type
+    let has_search = stack.iter().any(|s| matches!(s.0, CompiledFunction::Search));
+    if has_search {
+        // Remove Search from stack (it's a modifier, not an operation)
+        stack.retain(|s| !matches!(s.0, CompiledFunction::Search));
+    }
+
+    // Check for Hamming on the stack
+    let hamming_dist = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
+        let n = *n;
+        stack.pop();
+        Some(n)
+    } else {
+        None
+    };
+
+    // If Search modifier was present, always use global search
+    if has_search {
+        return match hamming_dist {
+            Some(n) => HammingSearch(Threshold::Count(seq_len - n)),
+            None => ExactSearch,
+        };
+    }
+
+    // Original logic based on predecessor type
     match offset_len {
         Some(offset) => {
-            if !stack.is_empty() {
-                match stack.pop().unwrap() {
-                    S(CompiledFunction::Hamming(n), _) => HammingBoundedMatch {
-                        threshold: Threshold::Count(seq_len - n),
-                        from: *range_start,
-                        to: *range_start + seq_len + offset,
-                    },
-                    _ => ExactBoundedMatch {
-                        from: *range_start,
-                        to: *range_start + seq_len + offset,
-                    },
-                }
-            } else {
-                ExactBoundedMatch {
+            match hamming_dist {
+                Some(n) => HammingBoundedMatch {
+                    threshold: Threshold::Count(seq_len - n),
                     from: *range_start,
                     to: *range_start + seq_len + offset,
-                }
+                },
+                None => ExactBoundedMatch {
+                    from: *range_start,
+                    to: *range_start + seq_len + offset,
+                },
             }
         }
         None => {
-            if !stack.is_empty() {
-                match stack.pop().unwrap() {
-                    S(CompiledFunction::Hamming(n), _) => {
-                        HammingSearch(Threshold::Count(seq_len - n))
-                    }
-                    _ => ExactSearch,
-                }
-            } else {
-                ExactSearch
+            match hamming_dist {
+                Some(n) => HammingSearch(Threshold::Count(seq_len - n)),
+                None => ExactSearch,
             }
         }
     }

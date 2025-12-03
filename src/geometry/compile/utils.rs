@@ -259,6 +259,26 @@ pub fn validate_composition(
                 ),
             }),
         },
+        // Search wraps an anchor (FixedSeq or hamming-wrapped FixedSeq) and preserves its type
+        CompiledFunction::Search => match return_type {
+            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+            _ => Err(Error {
+                span: return_type_span,
+                msg: format!(
+                    "Function Search must wrap a FixedSeq anchor (or hamming-wrapped), found: {return_type}"
+                ),
+            }),
+        },
+        // SearchWhitelist searches for any barcode from whitelist and returns FixedLen
+        CompiledFunction::SearchWhitelist(..) => match return_type {
+            ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
+            _ => Err(Error {
+                span: return_type_span,
+                msg: format!(
+                    "Function SearchWhitelist must take a FixedLen barcode element, found: {return_type}"
+                ),
+            }),
+        },
     }
 }
 

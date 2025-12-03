@@ -35,7 +35,7 @@ fn run_tests() -> Result<(), Box<dyn Error>> {
         let entry = entry?;
         let entry_name = &*entry.file_name().into_string().unwrap();
 
-        let fgdl = &*fgdl_dir_path.join(format!("{entry_name}.fgdl"));
+        let fgdl = &*fgdl_dir_path.join(format!("{entry_name}.geom"));
         let in_1 = &*entry.path().join(format!("{entry_name}_l.fastq"));
         let in_2 = &*entry.path().join(format!("{entry_name}_r.fastq"));
         let out = &*out_dir.path().join(format!("{entry_name}.fastq"));

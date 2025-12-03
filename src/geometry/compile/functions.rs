@@ -28,6 +28,10 @@ pub enum CompiledFunction {
     MapWithMismatch(String, Vec<S<CompiledFunction>>, usize),
     FilterWithinDist(String, usize),
     Hamming(usize),
+    /// Forces global search for anchor (ExactSearch or HammingSearch)
+    Search,
+    /// Searches for any barcode from whitelist within Hamming distance, optionally with max search position
+    SearchWhitelist(String, usize, Option<usize>),
 }
 
 pub enum ChangeAs {
@@ -84,6 +88,8 @@ pub fn compile_fn(
             CompiledFunction::FilterWithinDist(path, mismatch)
         }
         Function::Hamming(n) => CompiledFunction::Hamming(n),
+        Function::Search => CompiledFunction::Search,
+        Function::SearchWhitelist(path, dist, max_pos) => CompiledFunction::SearchWhitelist(path, dist, max_pos),
     };
 
     Ok(S(comp_fn, span))

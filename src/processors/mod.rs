@@ -70,6 +70,10 @@ impl CompiledFunction {
             CompiledFunction::MapWithMismatch(_, _, _) => unimplemented!(),
             CompiledFunction::FilterWithinDist(_, _) => unimplemented!(),
             CompiledFunction::Hamming(_) => unimplemented!(),
+            // Search is handled in the interpreter, not as an expr
+            CompiledFunction::Search => unimplemented!(),
+            // SearchWhitelist is handled in the interpreter; in expr context just return the label
+            CompiledFunction::SearchWhitelist(_, _, _) => Expr::from(label(interval_name)),
         }
     }
 }

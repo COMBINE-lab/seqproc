@@ -77,6 +77,10 @@ pub enum Function {
     FilterWithinDist(String, usize),
     /// `hamming(F, n)`
     Hamming(usize),
+    /// `search(F)` - forces global search for anchor
+    Search,
+    /// `search_whitelist(I, A, n)` or `search_whitelist(I, A, n, max_pos)` - searches for barcode from whitelist
+    SearchWhitelist(String, usize, Option<usize>),
 }
 
 impl Function {
@@ -105,6 +109,9 @@ impl Function {
             }
             FilterWithinDist(p, n) => write!(f, "filter_within_dist({first}, {p}, {n})"),
             Hamming(n) => write!(f, "hamming({first}, {n})"),
+            Search => write!(f, "search({first})"),
+            SearchWhitelist(p, n, None) => write!(f, "search_whitelist({first}, {p}, {n})"),
+            SearchWhitelist(p, n, Some(max)) => write!(f, "search_whitelist({first}, {p}, {n}, {max})"),
         }
     }
 }
@@ -493,6 +500,11 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                     )
                 })
                 .labelled("hamming"),
+            just(Token::Search)
+                .map_with_span(|_, span| S(Function::Search, span))
+                .then(recursive_no_arg.clone())
+                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
+                .labelled("search"),
             just(Token::Truncate)
                 .map_with_span(|_, span| span)
                 .then(recursive_num_arg.clone())
@@ -663,6 +675,7 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 .map_with_span(|_, span| span)
                 .then(
                     geom_piece
+                        .clone()
                         .then_ignore(just(Token::Comma))
                         .map_err_with_span(|t, span| throw(t, comma(span)))
                         .then(file.or(argument))
@@ -677,6 +690,57 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                     )
                 })
                 .labelled("filter"),
+            // search_whitelist with 4 args: (interval, file, dist, max_pos)
+            just(Token::SearchWhitelist)
+                .map_with_span(|_, span| span)
+                .then(
+                    geom_piece
+                        .clone()
+                        .then_ignore(just(Token::Comma))
+                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .then(file.clone().or(argument.clone()))
+                        .then_ignore(just(Token::Comma))
+                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .then(num.clone())
+                        .then_ignore(just(Token::Comma))
+                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .then(num.clone())
+                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as max search position for search_whitelist.")))
+                        .map_with_span(S)
+                        .delimited_by(just(Token::LParen), just(Token::RParen))
+                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'search_whitelist'")))),
+                )
+                .map(|(fn_span, S((((geom_p, path), dist), max_pos), span))| {
+                    Expr::Function(
+                        S(Function::SearchWhitelist(path, dist, Some(max_pos)), fn_span),
+                        S(Box::new(geom_p), span),
+                    )
+                })
+                .labelled("search_whitelist_with_max"),
+            // search_whitelist with 3 args: (interval, file, dist)
+            just(Token::SearchWhitelist)
+                .map_with_span(|_, span| span)
+                .then(
+                    geom_piece
+                        .then_ignore(just(Token::Comma))
+                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .then(file.or(argument))
+                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> as whitelist file for search_whitelist.")))
+                        .then_ignore(just(Token::Comma))
+                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .then(num)
+                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as max Hamming distance for search_whitelist.")))
+                        .map_with_span(S)
+                        .delimited_by(just(Token::LParen), just(Token::RParen))
+                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'search_whitelist'")))),
+                )
+                .map(|(fn_span, S(((geom_p, path), dist), span))| {
+                    Expr::Function(
+                        S(Function::SearchWhitelist(path, dist, None), fn_span),
+                        S(Box::new(geom_p), span),
+                    )
+                })
+                .labelled("search_whitelist"),
         ))
     })
     .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Invalid construction of an interval")))

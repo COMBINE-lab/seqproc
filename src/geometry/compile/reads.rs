@@ -20,6 +20,13 @@ pub fn validate_geometry(
         ReturnType::Ranged,
     ];
 
+    // Track whether we're in a "needs anchor" state: after Unbounded or Ranged
+    // followed by FixedLen, we must eventually see a FixedSeq before the geometry
+    // ends or another variable-length segment appears.
+    // Note: Unbounded/Ranged at the END of a read is valid (consumes the rest).
+    let mut needs_anchor = false;
+    let mut last_was_variable = false;
+
     for (interval, _) in geom {
         let gm = match interval {
             Interval::Named(l) => map.get(l).unwrap(),
@@ -42,8 +49,21 @@ pub fn validate_geometry(
             });
         }
 
+        // Check if we're in needs_anchor state and hit another variable-length segment
+        if needs_anchor && matches!(type_, ReturnType::Unbounded | ReturnType::Ranged) {
+            return Err(Error {
+                span: span.clone(),
+                msg: "Ambiguous Geometry: variable-length segment after Unbounded/Ranged requires a FixedSeq anchor in between".to_string(),
+            });
+        }
+
         expect_next = match type_ {
-            ReturnType::FixedLen | ReturnType::FixedSeq => {
+            ReturnType::FixedLen => {
+                // FixedLen after a variable-length segment means we need an anchor
+                if last_was_variable {
+                    needs_anchor = true;
+                }
+                last_was_variable = false;
                 vec![
                     ReturnType::FixedLen,
                     ReturnType::FixedSeq,
@@ -51,11 +71,44 @@ pub fn validate_geometry(
                     ReturnType::Ranged,
                 ]
             }
-            ReturnType::Ranged | ReturnType::Unbounded => {
-                vec![ReturnType::FixedSeq]
+            ReturnType::FixedSeq => {
+                // FixedSeq resolves any pending anchor requirement
+                needs_anchor = false;
+                last_was_variable = false;
+                vec![
+                    ReturnType::FixedLen,
+                    ReturnType::FixedSeq,
+                    ReturnType::Unbounded,
+                    ReturnType::Ranged,
+                ]
+            }
+            ReturnType::Ranged => {
+                last_was_variable = true;
+                vec![ReturnType::FixedSeq, ReturnType::FixedLen]
+            }
+            ReturnType::Unbounded => {
+                last_was_variable = true;
+                vec![ReturnType::FixedLen, ReturnType::FixedSeq]
             }
             ReturnType::Void => unreachable!(),
         };
+    }
+
+    // At the end of the geometry, if we still need an anchor, it's invalid
+    // (This happens when we have Unbounded/Ranged followed by FixedLen but no FixedSeq)
+    if needs_anchor {
+        // Get the span of the last interval for the error message
+        if let Some((interval, _)) = geom.last() {
+            let gm = match interval {
+                Interval::Named(l) => map.get(l).unwrap(),
+                Interval::Temporary(gp_) => gp_,
+            };
+            let S(_, span) = &gm.expr;
+            return Err(Error {
+                span: span.clone(),
+                msg: "Ambiguous Geometry: variable-length segment followed by fixed-length segments requires a FixedSeq anchor".to_string(),
+            });
+        }
     }
 
     Ok(())
