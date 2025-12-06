@@ -1,0 +1,16 @@
+# --- Linker Definitions (Rosenberg 2018) ---
+# Linker 1 is the same as commercial:
+$linker1: GTGGCCGATGTTTCGCATCGGCGTACGACT
+
+# Linker 2 is DIFFERENT in the Academic version:
+$linker2: ATCCACGTGCTTGAGCGCGCTGCATACTTG
+
+# --- Barcode Whitelists ---
+# You must download these (instructions below)
+$bc1_list: round1_barcodes.txt
+$bc2_list: round2_barcodes.txt
+$bc3_list: round3_barcodes.txt
+
+# --- Extraction Pattern ---
+# Structure: UMI(10) - BC3(8) - Linker1 - BC2(8) - Linker2 - BC1(8)
+@extract <umi[10]><bc3[8] from bc3_list>{linker1}<bc2[8] from bc2_list>{linker2}<bc1[8] from bc1_list>
