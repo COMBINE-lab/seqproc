@@ -2,6 +2,7 @@ use std::{
     fs::File, io::BufWriter, panic, path::{Path, PathBuf}, thread
 };
 
+use antisequence::expr::fmt_expr;
 use antisequence::graph::*;
 use anyhow::{bail, Result};
 use chumsky::{prelude::Simple, Parser, Stream};
@@ -80,14 +81,17 @@ pub fn interpret_with_demux(
 ) {
     let additional_args = additional_args.into_iter().collect::<Vec<_>>();
 
-    if let Some(transformations) = &compiled_data.transformation {
-        if transformations.len() == 2
-            && (out1.as_os_str().is_empty() || out2.as_os_str().is_empty())
-        {
-            tracing::error!(
-                "You defined a transformation into two files - you must provide two outputs"
-            );
-            return;
+    // Skip output check when demux is enabled (demux handles its own output routing)
+    if demux_config.is_none() {
+        if let Some(transformations) = &compiled_data.transformation {
+            if transformations.len() == 2
+                && (out1.as_os_str().is_empty() || out2.as_os_str().is_empty())
+            {
+                tracing::error!(
+                    "You defined a transformation into two files - you must provide two outputs"
+                );
+                return;
+            }
         }
     }
 
@@ -113,20 +117,45 @@ pub fn interpret_with_demux(
     let out1_str = out1.to_str().unwrap_or("");
     let out2_str = out2.to_str().unwrap_or("");
 
-    // TODO: When demux is enabled, use expression-based output routing
-    // For now, just output to the specified files
-    match (out1_str, out2_str) {
-        ("", "") => {
-            graph.add(OutputFastqFileOp::from_file("/dev/null"));
+    // When demux is enabled, use expression-based output routing
+    if let Some(ref config) = demux_config {
+        // Create output directory if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
+            tracing::error!("Failed to create demux output directory: {}", e);
+            return;
         }
-        (out1_str, "") => {
-            graph.add(OutputFastqFileOp::from_file(out1_str.to_owned()));
-        }
-        (out1_str, out2_str) => {
-            graph.add(OutputFastqFileOp::from_files([
-                out1_str.to_owned(),
-                out2_str.to_owned(),
-            ]));
+
+        // Build format expressions for dynamic file routing based on sample attribute
+        // Format: {output_dir}/{sample}_R1.fastq and {output_dir}/{sample}_R2.fastq
+        let out_dir = config.output_dir.to_string_lossy();
+        
+        // The sample attribute is set on the barcode label (e.g., seq2.bc1.sample)
+        let sample_attr_path = format!("{}.{}", config.barcode_label, config.sample_attr);
+        
+        let out1_expr = format!("{}/{{{}}}_R1.fastq", out_dir, sample_attr_path);
+        let out2_expr = format!("{}/{{{}}}_R2.fastq", out_dir, sample_attr_path);
+        
+        tracing::info!("Demux output: {} and {}", out1_expr, out2_expr);
+        
+        graph.add(OutputFastqFileOp::from_files([
+            fmt_expr(out1_expr),
+            fmt_expr(out2_expr),
+        ]));
+    } else {
+        // Standard output (no demux)
+        match (out1_str, out2_str) {
+            ("", "") => {
+                graph.add(OutputFastqFileOp::from_file("/dev/null"));
+            }
+            (out1_str, "") => {
+                graph.add(OutputFastqFileOp::from_file(out1_str.to_owned()));
+            }
+            (out1_str, out2_str) => {
+                graph.add(OutputFastqFileOp::from_files([
+                    out1_str.to_owned(),
+                    out2_str.to_owned(),
+                ]));
+            }
         }
     }
 
