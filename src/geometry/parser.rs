@@ -81,6 +81,8 @@ pub enum Function {
     Search,
     /// `search_whitelist(I, A, n)` or `search_whitelist(I, A, n, max_pos)` - searches for barcode from whitelist
     SearchWhitelist(String, usize, Option<usize>),
+    /// `anchor_relative(F)` - search for anchor and extract preceding elements relative to found position
+    AnchorRelative,
 }
 
 impl Function {
@@ -112,6 +114,7 @@ impl Function {
             Search => write!(f, "search({first})"),
             SearchWhitelist(p, n, None) => write!(f, "search_whitelist({first}, {p}, {n})"),
             SearchWhitelist(p, n, Some(max)) => write!(f, "search_whitelist({first}, {p}, {n}, {max})"),
+            AnchorRelative => write!(f, "anchor_relative({first})"),
         }
     }
 }
@@ -505,6 +508,11 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("search"),
+            just(Token::AnchorRelative)
+                .map_with_span(|_, span| S(Function::AnchorRelative, span))
+                .then(recursive_no_arg.clone())
+                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
+                .labelled("anchor_relative"),
             just(Token::Truncate)
                 .map_with_span(|_, span| span)
                 .then(recursive_num_arg.clone())

@@ -279,6 +279,16 @@ pub fn validate_composition(
                 ),
             }),
         },
+        // AnchorRelative searches for anchor and extracts preceding elements relative to found position
+        CompiledFunction::AnchorRelative => match return_type {
+            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+            _ => Err(Error {
+                span: return_type_span,
+                msg: format!(
+                    "Function anchor_relative must wrap a FixedSeq anchor (or hamming-wrapped), found: {return_type}"
+                ),
+            }),
+        },
     }
 }
 

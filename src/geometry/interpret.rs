@@ -108,11 +108,159 @@ fn interpret_geometry(
                 gp.interpret(&label, additional_args, graph);
             }
             IntervalShape::FixedLen(S(len, _)) => {
-                match interval_type {
-                    IntervalKind::Discard => (),
-                    _ => min_start_idx += len,
+                // Check if an anchor_relative FixedSeq follows - if so, collect intermediate pieces
+                // and use interpret_dual to extract relative to the anchor
+                let mut intermediate_fixed: Vec<&GeometryMeta> = vec![gp];
+                let mut anchor: Option<&GeometryMeta> = None;
+                let mut lookahead = geometry_iter.clone();
+
+                while let Some(piece) = lookahead.next() {
+                    let (_, piece_size, _, piece_stack) = piece.unpack();
+                    match piece_size {
+                        IntervalShape::FixedSeq(_) => {
+                            // Check if this FixedSeq has AnchorRelative modifier
+                            let has_anchor_modifier = piece_stack.iter().any(|s| {
+                                matches!(s.0, CompiledFunction::AnchorRelative)
+                            });
+                            if has_anchor_modifier {
+                                anchor = Some(piece);
+                            }
+                            break;
+                        }
+                        IntervalShape::FixedLen(_) => {
+                            intermediate_fixed.push(piece);
+                        }
+                        _ => {
+                            // Hit variable-length segment; stop scanning
+                            break;
+                        }
+                    }
                 }
-                gp.interpret(&label, additional_args, graph);
+
+                if let Some(anchor_gp) = anchor {
+                    // Found an anchor_relative anchor - use interpret_dual mechanism
+                    // Skip intermediate_fixed[0] since it's `gp` itself
+                    for _ in 1..intermediate_fixed.len() {
+                        geometry_iter.next();
+                    }
+                    // Consume the anchor
+                    geometry_iter.next();
+
+                    let seq_name = label.first().unwrap();
+                    let (computed_init_label, cur_label) = labels(&label);
+
+                    // Create a synthetic unbounded segment for the prev_label
+                    // Then use interpret_dual-like logic to search for anchor and slice intermediates
+                    let (_, anchor_size, anchor_label, mut anchor_stack) = anchor_gp.unpack();
+
+                    // Remove AnchorRelative from stack (it's a modifier)
+                    anchor_stack.retain(|s| !matches!(s.0, CompiledFunction::AnchorRelative));
+
+                    if let IntervalShape::FixedSeq(S(seq, _)) = anchor_size.clone() {
+                        let anchor_this_label = if let Some(l) = anchor_label {
+                            format!("{seq_name}{l}")
+                        } else {
+                            format!("{cur_label}_anchor")
+                        };
+                        let prev_label = format!("{cur_label}{NEXT_LEFT}");
+                        let next_label_str = format!("{cur_label}{NEXT_RIGHT}");
+
+                        // Get Hamming distance if specified
+                        let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = anchor_stack.last() {
+                            let n = *n;
+                            anchor_stack.pop();
+                            HammingSearch(Threshold::Count(seq.len() - n))
+                        } else {
+                            ExactSearch
+                        };
+
+                        // Search for anchor with 3-way split
+                        graph.add(match_node(
+                            Patterns::from_strs([Nucleotide::as_str(&seq)]),
+                            &computed_init_label,
+                            vec![&prev_label, &anchor_this_label, &next_label_str],
+                            match_type,
+                        ));
+                        graph.add(retain_node(expr::label_exists(anchor_this_label.clone())));
+
+                        // Execute any remaining stack functions on anchor
+                        execute_stack(anchor_stack, &anchor_this_label, &anchor_size, additional_args, graph);
+
+                        // Now slice intermediate_fixed from the prev_label region (RIGHT side)
+                        let total_fixed_len: usize = intermediate_fixed
+                            .iter()
+                            .map(|p| {
+                                if let IntervalShape::FixedLen(S(len, _)) = p.unpack().1 {
+                                    len
+                                } else {
+                                    0
+                                }
+                            })
+                            .sum();
+
+                        let fixed_region_label = format!("{cur_label}_fixed");
+                        graph.add(cut_node(
+                            into_transform_expr(
+                                &prev_label,
+                                [VOID_LABEL, fixed_region_label.as_str()],
+                            ),
+                            Expr::from(-(total_fixed_len as isize)),
+                        ));
+
+                        // Slice individual pieces from left to right
+                        let mut slice_label = fixed_region_label.clone();
+                        for (i, piece) in intermediate_fixed.iter().enumerate() {
+                            let (piece_type, piece_size, piece_label, piece_stack) = piece.unpack();
+                            if let IntervalShape::FixedLen(S(len, _)) = piece_size {
+                                let this_label = if let Some(l) = piece_label {
+                                    format!("{seq_name}{l}")
+                                } else {
+                                    format!("{cur_label}_p{i}")
+                                };
+
+                                let is_last = i == intermediate_fixed.len() - 1;
+                                let next_slice_label = if is_last {
+                                    VOID_LABEL.to_string()
+                                } else {
+                                    format!("{cur_label}_slice{}", i + 1)
+                                };
+
+                                graph.add(cut_node(
+                                    into_transform_expr(
+                                        &slice_label,
+                                        [this_label.as_str(), next_slice_label.as_str()],
+                                    ),
+                                    Expr::from(len),
+                                ));
+                                graph.add(valid_label_length(&this_label, len, None));
+
+                                let mut stack = piece_stack;
+                                if piece_type == IntervalKind::Discard {
+                                    stack.push(S(CompiledFunction::Remove, 0..1));
+                                }
+                                execute_stack(stack, &this_label, &piece_size, additional_args, graph);
+
+                                slice_label = next_slice_label;
+                            }
+                        }
+
+                        // Connect the main label to the after-anchor region for subsequent elements
+                        graph.add(set_node(
+                            LabelOrAttr::Label(&computed_init_label),
+                            antisequence::expr::Expr::from(antisequence::expr::label(next_label_str.clone())),
+                        ));
+
+                        // Update min_start_idx
+                        min_start_idx += total_fixed_len + seq.len();
+                    }
+                } else {
+                    // No anchor_relative anchor found - process normally
+                    match interval_type {
+                        IntervalKind::Discard => (),
+                        _ => min_start_idx += len,
+                    }
+                    gp.interpret(&label, additional_args, graph);
+                }
             }
             // in the case of a ranged length we add the minimum of the range to the min_idx
             // then match within the bounds of the ranged len
@@ -311,6 +459,8 @@ fn execute_stack(
 
     for S(fn_, _) in stack.into_iter().rev() {
         match fn_ {
+            // Search and AnchorRelative are modifiers handled in interpret(), skip here
+            CompiledFunction::Search | CompiledFunction::AnchorRelative => continue,
             CompiledFunction::Remove => {
                 graph.add(trim_node([antisequence::expr::label(label)]));
             }
@@ -453,16 +603,19 @@ impl<'a> GeometryMeta {
             IntervalShape::FixedSeq(S(seq, _)) => {
                 // Check if Search is on the stack - forces global search instead of prefix match
                 let has_search = stack.iter().any(|s| matches!(s.0, CompiledFunction::Search));
+                // Check if AnchorRelative is on the stack - search for anchor, extract preceding elements relative to found position
+                let has_anchor_relative = stack.iter().any(|s| matches!(s.0, CompiledFunction::AnchorRelative));
 
-                if has_search {
-                    // Remove Search from stack (it's a modifier, not an operation)
-                    stack.retain(|s| !matches!(s.0, CompiledFunction::Search));
+                if has_search || has_anchor_relative {
+                    // Remove Search/AnchorRelative from stack (they're modifiers, not operations)
+                    stack.retain(|s| !matches!(s.0, CompiledFunction::Search | CompiledFunction::AnchorRelative));
 
-                    // For search, we need 3-way split: before, anchor, after
+                    // For search/anchor_relative, we need 3-way split: before, anchor, after
+                    // This allows extracting preceding elements relative to the anchor position
                     let prev_label = format!("{cur_label}{NEXT_LEFT}");
                     let labels = vec![prev_label.as_str(), this_label.as_str(), &next_label];
 
-                    // Determine match type - HammingSearch if Hamming is on stack, else ExactSearch
+                    // Determine match type based on what's on stack
                     let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
                         let n = *n;
                         stack.pop();

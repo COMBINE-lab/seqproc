@@ -32,6 +32,8 @@ pub enum CompiledFunction {
     Search,
     /// Searches for any barcode from whitelist within Hamming distance, optionally with max search position
     SearchWhitelist(String, usize, Option<usize>),
+    /// Search for anchor and extract preceding elements relative to found position
+    AnchorRelative,
 }
 
 pub enum ChangeAs {
@@ -90,6 +92,7 @@ pub fn compile_fn(
         Function::Hamming(n) => CompiledFunction::Hamming(n),
         Function::Search => CompiledFunction::Search,
         Function::SearchWhitelist(path, dist, max_pos) => CompiledFunction::SearchWhitelist(path, dist, max_pos),
+        Function::AnchorRelative => CompiledFunction::AnchorRelative,
     };
 
     Ok(S(comp_fn, span))
