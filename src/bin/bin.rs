@@ -5,8 +5,9 @@ use std::path::PathBuf;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use seqproc::{
+    demux::DemuxConfig,
     error::handle_errors,
-    execute::{compile_geom, read_pairs_to_file},
+    execute::{compile_geom, interpret_with_demux, read_pairs_to_file},
 };
 
 /// General puprose sequence preprocessor
@@ -42,6 +43,19 @@ pub struct Args {
 
     #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     additional: Vec<String>,
+
+    // Demultiplexing options
+    /// Path to TSV file mapping barcodes to sample names (enables demultiplexing)
+    #[arg(long = "demux-map")]
+    demux_map: Option<PathBuf>,
+
+    /// Barcode label to use for demultiplexing (e.g., "seq2.bc1")
+    #[arg(long = "demux-label", requires = "demux_map")]
+    demux_label: Option<String>,
+
+    /// Output directory for demultiplexed files
+    #[arg(long = "demux-out-dir", default_value = "demux_out")]
+    demux_out_dir: PathBuf,
 }
 
 fn main() {
@@ -70,6 +84,13 @@ fn main() {
         .map(|a| a.as_str())
         .collect::<Vec<_>>();
 
+    // Build demux config if demux-map is provided
+    let demux_config = args.demux_map.as_ref().map(|map_path| {
+        let label = args.demux_label.as_deref().unwrap_or("seq2.bc1");
+        DemuxConfig::new(map_path.clone(), label)
+            .with_output_dir(args.demux_out_dir.clone())
+    });
+
     let (out1, out2) = match (args.out1, args.out2) {
         (Some(o1), Some(o2)) => (o1, o2),
         (Some(o1), None) => (o1, PathBuf::new()),
@@ -82,7 +103,7 @@ fn main() {
             // If no summary file is requested, preserve the existing behavior and
             // just run the transformation without collecting stats.
             if args.summary.is_none() {
-                return seqproc::execute::interpret(
+                return interpret_with_demux(
                     &args.file1,
                     &args.file2,
                     &out1,
@@ -90,6 +111,7 @@ fn main() {
                     args.threads,
                     additional_args,
                     geom,
+                    demux_config,
                 );
             }
 

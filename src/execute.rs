@@ -13,6 +13,7 @@ use tracing::info;
 
 use crate::{
     compile::{compile, CompiledData},
+    demux::DemuxConfig,
     lexer,
     parser::parser,
 };
@@ -63,6 +64,20 @@ pub fn interpret(
     additional_args: Vec<&str>,
     compiled_data: CompiledData,
 ) {
+    interpret_with_demux(file1, file2, out1, out2, threads, additional_args, compiled_data, None);
+}
+
+/// Interpret geometry with optional demultiplexing support.
+pub fn interpret_with_demux(
+    file1: &Path,
+    file2: &Path,
+    out1: &Path,
+    out2: &Path,
+    threads: usize,
+    additional_args: Vec<&str>,
+    compiled_data: CompiledData,
+    demux_config: Option<DemuxConfig>,
+) {
     let additional_args = additional_args.into_iter().collect::<Vec<_>>();
 
     if let Some(transformations) = &compiled_data.transformation {
@@ -86,9 +101,20 @@ pub fn interpret(
 
     compiled_data.interpret(&mut graph, &additional_args);
 
+    // Add LookupOp for demultiplexing if configured
+    if let Some(ref config) = demux_config {
+        if let Err(e) = config.add_lookup_op(&mut graph) {
+            tracing::error!("Failed to add demux LookupOp: {}", e);
+            return;
+        }
+        tracing::info!("Demultiplexing enabled with label: {}", config.barcode_label);
+    }
+
     let out1_str = out1.to_str().unwrap_or("");
     let out2_str = out2.to_str().unwrap_or("");
 
+    // TODO: When demux is enabled, use expression-based output routing
+    // For now, just output to the specified files
     match (out1_str, out2_str) {
         ("", "") => {
             graph.add(OutputFastqFileOp::from_file("/dev/null"));
