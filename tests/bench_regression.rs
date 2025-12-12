@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use seqproc::execute::{compile_geom, read_pairs_to_file};
+use seqproc::demux::DemuxConfig;
 
 fn nuc(i: usize) -> u8 {
     const N: [u8; 4] = [b'A', b'C', b'G', b'T'];
@@ -496,4 +497,201 @@ linker = f[ACGTAC]
     // The key property: this must not panic inside interpret / execute_stack.
     read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![])
         .expect("read_pairs_to_file should succeed for linker Hamming geometry");
+}
+
+// =============================================================================
+// DEMULTIPLEXING TESTS
+// =============================================================================
+
+fn write_sample_map(dir: &PathBuf, barcodes: &[(&str, &str)]) -> PathBuf {
+    let mut path = dir.clone();
+    path.push("sample_map.tsv");
+    let mut f = File::create(&path).unwrap();
+    writeln!(f, "# Barcode to Sample Mapping").unwrap();
+    for (barcode, sample) in barcodes {
+        writeln!(f, "{}\t{}", barcode, sample).unwrap();
+    }
+    path
+}
+
+#[allow(dead_code)]
+fn write_fastq_pair_with_barcodes(dir: &PathBuf, barcodes: &[&str]) -> (PathBuf, PathBuf) {
+    // Create R1 and R2 files where R2 contains barcodes at position 0-8
+    let mut r1_path = dir.clone();
+    r1_path.push("r1_demux.fastq");
+    let mut r2_path = dir.clone();
+    r2_path.push("r2_demux.fastq");
+
+    let mut r1 = File::create(&r1_path).unwrap();
+    let mut r2 = File::create(&r2_path).unwrap();
+
+    for (i, barcode) in barcodes.iter().enumerate() {
+        // R1: 50bp cDNA read
+        writeln!(r1, "@read{}", i).unwrap();
+        for j in 0..50 { r1.write_all(&[nuc(i + j*7 + 3)]).unwrap(); }
+        writeln!(r1, "").unwrap();
+        writeln!(r1, "+").unwrap();
+        for _ in 0..50 { r1.write_all(b"I").unwrap(); }
+        writeln!(r1, "").unwrap();
+
+        // R2: barcode (8bp) + padding (42bp)
+        writeln!(r2, "@read{}", i).unwrap();
+        r2.write_all(barcode.as_bytes()).unwrap();
+        for j in 0..42 { r2.write_all(&[nuc(i + j*11 + 5)]).unwrap(); }
+        writeln!(r2, "").unwrap();
+        writeln!(r2, "+").unwrap();
+        for _ in 0..50 { r2.write_all(b"I").unwrap(); }
+        writeln!(r2, "").unwrap();
+    }
+
+    (r1_path, r2_path)
+}
+
+#[allow(dead_code)]
+fn count_files_in_dir(dir: &PathBuf, extension: &str) -> usize {
+    if !dir.exists() {
+        return 0;
+    }
+    std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|ext| ext == extension).unwrap_or(false))
+        .count()
+}
+
+#[allow(dead_code)]
+fn count_reads_in_file(path: &PathBuf) -> usize {
+    if !path.exists() {
+        return 0;
+    }
+    let f = File::open(path).unwrap();
+    let reader = BufReader::new(f);
+    reader.lines()
+        .filter_map(|l| l.ok())
+        .filter(|l| l.starts_with('@'))
+        .count()
+}
+
+#[test]
+fn demux_config_load_sample_map() {
+    // Test that DemuxConfig can load a sample map correctly
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = PathBuf::from(tmp.path());
+    
+    let barcodes = vec![
+        ("AACGTGAT", "sample_A"),
+        ("TGGTGGTA", "sample_B"),
+        ("CGCTGATC", "sample_C"),
+    ];
+    let map_path = write_sample_map(&dir, &barcodes);
+    
+    let config = DemuxConfig::new(&map_path, "seq2.bc1");
+    let loaded_map = config.load_sample_map().expect("Failed to load sample map");
+    
+    assert_eq!(loaded_map.len(), 3, "Should load 3 barcode mappings");
+    assert_eq!(
+        loaded_map.get(&b"AACGTGAT".to_vec()),
+        Some(&b"sample_A".to_vec()),
+        "Should correctly map AACGTGAT to sample_A"
+    );
+    assert_eq!(
+        loaded_map.get(&b"TGGTGGTA".to_vec()),
+        Some(&b"sample_B".to_vec()),
+        "Should correctly map TGGTGGTA to sample_B"
+    );
+}
+
+#[test]
+fn demux_config_with_comments_and_empty_lines() {
+    // Test that sample map parsing handles comments and empty lines
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = PathBuf::from(tmp.path());
+    
+    let mut map_path = dir.clone();
+    map_path.push("map_with_comments.tsv");
+    let mut f = File::create(&map_path).unwrap();
+    writeln!(f, "# This is a header comment").unwrap();
+    writeln!(f, "").unwrap();
+    writeln!(f, "AACGTGAT\tsample_A").unwrap();
+    writeln!(f, "# Another comment").unwrap();
+    writeln!(f, "TGGTGGTA\tsample_B").unwrap();
+    writeln!(f, "").unwrap();
+    writeln!(f, "CGCTGATC\tsample_C").unwrap();
+    
+    let config = DemuxConfig::new(&map_path, "seq2.bc1");
+    let loaded_map = config.load_sample_map().expect("Failed to load sample map");
+    
+    assert_eq!(loaded_map.len(), 3, "Should load exactly 3 entries, ignoring comments and empty lines");
+}
+
+#[test]
+fn demux_config_output_path_expression() {
+    // Test that output path expressions are generated correctly
+    let config = DemuxConfig::new("/tmp/map.tsv", "seq2.bc1")
+        .with_output_dir("my_demux_output");
+    
+    let r1_expr = config.output_path_expr(1);
+    let r2_expr = config.output_path_expr(2);
+    
+    assert!(r1_expr.contains("my_demux_output"), "R1 expr should contain output dir");
+    assert!(r1_expr.contains("R1"), "R1 expr should contain R1");
+    assert!(r2_expr.contains("R2"), "R2 expr should contain R2");
+    assert!(r1_expr.contains("sample"), "R1 expr should contain sample attribute");
+}
+
+#[test]
+fn demux_config_builder_pattern() {
+    // Test the builder pattern for DemuxConfig
+    let config = DemuxConfig::new("/path/to/map.tsv", "seq2.bc1")
+        .with_output_dir("custom_output")
+        .with_unassigned_name("unknown");
+    
+    assert_eq!(config.output_dir.to_str().unwrap(), "custom_output");
+    assert_eq!(config.unassigned_name, "unknown");
+    assert_eq!(config.barcode_label, "seq2.bc1");
+    assert_eq!(config.sample_attr, "sample");  // Default value
+}
+
+#[test]
+fn demux_empty_sample_map() {
+    // Test handling of empty sample map
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = PathBuf::from(tmp.path());
+    
+    let mut map_path = dir.clone();
+    map_path.push("empty_map.tsv");
+    let mut f = File::create(&map_path).unwrap();
+    writeln!(f, "# Empty map with only comments").unwrap();
+    
+    let config = DemuxConfig::new(&map_path, "seq2.bc1");
+    let loaded_map = config.load_sample_map().expect("Should handle empty map");
+    
+    assert_eq!(loaded_map.len(), 0, "Empty map should have 0 entries");
+}
+
+#[test]
+fn demux_large_sample_map() {
+    // Test loading a large sample map (96 wells)
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = PathBuf::from(tmp.path());
+    
+    let bases = ['A', 'T', 'G', 'C'];
+    let mut barcodes: Vec<(String, String)> = Vec::new();
+    for i in 0..96 {
+        // Generate unique 8bp barcodes using base-4 encoding
+        let bc: String = (0..8).map(|j| bases[(i / 4usize.pow(j as u32)) % 4]).collect();
+        barcodes.push((bc, format!("well_{:02}", i)));
+    }
+    
+    let mut map_path = dir.clone();
+    map_path.push("large_map.tsv");
+    let mut f = File::create(&map_path).unwrap();
+    for (bc, sample) in &barcodes {
+        writeln!(f, "{}\t{}", bc, sample).unwrap();
+    }
+    
+    let config = DemuxConfig::new(&map_path, "seq2.bc1");
+    let loaded_map = config.load_sample_map().expect("Should load large map");
+    
+    assert_eq!(loaded_map.len(), 96, "Should load all 96 barcode mappings");
 }
