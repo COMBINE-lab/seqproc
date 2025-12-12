@@ -256,9 +256,17 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .or(file)
         .recover_with(skip_then_retry_until([]));
 
+    // Comments: # to end of line
+    let comment = just('#')
+        .then(none_of("\n\r").repeated())
+        .to(())
+        .padded();
+
     token
-        .map_with_span(|tok, span| (tok, span))
+        .map_with_span(|tok, span| Some((tok, span)))
+        .or(comment.map(|_| None))
         .padded()
         .repeated()
-        .collect()
+        .collect::<Vec<_>>()
+        .map(|tokens| tokens.into_iter().flatten().collect())
 }
