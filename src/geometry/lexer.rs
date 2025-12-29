@@ -160,7 +160,8 @@ impl fmt::Display for Token {
 }
 
 /// Returns a lexer for EFGDL.
-pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token, Span)>, extra::Err<Rich<'a, char>>> {
+pub fn lexer<'src>(
+) -> impl Parser<'src, &'src str, Vec<(Token, Span)>, extra::Err<Rich<'src, char>>> {
     let int = text::int(10).from_str().unwrapped().map(Token::Num);
 
     let ctrl = choice((
@@ -242,18 +243,11 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token, Span)>, extra::Err<Ri
     });
 
     // TODO: remove recovery
-    let token = nucs
-        .or(argument)
-        .or(ident)
-        .or(transformto)
-        .or(int)
-        .or(ctrl)
-        .or(special)
-        .or(file);
+    let token = choice((nucs, argument, ident, transformto, int, ctrl, special, file));
 
     token
         .map_with(|tok, state| (tok, state.span()))
-        .padded()
+        .padded_by(text::whitespace())
         .repeated()
         .collect()
 }

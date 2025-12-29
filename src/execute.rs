@@ -8,7 +8,7 @@ use std::{
 
 use antisequence::graph::*;
 use anyhow::{bail, Result};
-use chumsky::{error::Rich, Parser};
+use chumsky::{error::Rich, input::Input, Parser};
 use nix::sys::stat;
 use nix::unistd;
 use tempfile::tempdir;
@@ -16,6 +16,7 @@ use tracing::info;
 
 use crate::{
     compile::{compile, CompiledData},
+    error::parse_failure,
     lexer,
     parser::parser,
 };
@@ -126,54 +127,27 @@ fn interpret_to_pipes(
 }
 
 pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, String>>> {
-    let parse_res = lexer::lexer().parse(&geom);
+    // lex input
+    let tokens = lexer::lexer()
+        .parse(&geom)
+        .into_result()
+        .unwrap_or_else(|errs| parse_failure(&errs[0], geom.clone()));
 
-    let lex_errors = match parse_res.clone().into_result() {
-        Ok(_) => vec![],
-        Err(errs) => errs,
-    };
-
-    let parse_errors = match parse_res.into_result() {
-        Ok(tokens) => {
-            let input_tokens = tokens.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
-            let parser_instance = parser();
-            match parser_instance.parse(input_tokens.as_slice()).into_result() {
-                Err(errs) => errs
-                    .into_iter()
-                    .map(|e| Rich::<String>::custom(*e.span(), e.reason().to_string()))
-                    .collect::<Vec<_>>(),
-                Ok(description) => {
-                    let res = compile(description.clone());
-
-                    if let Err(e) = res {
-                        vec![Rich::<String>::custom(e.span, e.msg)]
-                    } else {
-                        return Ok(res.ok().unwrap());
-                    };
-
-                    vec![]
-                }
-            }
-        }
-        Err(err) => err
-            .iter()
-            .map(|rich_err| {
-                Rich::<String>::custom(*rich_err.span(), format!("{}", rich_err.reason()))
-            })
-            .collect::<Vec<_>>(),
-    };
-
-    let errors = lex_errors
+    let tokens = tokens
         .into_iter()
-        .map(|e| Rich::custom(*e.span(), e.reason().to_string()))
-        .chain(
-            parse_errors
-                .into_iter()
-                .map(|e| Rich::custom(*e.span(), e.reason().to_string())),
-        )
+        .map(|(tok, span)| chumsky::span::Spanned { inner: tok, span })
         .collect::<Vec<_>>();
+    let input = tokens[..].split_spanned((0..geom.len()).into());
 
-    Err(errors)
+    // parse token
+    let description = parser()
+        .parse(input)
+        .into_result()
+        .unwrap_or_else(|errs| parse_failure(&errs[0], geom.clone()));
+
+    // compile ast
+    compile(description)
+        .map_err(|e| parse_failure(&Rich::<String>::custom(e.span, e.msg), geom.clone()))
 }
 
 pub fn read_pairs_to_file(

@@ -1,12 +1,11 @@
+use std::process::exit;
+
 use clap::arg;
 use std::io;
 use std::path::PathBuf;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
-use seqproc::{
-    error::handle_errors,
-    execute::{compile_geom, interpret},
-};
+use seqproc::execute::{compile_geom, interpret};
 
 /// General puprose sequence preprocessor
 #[derive(Debug, clap::Parser)]
@@ -82,8 +81,6 @@ fn main() {
             additional_args,
             geom,
         ),
-        Err(e) => {
-            handle_errors(e, geom);
-        }
+        Err(_) => exit(1),
     }
 }

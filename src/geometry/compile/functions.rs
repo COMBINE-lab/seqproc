@@ -80,6 +80,7 @@ pub fn compile_fn(
             path,
             compile_inner_expr(expr.unboxed(), S(parent_expr, expr_span))?,
         ),
+        Function::Filter(path) => CompiledFunction::FilterWithinDist(path, 0),
         Function::FilterWithinDist(path, mismatch) => {
             CompiledFunction::FilterWithinDist(path, mismatch)
         }

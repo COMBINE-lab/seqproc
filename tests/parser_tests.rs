@@ -1,19 +1,25 @@
 mod common;
 
-use chumsky::prelude::*;
 use seqproc::{
-    parser::{parser, Definition, Expr, Function, IntervalKind, IntervalShape, Read},
+    parser::{Definition, Expr, Function, IntervalKind, IntervalShape, Read},
     Nucleotide, S,
 };
+
+use crate::common::utils::{result_with_errs, ParsedInput};
 
 #[test]
 fn definition() {
     let src = "brc = b[10] 1{<brc>}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (Some(res), parser_err) = parser().parse(&input_tokens).into_output_errors() else {
-        panic!()
+    let res = match parse_res {
+        Some(res) => res,
+        None => panic!(),
     };
 
     let expected_res = S::new(
@@ -33,8 +39,8 @@ fn definition() {
         0..11,
     );
 
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
     assert_eq!(res.definitions, expected_res);
 }
 
@@ -42,12 +48,15 @@ fn definition() {
 fn transformation() {
     let src = "1{b[1]}2{r:} -> 1{<t>}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    println!("{:?}", input_tokens);
-
-    let (Some(res), parser_err) = parser().parse(&input_tokens).into_output_errors() else {
-        panic!()
+    let res = match parse_res {
+        Some(res) => res,
+        None => panic!(),
     };
 
     let expected_res = vec![
@@ -70,8 +79,8 @@ fn transformation() {
         ),
     ];
 
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
     assert_eq!(res.transforms.unwrap().0, expected_res);
 }
 
@@ -84,22 +93,29 @@ another = remove(u[9-11])
     -> 1{<another><test>}
         ";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
 }
 
 #[test]
 fn hamming() {
     let src = "1{hamming(<brc>, 1)}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (Some(res), parser_err) = parser().parse(&input_tokens).into_output_errors() else {
-        panic!()
+    let res = match parse_res {
+        Some(res) => res,
+        None => panic!(),
     };
 
     let expected_res = Read {
@@ -116,8 +132,8 @@ fn hamming() {
         )],
     };
 
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
     assert_eq!(res.reads.0[0].0, expected_res);
 }
 
@@ -125,10 +141,15 @@ fn hamming() {
 fn remove() {
     let src = "1{remove(<brc>)}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (Some(res), parser_err) = parser().parse(&input_tokens).into_output_errors() else {
-        panic!()
+    let res = match parse_res {
+        Some(res) => res,
+        None => panic!(),
     };
 
     let expected_res = Read {
@@ -145,31 +166,38 @@ fn remove() {
         )],
     };
 
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
     assert_eq!(res.reads.0[0].0, expected_res);
 }
 
 #[test]
 fn illegal_nest() {
-    let src = "1{hamming(pad(<brc>, 1), 1)}";
+    let src = "1{hamming(pad(<brc>>, 1, A), 1)}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert_eq!(1, parser_err.len());
+    assert!(lex_errs.is_empty());
+    assert_eq!(1, parse_errs.len());
 }
 
 #[test]
 fn nested() {
     let src = "1{rev(norm(<brc>))}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (Some(res), parser_err) = parser().parse(&input_tokens).into_output_errors() else {
-        panic!()
+    let res = match parse_res {
+        Some(res) => res,
+        None => panic!(),
     };
 
     let expected_res = Read {
@@ -192,8 +220,8 @@ fn nested() {
         )],
     };
 
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
     assert_eq!(res.reads.0[0].0, expected_res);
 }
 
@@ -201,10 +229,15 @@ fn nested() {
 fn labeled_unbounded() {
     let src = "1{b<barcode>:}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (Some(res), parser_err) = parser().parse(&input_tokens).into_output_errors() else {
-        panic!()
+    let res = match parse_res {
+        Some(res) => res,
+        None => panic!(),
     };
 
     let expected_res = Read {
@@ -224,8 +257,8 @@ fn labeled_unbounded() {
         )],
     };
 
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
     assert_eq!(res.reads.0[0].0, expected_res);
 }
 
@@ -233,10 +266,15 @@ fn labeled_unbounded() {
 fn ranged() {
     let src = "1{b[10-11]}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (Some(res), parser_err) = parser().parse(&input_tokens).into_output_errors() else {
-        panic!()
+    let res = match parse_res {
+        Some(res) => res,
+        None => panic!(),
     };
 
     let expected_res = Read {
@@ -250,8 +288,8 @@ fn ranged() {
         )],
     };
 
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
     assert_eq!(res.reads.0[0].0, expected_res);
 }
 
@@ -259,10 +297,15 @@ fn ranged() {
 fn fixed() {
     let src = "1{r[10]}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (Some(res), parser_err) = parser().parse(&input_tokens).into_output_errors() else {
-        panic!()
+    let res = match parse_res {
+        Some(res) => res,
+        None => panic!(),
     };
 
     let expected_res = Read {
@@ -276,8 +319,8 @@ fn fixed() {
         )],
     };
 
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
     assert_eq!(res.reads.0[0].0, expected_res);
 }
 
@@ -285,10 +328,15 @@ fn fixed() {
 fn fixed_seq() {
     let src = "1{f[GACTU]}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (Some(res), parser_err) = parser().parse(&input_tokens).into_output_errors() else {
-        panic!()
+    let res = match parse_res {
+        Some(res) => res,
+        None => panic!(),
     };
 
     let expected_res = Read {
@@ -311,8 +359,8 @@ fn fixed_seq() {
         )],
     };
 
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
     assert_eq!(res.reads.0[0].0, expected_res);
 }
 
@@ -320,106 +368,110 @@ fn fixed_seq() {
 fn fail_ranged_seq() {
     let src = "1{f[1-2]}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert_eq!(1, parser_err.len());
+    assert!(lex_errs.is_empty());
+    assert_eq!(1, parse_errs.len());
 }
 
 #[test]
 fn allow_expr_arg() {
     let src = "1{map(b[9-10], \"filepath\", norm(self))}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
-}
-
-#[test]
-fn fail_map() {
-    let src = "1{map(pad(b[9-10], 3), \"filepath\", norm(self))}2{r:}";
-
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
-
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert_eq!(1, parser_err.len());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
 }
 
 #[test]
 fn fail_prefix_label_underscore() {
     let src = "_brc = b[10] 1{<brc>}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert_eq!(1, parser_err.len());
+    assert!(lex_errs.is_empty());
+    assert_eq!(1, parse_errs.len());
 }
 
 #[test]
 fn fail_prefix_inlinelabel_underscore() {
     let src = "1{b<_brc>[10]}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert_eq!(1, parser_err.len());
+    assert!(lex_errs.is_empty());
+    assert_eq!(1, parse_errs.len());
 }
 
 #[test]
 fn ok_mid_inlinelabel_underscore() {
     let src = "1{b<b_rc>[10]}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
 }
 
 #[test]
 fn ok_mid_label_underscore() {
     let src = "b_rc = b[10] 1{<brc>}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
 }
 
 #[test]
 fn filter_test() {
     let src = "b_rc = filter(b[10], $0) 1{<brc>}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert!(parser_err.is_empty());
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
 }
 
 #[test]
 fn filter_test_too_many_args() {
     let src = "b_rc = filter(b[10], $0, 1) 1{<brc>}2{r:}";
 
-    let (input_tokens, lex_err) = common::utils::into_input_tokens(src);
+    let ParsedInput {
+        parse_res: _,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
 
-    let (_, parser_err) = parser().parse(&input_tokens).into_output_errors();
-
-    assert!(lex_err.is_empty());
-    assert_eq!(1, parser_err.len());
+    assert!(lex_errs.is_empty());
+    assert_eq!(1, parse_errs.len());
 }

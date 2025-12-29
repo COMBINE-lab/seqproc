@@ -61,22 +61,12 @@ impl Nucleotide {
 pub type Span = SimpleSpan;
 
 /// Associates a `T` with a corresponding span in the source file.
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct S<T>(pub T, pub Span);
 
 impl<T> S<T> {
     pub fn new(t: T, s: Range<usize>) -> Self {
         S(t, SimpleSpan::from(s))
-    }
-}
-
-impl<T> PartialEq for S<T>
-where
-    T: PartialEq + Eq,
-{
-    // TODO: This is a patch fix for testing with the new version of chumsky
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
     }
 }
 
