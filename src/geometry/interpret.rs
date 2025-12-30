@@ -244,11 +244,11 @@ fn interpret_geometry(
                             }
                         }
 
-                        // Connect the main label to the after-anchor region for subsequent elements
-                        graph.add(set_node(
-                            LabelOrAttr::Label(&computed_init_label),
-                            antisequence::expr::Expr::from(antisequence::expr::label(next_label_str.clone())),
-                        ));
+                        // NOTE: We do NOT set computed_init_label to next_label_str here.
+                        // The read.set() function modifies the underlying string and adjusts
+                        // all intersecting mappings, which would corrupt the umi/bc3 mappings
+                        // we just created. Instead, the label vector update (label.push("_r"))
+                        // at the end of this iteration handles redirection for subsequent pieces.
 
                         // Update min_start_idx
                         min_start_idx += total_fixed_len + seq.len();
