@@ -269,8 +269,8 @@ pub fn validate_composition(
                 ),
             }),
         },
-        // SearchWhitelist searches for any barcode from whitelist and returns FixedLen
-        CompiledFunction::SearchWhitelist(..) => match return_type {
+        // SearchWhitelist searches for barcode from whitelist, optionally with followed_by validation
+        CompiledFunction::SearchWhitelist { .. } => match return_type {
             ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
             _ => Err(Error {
                 span: return_type_span,

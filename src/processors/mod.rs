@@ -73,7 +73,7 @@ impl CompiledFunction {
             // Search is handled in the interpreter, not as an expr
             CompiledFunction::Search => unimplemented!(),
             // SearchWhitelist is handled in the interpreter; in expr context just return the label
-            CompiledFunction::SearchWhitelist(_, _, _) => Expr::from(label(interval_name)),
+            CompiledFunction::SearchWhitelist { .. } => Expr::from(label(interval_name)),
             // AnchorRelative is handled in the interpreter, not as an expr
             CompiledFunction::AnchorRelative => unimplemented!(),
         }

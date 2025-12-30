@@ -79,8 +79,14 @@ pub enum Function {
     Hamming(usize),
     /// `search(F)` - forces global search for anchor
     Search,
-    /// `search_whitelist(I, A, n)` or `search_whitelist(I, A, n, max_pos)` - searches for barcode from whitelist
-    SearchWhitelist(String, usize, Option<usize>),
+    /// `search_whitelist(b[n], file, hamming_dist, max_pos, followed_by_seq, followed_by_hamming)`
+    /// - search for barcode from whitelist, optionally followed by a sequence
+    SearchWhitelist {
+        whitelist_file: String,
+        hamming_dist: usize,
+        max_pos: Option<usize>,
+        followed_by: Option<(Vec<crate::Nucleotide>, usize)>,  // (sequence, hamming_dist)
+    },
     /// `anchor_relative(F)` - search for anchor and extract preceding elements relative to found position
     AnchorRelative,
 }
@@ -112,8 +118,20 @@ impl Function {
             FilterWithinDist(p, n) => write!(f, "filter_within_dist({first}, {p}, {n})"),
             Hamming(n) => write!(f, "hamming({first}, {n})"),
             Search => write!(f, "search({first})"),
-            SearchWhitelist(p, n, None) => write!(f, "search_whitelist({first}, {p}, {n})"),
-            SearchWhitelist(p, n, Some(max)) => write!(f, "search_whitelist({first}, {p}, {n}, {max})"),
+            SearchWhitelist { whitelist_file, hamming_dist, max_pos, followed_by } => {
+                write!(f, "search_whitelist({first}, {whitelist_file}, {hamming_dist}")?;
+                if let Some(pos) = max_pos {
+                    write!(f, ", {pos}")?;
+                }
+                if let Some((seq, dist)) = followed_by {
+                    write!(f, ", f[")?;
+                    for nuc in seq {
+                        write!(f, "{nuc}")?;
+                    }
+                    write!(f, "], {dist}")?;
+                }
+                write!(f, ")")
+            }
             AnchorRelative => write!(f, "anchor_relative({first})"),
         }
     }
@@ -720,11 +738,53 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 )
                 .map(|(fn_span, S((((geom_p, path), dist), max_pos), span))| {
                     Expr::Function(
-                        S(Function::SearchWhitelist(path, dist, Some(max_pos)), fn_span),
+                        S(Function::SearchWhitelist { 
+                            whitelist_file: path, 
+                            hamming_dist: dist, 
+                            max_pos: Some(max_pos), 
+                            followed_by: None 
+                        }, fn_span),
                         S(Box::new(geom_p), span),
                     )
                 })
                 .labelled("search_whitelist_with_max"),
+            // search_whitelist with 5 args: (interval, file, dist, f[SEQ], linker_dist) - followed_by without max_pos
+            just(Token::SearchWhitelist)
+                .map_with_span(|_, span| span)
+                .then(
+                    geom_piece
+                        .clone()
+                        .then_ignore(just(Token::Comma))
+                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .then(file.clone().or(argument.clone()))
+                        .then_ignore(just(Token::Comma))
+                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .then(num.clone())
+                        .then_ignore(just(Token::Comma))
+                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .then(
+                            just(Token::FixedSeq)
+                                .ignore_then(seq.clone().delimited_by(just(Token::LBracket), just(Token::RBracket)))
+                        )
+                        .then_ignore(just(Token::Comma))
+                        .map_err_with_span(|t, span| throw(t, comma(span)))
+                        .then(num.clone())
+                        .map_with_span(S)
+                        .delimited_by(just(Token::LParen), just(Token::RParen))
+                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'search_whitelist'")))),
+                )
+                .map(|(fn_span, S(((((geom_p, path), dist), fb_seq), fb_dist), span))| {
+                    Expr::Function(
+                        S(Function::SearchWhitelist { 
+                            whitelist_file: path, 
+                            hamming_dist: dist, 
+                            max_pos: None, 
+                            followed_by: Some((fb_seq, fb_dist)) 
+                        }, fn_span),
+                        S(Box::new(geom_p), span),
+                    )
+                })
+                .labelled("search_whitelist_with_followed_by"),
             // search_whitelist with 3 args: (interval, file, dist)
             just(Token::SearchWhitelist)
                 .map_with_span(|_, span| span)
@@ -744,7 +804,12 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 )
                 .map(|(fn_span, S(((geom_p, path), dist), span))| {
                     Expr::Function(
-                        S(Function::SearchWhitelist(path, dist, None), fn_span),
+                        S(Function::SearchWhitelist { 
+                            whitelist_file: path, 
+                            hamming_dist: dist, 
+                            max_pos: None, 
+                            followed_by: None 
+                        }, fn_span),
                         S(Box::new(geom_p), span),
                     )
                 })

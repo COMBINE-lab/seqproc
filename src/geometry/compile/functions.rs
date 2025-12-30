@@ -30,8 +30,13 @@ pub enum CompiledFunction {
     Hamming(usize),
     /// Forces global search for anchor (ExactSearch or HammingSearch)
     Search,
-    /// Searches for any barcode from whitelist within Hamming distance, optionally with max search position
-    SearchWhitelist(String, usize, Option<usize>),
+    /// Searches for barcode from whitelist, optionally with followed_by linker validation
+    SearchWhitelist {
+        whitelist_file: String,
+        hamming_dist: usize,
+        max_pos: Option<usize>,
+        followed_by: Option<(Vec<crate::Nucleotide>, usize)>,
+    },
     /// Search for anchor and extract preceding elements relative to found position
     AnchorRelative,
 }
@@ -91,7 +96,9 @@ pub fn compile_fn(
         }
         Function::Hamming(n) => CompiledFunction::Hamming(n),
         Function::Search => CompiledFunction::Search,
-        Function::SearchWhitelist(path, dist, max_pos) => CompiledFunction::SearchWhitelist(path, dist, max_pos),
+        Function::SearchWhitelist { whitelist_file, hamming_dist, max_pos, followed_by } => {
+            CompiledFunction::SearchWhitelist { whitelist_file, hamming_dist, max_pos, followed_by }
+        }
         Function::AnchorRelative => CompiledFunction::AnchorRelative,
     };
 

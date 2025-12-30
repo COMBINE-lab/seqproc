@@ -1,0 +1,16 @@
+@read1_bc_linker_match
+XXACGCCCAAAZZ
++
+IIIIIIIIIIIII
+@read2_bc_match_linker_mismatch
+XXTGCNNNAAAZZ
++
+IIIIIIIIIIIII
+@read3_bc_match_linker_1mm
+XXGATCACAAAZZ
++
+IIIIIIIIIIIII
+@read4_no_bc_match
+XXNNNAAAAAAAA
++
+IIIIIIIIIIIII

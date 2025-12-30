@@ -291,7 +291,7 @@ fn interpret_geometry(
                         IntervalShape::FixedLen(_) => {
                             // Check if this FixedLen has SearchWhitelist - makes it an anchor
                             let has_search_whitelist = piece_stack.iter().any(|s| {
-                                matches!(s.0, CompiledFunction::SearchWhitelist(_, _, _))
+                                matches!(s.0, CompiledFunction::SearchWhitelist { .. })
                             });
                             if has_search_whitelist {
                                 anchor = Some(piece);
@@ -661,13 +661,13 @@ impl<'a> GeometryMeta {
             IntervalShape::FixedLen(S(len, _)) => {
                 // Check if SearchWhitelist is on the stack - forces global whitelist search
                 let search_whitelist_idx = stack.iter().position(|s| {
-                    matches!(s.0, CompiledFunction::SearchWhitelist(_, _, _))
+                    matches!(s.0, CompiledFunction::SearchWhitelist { .. })
                 });
 
                 if let Some(idx) = search_whitelist_idx {
                     // Extract SearchWhitelist parameters
-                    let (file_path, max_dist, _max_pos) = if let CompiledFunction::SearchWhitelist(ref f, d, mp) = stack[idx].0 {
-                        (f.clone(), d, mp)
+                    let (file_path, max_dist, _max_pos, followed_by) = if let CompiledFunction::SearchWhitelist { ref whitelist_file, hamming_dist, max_pos, ref followed_by } = stack[idx].0 {
+                        (whitelist_file.clone(), hamming_dist, max_pos, followed_by.clone())
                     } else {
                         unreachable!()
                     };
@@ -695,6 +695,40 @@ impl<'a> GeometryMeta {
                         match_type,
                     ));
                     graph.add(retain_node(expr::label_exists(this_label.clone())));
+
+                    // If followed_by is specified, validate linker after barcode
+                    if let Some((linker_seq, linker_dist)) = followed_by {
+                        let linker_len = linker_seq.len();
+                        let linker_label = format!("{cur_label}_linker");
+                        let after_linker_label = format!("{cur_label}_after_linker");
+                        
+                        // Cut the linker from the beginning of next_label
+                        graph.add(cut_node(
+                            into_transform_expr(&next_label, [linker_label.as_str(), after_linker_label.as_str()]),
+                            Expr::from(linker_len),
+                        ));
+                        
+                        // Match linker against expected sequence with hamming tolerance
+                        let linker_match_type = if linker_dist > 0 {
+                            HammingSearch(Threshold::Count(linker_len - linker_dist))
+                        } else {
+                            ExactSearch
+                        };
+                        
+                        // MatchAnyOp requires 3 output labels (before, match, after)
+                        let linker_before = format!("{cur_label}_lb");
+                        let linker_validated_label = format!("{cur_label}_linker_valid");
+                        let linker_after = format!("{cur_label}_la");
+                        graph.add(match_node(
+                            Patterns::from_strs([Nucleotide::as_str(&linker_seq)]),
+                            &linker_label,
+                            vec![linker_before.as_str(), linker_validated_label.as_str(), linker_after.as_str()],
+                            linker_match_type,
+                        ));
+                        
+                        // Retain only if linker validation succeeded
+                        graph.add(retain_node(expr::label_exists(linker_validated_label.clone())));
+                    }
                 } else {
                     // Original fixed-position cut behavior
                     graph.add(cut_node(
@@ -789,12 +823,12 @@ impl<'a> GeometryMeta {
                 // This is a barcode-anchored search (SearchWhitelist)
                 // Extract SearchWhitelist parameters from stack
                 let search_whitelist_idx = stack.iter().position(|s| {
-                    matches!(s.0, CompiledFunction::SearchWhitelist(_, _, _))
+                    matches!(s.0, CompiledFunction::SearchWhitelist { .. })
                 });
 
                 if let Some(idx) = search_whitelist_idx {
-                    let (file_path, max_dist, max_pos) = if let CompiledFunction::SearchWhitelist(ref f, d, mp) = stack[idx].0 {
-                        (f.clone(), d, mp)
+                    let (file_path, max_dist, max_pos, followed_by) = if let CompiledFunction::SearchWhitelist { ref whitelist_file, hamming_dist, max_pos, ref followed_by } = stack[idx].0 {
+                        (whitelist_file.clone(), hamming_dist, max_pos, followed_by.clone())
                     } else {
                         unreachable!()
                     };
@@ -838,6 +872,40 @@ impl<'a> GeometryMeta {
                     }
 
                     graph.add(retain_node(expr::label_exists(this_label.clone())));
+
+                    // If followed_by is specified, validate linker after barcode
+                    if let Some((linker_seq, linker_dist)) = followed_by {
+                        let linker_len = linker_seq.len();
+                        let linker_label = format!("{cur_label}_linker");
+                        let after_linker_label = format!("{cur_label}_after_linker");
+                        
+                        // Cut the linker from the beginning of next_label
+                        graph.add(cut_node(
+                            into_transform_expr(&next_label, [linker_label.as_str(), after_linker_label.as_str()]),
+                            Expr::from(linker_len),
+                        ));
+                        
+                        // Match linker against expected sequence with hamming tolerance
+                        let linker_match_type = if linker_dist > 0 {
+                            HammingSearch(Threshold::Count(linker_len - linker_dist))
+                        } else {
+                            ExactSearch
+                        };
+                        
+                        // MatchAnyOp requires 3 output labels (before, match, after)
+                        let linker_before = format!("{cur_label}_lb");
+                        let linker_validated_label = format!("{cur_label}_linker_valid");
+                        let linker_after = format!("{cur_label}_la");
+                        graph.add(match_node(
+                            Patterns::from_strs([Nucleotide::as_str(&linker_seq)]),
+                            &linker_label,
+                            vec![linker_before.as_str(), linker_validated_label.as_str(), linker_after.as_str()],
+                            linker_match_type,
+                        ));
+                        
+                        // Retain only if linker validation succeeded
+                        graph.add(retain_node(expr::label_exists(linker_validated_label.clone())));
+                    }
 
                     execute_stack(stack, &this_label, &size, additional_args, graph);
 
