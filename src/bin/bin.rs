@@ -1,3 +1,5 @@
+use std::process::exit;
+
 use clap::arg;
 use std::fs::File;
 use std::io;

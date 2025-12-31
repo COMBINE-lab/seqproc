@@ -44,7 +44,7 @@ pub fn validate_geometry(
 
         if !expect_next.contains(&type_) {
             return Err(Error {
-                span: span.clone(),
+                span: *span,
                 msg: format!("Ambiguous Geometry: expected {expect_next:?}, found: {type_}"),
             });
         }
@@ -193,7 +193,7 @@ pub fn compile_reads(
                     Expr::Label(S(ref l, ref span)) => {
                         if labels.contains(l) {
                             err = Some(Error {
-                                span: span.clone(),
+                                span: *span,
                                 msg: format!(
                                     "`{l}` has already been used. Cannot use same variable more than once."
                                 ),
@@ -213,7 +213,7 @@ pub fn compile_reads(
                                             inner_expr.expr.0.type_,
                                             inner_expr.expr.0.size.clone(),
                                         ),
-                                        inner_expr.expr.1.clone(),
+                                        inner_expr.expr.1,
                                     ),
                                 )?);
                             }
@@ -227,7 +227,7 @@ pub fn compile_reads(
                             break 'inner;
                         } else {
                             err = Some(Error {
-                                span: span.clone(),
+                                span: *span,
                                 msg: format!("No variable declared with label: {l}"),
                             });
 

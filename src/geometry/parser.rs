@@ -2,13 +2,11 @@
 
 use std::fmt::{self, Write};
 
-use chumsky::prelude::*;
+use chumsky::{extra::Err as ExtraErr, input::MappedInput, prelude::*};
 
-use crate::{
-    error::{comma, missing_delimiter, throw},
-    lexer::Token,
-    Nucleotide, S,
-};
+use crate::{lexer::Token, Nucleotide, S};
+
+use super::Span;
 
 /// The length of a nucleotide interval,
 /// and whether it must match a specific sequence.
@@ -73,6 +71,8 @@ pub enum Function {
     Map(String, S<Box<Expr>>),
     /// `map_with_mismatch(I, A, F, n)`
     MapWithMismatch(String, S<Box<Expr>>, usize),
+    /// `filter(I, A)`
+    Filter(String),
     /// `filter_within_dist(I, A, n)`
     FilterWithinDist(String, usize),
     /// `hamming(F, n)`
@@ -115,6 +115,7 @@ impl Function {
                 let S(s, _) = b;
                 write!(f, "map_with_mismatch({first}, {p}, {s}, {n})")
             }
+            Filter(p) => write!(f, "filter({first}, {p})"),
             FilterWithinDist(p, n) => write!(f, "filter_within_dist({first}, {p}, {n})"),
             Hamming(n) => write!(f, "hamming({first}, {n})"),
             Search => write!(f, "search({first})"),
@@ -227,514 +228,331 @@ pub struct Description {
     pub transforms: Option<S<Vec<S<Read>>>>,
 }
 
-pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clone {
-    /*
-       Start with creating combinators and
-       a recursive definition of a geom_piece
+fn make_geom_piece(
+    kind: IntervalKind,
+    shape: IntervalShape,
+    label: Option<Expr>,
+    span: Span,
+) -> Expr {
+    let expr = Expr::GeomPiece(kind, shape);
+    if let Some(Expr::Label(lbl)) = label {
+        Expr::LabeledGeomPiece(lbl, S(Box::new(expr), span))
+    } else {
+        expr
+    }
+}
 
-       At execution time we will check if it is a valid
-       geometry without any ambiguity. Here we will
-       restruct some invalid definitions
-    */
+type Input<'a> = MappedInput<'a, Token, Span, &'a [Spanned<Token>]>;
 
-    let label = select! { Token::Label(ident) => ident };
+macro_rules! function_arguments {
+    ($base:expr) => {{
+        $base
+            .map_with(|res, state| S(res, state.span()))
+            .delimited_by(
+                just(Token::LParen),
+                just(Token::RParen)
+            )
+    }};
 
-    let num = select! { Token::Num(n) => n };
+    ($base:expr, $first:expr $(, $rest:expr)* $(,)?) => {{
+        $base
+            .then_ignore(just(Token::Comma))
+            .then($first)
+            $(
+                .then_ignore(just(Token::Comma)).then($rest)
+            )*
+            .map_with(|res, state| S(res, state.span()))
+            .delimited_by(
+                just(Token::LParen),
+                just(Token::RParen)
+            )
+    }}
+}
 
-    let file = select! { Token::File(f) => f };
+macro_rules! unary_function {
+    ($func:tt, $arg:expr) => {{
+        just(Token::$func)
+            .labelled(stringify!($func))
+            .map_with(|_, state| state.span())
+            .then($arg)
+            .map(move |(fn_span, S(geom_p, span))| {
+                Expr::Function(
+                    S(Function::$func.clone(), fn_span),
+                    S(Box::new(geom_p), span),
+                )
+            })
+            .labelled(concat!("Unary function ", stringify!($func)))
+            .as_context()
+    }};
+}
 
-    let argument = select! { Token::Arg(n) => n.to_string() };
+macro_rules! binary_function {
+    ($func:tt, $arg:expr) => {{
+        just(Token::$func)
+            .labelled(stringify!($func))
+            .map_with(|_, state| state.span())
+            .then($arg)
+            .map(move |(fn_span, S((geom_p, arg), span))| {
+                Expr::Function(
+                    S(Function::$func.clone()(arg), fn_span),
+                    S(Box::new(geom_p), span),
+                )
+            })
+            .labelled(concat!("Binary function ", stringify!($func)))
+            .as_context()
+    }};
+}
+
+macro_rules! ternary_function {
+    ($func:tt, $arg:expr) => {{
+        just(Token::$func)
+            .labelled(stringify!($func))
+            .map_with(|_, state| state.span())
+            .then($arg)
+            .map(move |(fn_span, S(((geom_p, arg_one), arg_two), span))| {
+                Expr::Function(
+                    S(Function::$func.clone()(arg_one, arg_two), fn_span),
+                    S(Box::new(geom_p), span),
+                )
+            })
+            .labelled(concat!("Ternary function ", stringify!($func)))
+            .as_context()
+    }};
+}
+
+macro_rules! quaternary_function {
+    ($func:tt, $arg:expr $(,)?) => {{
+        just(Token::$func)
+            .labelled(stringify!($func))
+            .map_with(|_, state| state.span())
+            .then($arg)
+            .map(
+                move |(fn_span, S((((geom_p, arg_one), arg_two), arg_three), span))| {
+                    Expr::Function(
+                        S(
+                            Function::$func.clone()(arg_one, arg_two, arg_three),
+                            fn_span,
+                        ),
+                        S(Box::new(geom_p), span),
+                    )
+                },
+            )
+            .labelled(concat!("Quaternary function ", stringify!($func)))
+            .as_context()
+    }};
+}
+
+macro_rules! nary_functions {
+    ($helper:ident, $arg:expr, $($func:tt),* $(,)?) => {{
+        choice((
+            $(
+                $helper!($func, $arg.clone()),
+            )*
+        ))
+    }}
+}
+
+macro_rules! parse_geometry_piece {
+    ($piece_type:expr, $inline_label:expr, $kind:expr) => {{
+        $piece_type
+            .then($inline_label.or_not())
+            .then($kind)
+            .map_with(|((kind, label), shape), state| {
+                make_geom_piece(kind, shape, label, state.span())
+            })
+    }};
+}
+
+// TODO: label everything to add better errors
+pub fn parser<'tokens>(
+) -> Box<dyn Parser<'tokens, Input<'tokens>, Description, ExtraErr<Rich<'tokens, Token>>> + 'tokens>
+{
+    // begin with defining basic token selectors
+    let label = select! { Token::Label(x) => x.clone() };
+    let num = select! {Token::Num(n) => n };
+    let file = select! {Token::File(f) => f.clone() };
+    let argument = select! {Token::Arg(n) => n.to_string() };
+    let self_ = select! { Token::Self_ => Expr::Self_ };
 
     let piece_type = select! {
         Token::Barcode => IntervalKind::Barcode,
         Token::Umi => IntervalKind::Umi,
         Token::Discard => IntervalKind::Discard,
         Token::ReadSeq => IntervalKind::ReadSeq,
-    }
-    .labelled("specifier");
+    };
 
     let nuc = select! {
-        Token::U => Nucleotide::U,
         Token::A => Nucleotide::A,
         Token::T => Nucleotide::T,
         Token::G => Nucleotide::G,
         Token::C => Nucleotide::C,
+        Token::U => Nucleotide::U,
     };
 
     let inline_label = label
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(
-                    span,
-                    "Found delimiters '<' and '>' which must delimit a label.",
-                ),
-            )
-        })
-        .delimited_by(just(Token::LAngle), just(Token::RAngle))
-        .map_err_with_span(|t, span| {
-            throw(t, missing_delimiter(Token::RAngle, span, Some("label")))
-        })
-        .map_with_span(|l, span| Expr::Label(S(l, span)))
-        .labelled("label");
+        .delimited_by(
+            just(Token::LAngle).labelled("opening '<'"),
+            just(Token::RAngle).labelled("closing '>'"),
+        )
+        .map_with(|l, span: &mut _| Expr::Label(S(l, span.span())))
+        .labelled("inline label");
 
-    let label = label.map_with_span(S).labelled("label");
-
-    let self_ = just(Token::Self_).to(Expr::Self_).labelled("self");
-
+    // interval shape parsers
     let range = num
+        .labelled("number")
         .then_ignore(just(Token::Dash))
-        .then(num)
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(
-                    span,
-                    "Expected a numerical literal after '-' for a ranged length interval.",
-                ),
-            )
-        })
-        .map_with_span(|(a, b), span| IntervalShape::RangedLen(S((a, b), span)))
+        .then(num.labelled("number"))
+        .map_with(|(a, b), span| IntervalShape::RangedLen(S((a, b), span.span())))
         .delimited_by(just(Token::LBracket), just(Token::RBracket))
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                missing_delimiter(Token::RBracket, span, Some("variable length interval")),
-            )
-        });
+        .labelled("variable length geometry peice shape: [<num>-<num>]");
 
     let fixed_len = num
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(
-                    span,
-                    "Expecting a length specifier '[<num>-<num>]', or '[<num>]'.",
-                ),
-            )
-        })
-        .map_with_span(|n, span| IntervalShape::FixedLen(S(n, span)))
+        .labelled("number")
+        .map_with(|n, state| IntervalShape::FixedLen(S(n, state.span())))
         .delimited_by(just(Token::LBracket), just(Token::RBracket))
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                missing_delimiter(Token::LBracket, span, Some("fixed length interval")),
-            )
-        })
-        .labelled("fixed_len");
+        .labelled("fixed length geometry piece shape: [<num>]");
 
-    let seq = nuc
+    let nuc_seq = nuc
+        .labelled("nucleotide")
         .repeated()
         .at_least(1)
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "A fragment must contain at least one ATGCU character"),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let nucstr = seq
-        .map_with_span(|nucstr, span| IntervalShape::FixedSeq(S(nucstr, span)))
+        .collect::<Vec<_>>()
+        .map_with(|seq, span| IntervalShape::FixedSeq(S(seq, span.span())))
         .delimited_by(just(Token::LBracket), just(Token::RBracket))
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                missing_delimiter(Token::LBracket, span, Some("fragment specifier")),
-            )
-        })
-        .labelled("nucstr");
+        .labelled("nucleotide sequence");
 
+    // geom piece parsers
     let unbounded = piece_type
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Specify interval with either 'b'/'u'/'f'/'r'/'x'."),
-            )
-        })
         .then(inline_label.clone().or_not())
         .then_ignore(just(Token::Colon))
-        .map_with_span(|(type_, label), span| {
-            let expr = Expr::GeomPiece(type_, IntervalShape::UnboundedLen);
-            if let Some(Expr::Label(label)) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
-            } else {
-                expr
-            }
+        .map_with(|(kind, label), span| {
+            make_geom_piece(kind, IntervalShape::UnboundedLen, label, span.span())
         })
-        .labelled("unbound_seg");
+        .labelled("Unbounded geometry peice: e.g. 'r:'")
+        .as_context();
 
-    let ranged = piece_type
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Specify interval with either 'b'/'u'/'f'/'r'/'x'."),
-            )
-        })
-        .then(inline_label.clone().or_not())
-        .then(range)
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(
-                    span,
-                    "Expecting a length specifier either ':', '[<num>-<num>]', or '[<num>]'.",
-                ),
-            )
-        })
-        .map_with_span(|((type_, label), range), span| {
-            let expr = Expr::GeomPiece(type_, range);
-            if let Some(Expr::Label(label)) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
-            } else {
-                expr
-            }
-        })
-        .labelled("ranged_len_seg");
+    let ranged = parse_geometry_piece!(piece_type, inline_label.clone(), range)
+        .labelled("Variable length geometry piece: e.g. 'b[9-10]'")
+        .as_context();
+    let fixed_seq = parse_geometry_piece!(
+        just(Token::FixedSeq).to(IntervalKind::FixedSeq),
+        inline_label.clone(),
+        nuc_seq
+    )
+    .labelled("Fixed sequence geometry piece: e.g. 'f[ATGC]'")
+    .as_context();
+    let fixed = parse_geometry_piece!(piece_type, inline_label.clone(), fixed_len)
+        .labelled("Fixed length geometry piece: e.g. 'b[10]'")
+        .as_context();
 
-    let fixed = piece_type
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Specify interval with either 'b'/'u'/'f'/'r'/'x'."),
-            )
-        })
-        .then(inline_label.clone().or_not())
-        .then(fixed_len)
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(
-                    span,
-                    "Expecting a length specifier either ':', '[<num>-<num>]', or '[<num>]'.",
-                ),
-            )
-        })
-        .map_with_span(|((type_, label), len), span| {
-            let expr = Expr::GeomPiece(type_, len);
-            if let Some(Expr::Label(label)) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
-            } else {
-                expr
-            }
-        })
-        .labelled("fixed_len_seg");
+    // what constitutes a valid geometry peice
+    let geom_piece = choice((unbounded, ranged, fixed, fixed_seq, inline_label, self_));
 
-    let fixed_seq = just(Token::FixedSeq)
-        .to(IntervalKind::FixedSeq)
-        .then(inline_label.clone().or_not())
-        .then(nucstr)
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Expecting a sequence to match delimited by '[ .. ]'."),
-            )
-        })
-        .map_with_span(|((type_, label), nucs), span| {
-            let expr = Expr::GeomPiece(type_, nucs);
-            if let Some(Expr::Label(label)) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
-            } else {
-                expr
-            }
-        })
-        .labelled("seq_seg");
-
-    let geom_piece = choice((
-        unbounded.clone(),
-        ranged.clone(),
-        fixed.clone(),
-        fixed_seq.clone(),
-        inline_label,
-        self_,
-    ))
-    .labelled("geom_piece");
-
-    let transformed_pieces = recursive(|transformed_pieces| {
-        let transformed_pieces = transformed_pieces
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Invalid declaration of interval")));
-
-        let recursive_num_arg = transformed_pieces
-            .clone()
-            .then_ignore(just(Token::Comma))
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a ',' to separate arguments.")))
-            .then(num)
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as a second argument.")))
-            .map_with_span(S)
-            .delimited_by(just(Token::LParen), just(Token::RParen))
-            .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, None)));
-
-        let recursive_num_nuc_args = transformed_pieces
-            .clone()
-            .then_ignore(just(Token::Comma))
-            .map_err_with_span(|t, span| throw(t, comma(span)))
-            .then(num)
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as a second argument.")))
-            .then_ignore(just(Token::Comma))
-            .map_err_with_span(|t, span| throw(t, comma(span)))
-            .then(nuc)
-            .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected an ATGCU literal as a third argument.")))
-            .map_with_span(S)
-            .delimited_by(just(Token::LParen), just(Token::RParen))
-            .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, None)));
-
-        let recursive_no_arg = transformed_pieces
-            .clone()
-            .map_with_span(S)
-            .delimited_by(just(Token::LParen), just(Token::RParen))
-            .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, None)));
-
+    // transformed peices
+    let transformed_pieces = recursive(|tp| {
         choice((
-            geom_piece.clone()
-                .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Unexpected error when creating an interval."))),
-            just(Token::Remove)
-                .map_with_span(|_, span| S(Function::Remove, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("remove"),
-            just(Token::Normalize)
-                .map_with_span(|_, span| S(Function::Normalize, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("norm"),
-            just(Token::Hamming)
-                .map_with_span(|_, span| span)
-                .then(
-                    geom_piece
-                        .clone()
-                        .map_err_with_span(|t, span| {
-                            throw(t, Simple::custom(span, "Expected a fragment specified interval as the first argument - 'hamming' cannot take a transformed interval."))
-                        })
-                        .then_ignore(just(Token::Comma))
-                        .then(num).map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numeric literal as a second argument.")))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'hamming'")))),
+            geom_piece.clone(),
+            nary_functions!(
+                unary_function,
+                function_arguments!(tp
+                    .clone()
+                    .labelled("geometry piece as sole argument to function")),
+                ReverseComp,
+                Reverse,
+                Remove,
+                Normalize
+            ),
+            nary_functions!(
+                binary_function,
+                function_arguments!(
+                    tp.clone()
+                        .labelled("geometry peice as argument to binary function"),
+                    num.labelled("numerical argument to binary function")
+                ),
+                Hamming,
+                Truncate,
+                TruncateLeft,
+                TruncateTo,
+                TruncateToLeft
+            ),
+            binary_function!(
+                Filter,
+                function_arguments!(
+                    tp.clone()
+                        .labelled("geometry piece as argument to 'filter'"),
+                    file.labelled("file name")
+                        .or(argument.labelled("argument from commandline"))
                 )
-                .map_err_with_span(|t, span| {
-                    throw(t, Simple::custom(span, "Missing argument for hamming - "))
-                })
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::Hamming(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("hamming"),
-            just(Token::Search)
-                .map_with_span(|_, span| S(Function::Search, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("search"),
-            just(Token::Anchor)
-                .map_with_span(|_, span| S(Function::Anchor, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("anchor_relative"),
-            just(Token::Truncate)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::Truncate(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("trunc"),
-            just(Token::TruncateLeft)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::TruncateLeft(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("trunc_left"),
-            just(Token::TruncateTo)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::TruncateTo(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("trunc_to"),
-            just(Token::TruncateToLeft)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::TruncateToLeft(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("trunc_to_left"),
-            just(Token::Pad)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_nuc_args.clone())
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
-                    Expr::Function(
-                        S(Function::Pad(num, nuc), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("pad"),
-            just(Token::PadLeft)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_nuc_args.clone())
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
-                    Expr::Function(
-                        S(Function::PadLeft(num, nuc), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("pad_left"),
-            just(Token::PadTo)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_nuc_args.clone())
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
-                    Expr::Function(
-                        S(Function::PadTo(num, nuc), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("pad_to"),
-            just(Token::PadToLeft)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_nuc_args)
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
-                    Expr::Function(
-                        S(Function::PadToLeft(num, nuc), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("pad_to_left"),
-            just(Token::Reverse)
-                .map_with_span(|_, span| S(Function::Reverse, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("rev"),
-            just(Token::ReverseComp)
-                .map_with_span(|_, span| S(Function::ReverseComp, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("revcomp"),
-            just(Token::Map)
-                .map_with_span(|_, span| span)
-                .then(
-                    transformed_pieces
-                        .clone()
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(file.or(argument))
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(transformed_pieces.clone().map_with_span(S))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'map'")))),
+            ),
+            nary_functions!(
+                ternary_function,
+                function_arguments!(
+                    tp.clone()
+                        .labelled("geometry piece as argument to 'pad'-like functions"),
+                    num.labelled("numerical argument to 'pad'-like functions"),
+                    nuc.labelled("nucleotide to pad with")
+                ),
+                Pad,
+                PadLeft,
+                PadTo,
+                PadToLeft
+            ),
+            nary_functions!(
+                ternary_function,
+                function_arguments!(
+                    tp.clone().labelled("geometry piece to 'map'"),
+                    file.clone().labelled("file name")
+                        .or(argument.clone().labelled("argument from commandline")),
+                    tp.clone()
+                        .labelled("geometry piece after mapping")
+                        .map_with(|transf_p, state| S(Box::new(transf_p), state.span()))
+                ),
+                Map,
+            ),
+            ternary_function!(
+                FilterWithinDist,
+                function_arguments!(
+                    tp.clone()
+                        .labelled("geometry piece to 'filter_within_dist'"),
+                    file.clone().labelled("file name")
+                        .or(argument.clone().labelled("argument from commandline")),
+                    num.labelled("numerical argument")
                 )
-                .map(|(fn_span, S(((geom_p, path), self_expr), span))| {
-                    Expr::Function(
-                        S(Function::Map(path, self_expr.boxed()), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("map"),
-            just(Token::MapWithMismatch)
-                .map_with_span(|_, span| span)
-                .then(
-                    transformed_pieces
-                        .clone()
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(file.or(argument))
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(transformed_pieces.clone().map_with_span(S))
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(num)
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as the allowable mismatch when mapping interval.")))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'map_with_mismatch'")))),
-                )
-                .map(|(fn_span, S((((geom_p, path), self_expr), num), span))| {
-                    Expr::Function(
-                        S(
-                            Function::MapWithMismatch(path, self_expr.boxed(), num),
-                            fn_span,
-                        ),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("map_dist"),
-            just(Token::FilterWithinDist)
-                .map_with_span(|_, span| span)
-                .then(
-                    geom_piece
-                        .clone()
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(file.or(argument))
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(num)
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as the allowable mismatch when filtering interval.")))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen)).map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("filter_with_mismatch")))),
-                )
-                .map(|(fn_span, S(((geom_p, path), num), span))| {
-                    Expr::Function(
-                        S(Function::FilterWithinDist(path, num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("filter_dist"),
-            just(Token::Filter)
-                .map_with_span(|_, span| span)
-                .then(
-                    geom_piece
-                        .clone()
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(file.or(argument))
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> to be mapped to command line argument as second argument.")))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen)).map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'filter'")))),
-                )
-                .map(|(fn_span, S((geom_p, path), span))| {
-                    Expr::Function(
-                        S(Function::FilterWithinDist(path, 0), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("filter"),
+            ),
+            nary_functions!(
+                quaternary_function,
+                function_arguments!(
+                    tp.clone().labelled("geometry piece to 'map_with_mismatch'"),
+                    file.clone().labelled("file name")
+                        .or(argument.clone().labelled("argument from commandline")),
+                    tp.clone()
+                        .labelled("geometry piece after mapping")
+                        .map_with(|transf_p, state| S(Box::new(transf_p), state.span())),
+                    num.clone().labelled("numerical argument")
+                ),
+                MapWithMismatch,
+            ),
+            // Search function - forces global search for anchor
+            unary_function!(
+                Search,
+                function_arguments!(tp.clone().labelled("geometry piece for search"))
+            ),
+            // Anchor relative function - search for anchor and extract preceding elements
+            unary_function!(
+                Anchor,
+                function_arguments!(tp.clone().labelled("geometry piece for anchor_relative"))
+            ),
             // search_whitelist with 4 args: (interval, file, dist, max_pos)
             just(Token::SearchWhitelist)
-                .map_with_span(|_, span| span)
+                .labelled("search_whitelist")
+                .map_with(|_, state| state.span())
                 .then(
-                    geom_piece
-                        .clone()
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(file.clone().or(argument.clone()))
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(num.clone())
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(num.clone())
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as max search position for search_whitelist.")))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'search_whitelist'")))),
+                    function_arguments!(
+                        tp.clone().labelled("geometry piece for search_whitelist"),
+                        file.clone().or(argument.clone()).labelled("whitelist file"),
+                        num.clone().labelled("hamming distance"),
+                        num.clone().labelled("max search position")
+                    )
                 )
                 .map(|(fn_span, S((((geom_p, path), dist), max_pos), span))| {
                     Expr::Function(
@@ -748,59 +566,16 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                     )
                 })
                 .labelled("search_whitelist_with_max"),
-            // search_whitelist with 5 args: (interval, file, dist, f[SEQ], linker_dist) - followed_by without max_pos
-            just(Token::SearchWhitelist)
-                .map_with_span(|_, span| span)
-                .then(
-                    geom_piece
-                        .clone()
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(file.clone().or(argument.clone()))
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(num.clone())
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(
-                            just(Token::FixedSeq)
-                                .ignore_then(seq.clone().delimited_by(just(Token::LBracket), just(Token::RBracket)))
-                        )
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(num.clone())
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'search_whitelist'")))),
-                )
-                .map(|(fn_span, S(((((geom_p, path), dist), fb_seq), fb_dist), span))| {
-                    Expr::Function(
-                        S(Function::SearchWhitelist { 
-                            whitelist_file: path, 
-                            hamming_dist: dist, 
-                            max_pos: None, 
-                            followed_by: Some((fb_seq, fb_dist)) 
-                        }, fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("search_whitelist_with_followed_by"),
             // search_whitelist with 3 args: (interval, file, dist)
             just(Token::SearchWhitelist)
-                .map_with_span(|_, span| span)
+                .labelled("search_whitelist")
+                .map_with(|_, state| state.span())
                 .then(
-                    geom_piece
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(file.or(argument))
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a file or $<num> as whitelist file for search_whitelist.")))
-                        .then_ignore(just(Token::Comma))
-                        .map_err_with_span(|t, span| throw(t, comma(span)))
-                        .then(num)
-                        .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Expected a numerical literal as max Hamming distance for search_whitelist.")))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map_err_with_span(|t, span| throw(t, missing_delimiter(Token::LParen, span, Some("'search_whitelist'")))),
+                    function_arguments!(
+                        tp.clone().labelled("geometry piece for search_whitelist"),
+                        file.clone().or(argument.clone()).labelled("whitelist file"),
+                        num.clone().labelled("hamming distance")
+                    )
                 )
                 .map(|(fn_span, S(((geom_p, path), dist), span))| {
                     Expr::Function(
@@ -816,127 +591,70 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 .labelled("search_whitelist"),
         ))
     })
-    .map_err_with_span(|t, span| throw(t, Simple::custom(span, "Invalid construction of an interval")))
-    .map_with_span(S);
+    .map_with(|s, state| S(s, state.span()));
 
+    // define the basic peices of an EFGDL description
     let definitions = label
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Expected a label to begin a definition."),
-            )
-        })
+        .labelled("definition identifier")
+        .map_with(|l, state| S(l, state.span()))
         .then_ignore(just(Token::Equals))
         .then(transformed_pieces.clone())
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Error creating variable declaration"),
-            )
-        })
-        .map_with_span(|(label, geom_p), span| {
-            S(
-                Definition {
-                    label,
-                    expr: geom_p,
-                },
-                span,
-            )
-        })
+        .map_with(|(label, expr), span| S(Definition { label, expr }, span.span()))
         .repeated()
-        .map_with_span(S);
+        .collect()
+        .map_with(|defs, span| S(defs, span.span()));
 
     let reads = num
-        .map_err_with_span(|t, span| {
-            throw(t, Simple::custom(span, "Expected a number to start a read"))
-        })
-        .map_with_span(S)
+        .labelled("read number")
+        .map_with(|n, state| S(n, state.span()))
         .then(
             transformed_pieces
                 .clone()
-                .labelled("transformed_pieces_for_reads")
                 .repeated()
                 .at_least(1)
-                .delimited_by(just(Token::LBrace), just(Token::RBrace))
-                .map_err_with_span(|t, span| {
-                    throw(t, missing_delimiter(Token::LBrace, span, Some("reads")))
-                }),
+                .collect()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map_with_span(|(n, read), span| {
-            S(
-                Read {
-                    index: n,
-                    exprs: read,
-                },
-                span,
-            )
-        })
+        .map_with(|(index, exprs), span| S(Read { index, exprs }, span.span()))
         .repeated()
         .exactly(2)
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Must provide two reads - only found one"),
-            )
-        })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+        .map_with(|v, span| S(v, span.span()));
 
     let transform_read = num
-        .map_with_span(S)
+        .labelled("read number")
+        .map_with(|n, state| S(n, state.span()))
         .then(
             transformed_pieces
-                .clone()
                 .repeated()
                 .at_least(1)
-                .delimited_by(just(Token::LBrace), just(Token::RBrace))
-                .map_err_with_span(|t, span| {
-                    throw(
-                        t,
-                        missing_delimiter(Token::LBrace, span, Some("transformation")),
-                    )
-                }),
+                .collect()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map_with_span(|(n, read), span| {
-            S(
-                Read {
-                    index: n,
-                    exprs: read,
-                },
-                span,
-            )
-        });
+        .map_with(|(index, exprs), state| S(Read { index, exprs }, state.span()));
 
-    let transformation = choice((
-        end().map(|()| None),
+    let transformations = choice((
+        end().map(|_| None),
         just(Token::TransformTo)
-            .then(transform_read.repeated().at_least(1).at_most(2).then(end()))
-            .map_with_span(|(_, (val, _)), span| Some(S(val, span))),
+            .then(
+                transform_read
+                    .repeated()
+                    .at_least(1)
+                    .at_most(2)
+                    .collect::<Vec<_>>()
+                    .then(end()),
+            )
+            .map_with(|(_, (val, _)), state| Some(S(val, state.span()))),
     ));
 
-    definitions
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Error while parsing EFGDL specification."),
-            )
-        })
-        .then(reads.map_with_span(S))
-        .then(transformation)
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Error while parsing EFGDL specification."),
-            )
-        })
-        .map(|((definitions, reads), transforms)| Description {
-            definitions,
-            reads,
-            transforms,
-        })
-        .map_err_with_span(|t, span| {
-            throw(
-                t,
-                Simple::custom(span, "Error while parsing EFGDL specification."),
-            )
-        })
+    Box::new(
+        definitions
+            .then(reads)
+            .then(transformations)
+            .map(|((defs, reads), transforms)| Description {
+                definitions: defs,
+                reads,
+                transforms,
+            }),
+    )
 }

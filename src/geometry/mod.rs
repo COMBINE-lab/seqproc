@@ -3,11 +3,15 @@ pub mod interpret;
 pub mod lexer;
 pub mod parser;
 
+use std::hash::{Hash, Hasher};
+
 use std::{
     fmt::{self, Write},
     ops::Range,
     slice,
 };
+
+use chumsky::span::SimpleSpan;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)] // Necessary for by-ref conversion to `str`
@@ -54,11 +58,26 @@ impl Nucleotide {
 }
 
 /// A range of characters in the input file.
-pub type Span = Range<usize>;
+pub type Span = SimpleSpan;
 
 /// Associates a `T` with a corresponding span in the source file.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct S<T>(pub T, pub Span);
+
+impl<T> S<T> {
+    pub fn new(t: T, s: Range<usize>) -> Self {
+        S(t, SimpleSpan::from(s))
+    }
+}
+
+impl<T> Hash for S<T>
+where
+    T: PartialEq + Eq + Hash,
+{
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        self.0.hash(hasher);
+    }
+}
 
 impl<T> S<T> {
     pub fn boxed(self) -> S<Box<T>> {

@@ -169,7 +169,8 @@ impl fmt::Display for Token {
 }
 
 /// Returns a lexer for EFGDL.
-pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
+pub fn lexer<'src>(
+) -> impl Parser<'src, &'src str, Vec<(Token, Span)>, extra::Err<Rich<'src, char>>> {
     let int = text::int(10).from_str().unwrapped().map(Token::Num);
 
     let ctrl = choice((
@@ -192,7 +193,14 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
 
     let file = just('"')
         .ignored()
-        .then(take_until(just('"').ignored()))
+        .then(
+            any()
+                .and_is(just('"').not())
+                .repeated()
+                .collect::<Vec<_>>()
+                .then(just('"')),
+        )
+        // .then(take_until(just('"').ignored()))
         .padded()
         .map(|((), (f, _))| Token::File(f.into_iter().collect::<String>()));
 
@@ -210,7 +218,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         just('U').to(Token::U),
     ));
 
-    let ident = text::ident().map(|s: String| match s.as_str() {
+    let ident = text::ident().map(|s: &str| match s {
         "rev" => Token::Reverse,
         "revcomp" => Token::ReverseComp,
         "remove" => Token::Remove,
@@ -239,22 +247,15 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "f" => Token::FixedSeq,
         _ => {
             if s.starts_with('_') {
-                Token::Reserved(s)
+                Token::Reserved(s.to_owned())
             } else {
-                Token::Label(s)
+                Token::Label(s.to_owned())
             }
         }
     });
 
-    let token = nucs
-        .or(argument)
-        .or(ident)
-        .or(transformto)
-        .or(int)
-        .or(ctrl)
-        .or(special)
-        .or(file)
-        .recover_with(skip_then_retry_until([]));
+    // TODO: remove recovery
+    let token = choice((nucs, argument, ident, transformto, int, ctrl, special, file));
 
     // Comments: # to end of line
     let comment = just('#')
@@ -263,9 +264,9 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .padded();
 
     token
-        .map_with_span(|tok, span| Some((tok, span)))
+        .map_with(|tok, state| Some((tok, state.span())))
         .or(comment.map(|_| None))
-        .padded()
+        .padded_by(text::whitespace())
         .repeated()
         .collect::<Vec<_>>()
         .map(|tokens| tokens.into_iter().flatten().collect())

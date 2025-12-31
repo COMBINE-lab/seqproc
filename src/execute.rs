@@ -1,12 +1,16 @@
 use std::{
-    fs::File, io::BufWriter, panic, path::{Path, PathBuf}, thread
+    fs::File,
+    io::BufWriter,
+    panic,
+    path::{Path, PathBuf},
+    thread,
 };
 
 use antisequence::expr::fmt_expr;
 use antisequence::graph::*;
 use antisequence::graph::TryOp;
 use anyhow::{bail, Result};
-use chumsky::{prelude::Simple, Parser, Stream};
+use chumsky::{error::Rich, input::Input, Parser};
 use nix::sys::stat;
 use nix::unistd;
 use serde::Serialize;
@@ -16,6 +20,7 @@ use tracing::info;
 use crate::{
     compile::{compile, CompiledData},
     demux::DemuxConfig,
+    error::parse_failure,
     lexer,
     parser::parser,
 };
@@ -408,37 +413,28 @@ fn interpret_to_pipes(
     }
 }
 
-pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Simple<String>>> {
-    let (tokens, mut errs) = lexer::lexer().parse_recovery(geom);
+pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, String>>> {
+    // lex input
+    let tokens = lexer::lexer()
+        .parse(&geom)
+        .into_result()
+        .unwrap_or_else(|errs| parse_failure(&errs[0], geom.clone()));
 
-    let parse_errs = if let Some(tokens) = tokens {
-        match parser().parse(Stream::from_iter(
-            tokens.len()..tokens.len() + 1,
-            tokens.into_iter(),
-        )) {
-            Err(errs) => errs,
-            Ok(description) => {
-                let res = compile(description.clone());
-
-                if let Err(e) = res {
-                    errs.push(Simple::custom(e.span, e.msg));
-                } else {
-                    return Ok(res.ok().unwrap());
-                };
-
-                vec![]
-            }
-        }
-    } else {
-        Vec::new()
-    };
-
-    let errors = errs
+    let tokens = tokens
         .into_iter()
-        .map(|e| e.map(|c| c.to_string()))
-        .chain(parse_errs.into_iter().map(|e| e.map(|tok| tok.to_string())))
+        .map(|(tok, span)| chumsky::span::Spanned { inner: tok, span })
         .collect::<Vec<_>>();
-    Err(errors)
+    let input = tokens[..].split_spanned((0..geom.len()).into());
+
+    // parse token
+    let description = parser()
+        .parse(input)
+        .into_result()
+        .unwrap_or_else(|errs| parse_failure(&errs[0], geom.clone()));
+
+    // compile ast
+    compile(description)
+        .map_err(|e| parse_failure(&Rich::<String>::custom(e.span, e.msg), geom.clone()))
 }
 
 pub fn read_pairs_to_file(

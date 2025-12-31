@@ -91,6 +91,7 @@ pub fn compile_fn(
             path,
             compile_inner_expr(expr.unboxed(), S(parent_expr, expr_span))?,
         ),
+        Function::Filter(path) => CompiledFunction::FilterWithinDist(path, 0),
         Function::FilterWithinDist(path, mismatch) => {
             CompiledFunction::FilterWithinDist(path, mismatch)
         }
@@ -146,8 +147,8 @@ fn compile_inner_expr(
             match expr {
                 Expr::Function(fn_, fn_expr) => {
                     expr = fn_expr.unboxed().0;
-                    span = fn_.1.clone();
-                    let compiled_fn = compile_fn(fn_.clone(), S(expr.clone(), span.clone()));
+                    span = fn_.1;
+                    let compiled_fn = compile_fn(fn_.clone(), S(expr.clone(), span));
                     if compiled_fn.is_ok() {
                         inner_stack.push(compiled_fn.ok().unwrap());
                     } else {

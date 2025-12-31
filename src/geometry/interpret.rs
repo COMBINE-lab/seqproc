@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr, usize};
+use std::{path::PathBuf, str::FromStr};
 
 use antisequence::{
     graph::MatchType::{
@@ -6,7 +6,6 @@ use antisequence::{
     },
     *,
 };
-use chumsky::chain::Chain;
 use expr::Expr;
 use graph::{
     Graph,
@@ -435,10 +434,7 @@ fn parse_additional_args(arg: String, args: &[&str]) -> PathBuf {
     let len = args.len();
     match arg.parse::<usize>() {
         Ok(n) => PathBuf::from_str(args.get(n).unwrap_or_else(|| {
-            panic!(
-                "Expected {n} additional arguments with `--additional` tag. Found only {}.",
-                len
-            )
+            panic!("Expected {n} additional arguments with `--additional` tag. Found only {len}.",)
         }))
         .unwrap_or_else(|_| {
             panic!("Expected path as argument -- could not parse argument {n} as path.")
@@ -463,7 +459,7 @@ fn execute_stack(
     };
 
     let interval_length = match size {
-        IntervalShape::FixedSeq(v) => v.len(),
+        IntervalShape::FixedSeq(S(v, _)) => v.len(),
         IntervalShape::FixedLen(S(n, _)) => *n,
         IntervalShape::RangedLen(S((_, b), _)) => *b,
         IntervalShape::UnboundedLen => 0,
@@ -489,7 +485,7 @@ fn execute_stack(
                 execute_stack(fns, label, size, additional_args, &mut fallback_graph);
 
                 graph.add(SelectOp::new(
-                    Expr::from(expr::attr(&format!("{label}.{MAPPED}"))).not(),
+                    Expr::from(expr::attr(format!("{label}.{MAPPED}"))).not(),
                     fallback_graph,
                 ));
             }
@@ -508,7 +504,7 @@ fn execute_stack(
                 execute_stack(fns, label, size, additional_args, &mut fallback_graph);
 
                 graph.add(SelectOp::new(
-                    Expr::from(expr::attr(&format!("{label}.{MAPPED}"))).not(),
+                    Expr::from(expr::attr(format!("{label}.{MAPPED}"))).not(),
                     fallback_graph,
                 ));
             }
@@ -572,7 +568,7 @@ impl<'a> GeometryMeta {
         };
 
         if type_ == IntervalKind::Discard {
-            stack.push(S(CompiledFunction::Remove, 0..1));
+            stack.push(S(CompiledFunction::Remove, (0..1).into()));
         }
 
         // this is only called from `interpret_dual` which is for variable to fixedSeq
@@ -607,7 +603,7 @@ impl<'a> GeometryMeta {
         let next_label = format!("{cur_label}{NEXT_RIGHT}");
 
         if type_ == IntervalKind::Discard {
-            stack.push(S(CompiledFunction::Remove, 0..1));
+            stack.push(S(CompiledFunction::Remove, (0..1).into()));
         }
 
         // execute the requisite process here
