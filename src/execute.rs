@@ -4,6 +4,7 @@ use std::{
 
 use antisequence::expr::fmt_expr;
 use antisequence::graph::*;
+use antisequence::graph::TryOp;
 use anyhow::{bail, Result};
 use chumsky::{prelude::Simple, Parser, Stream};
 use nix::sys::stat;
@@ -65,7 +66,123 @@ pub fn interpret(
     additional_args: Vec<&str>,
     compiled_data: CompiledData,
 ) {
-    interpret_with_demux(file1, file2, out1, out2, threads, additional_args, compiled_data, None);
+    interpret_with_unassigned(file1, file2, out1, out2, None, None, threads, additional_args, compiled_data, None);
+}
+
+/// Interpret geometry with optional unassigned output and demultiplexing support.
+pub fn interpret_with_unassigned(
+    file1: &Path,
+    file2: &Path,
+    out1: &Path,
+    out2: &Path,
+    unassigned1: Option<&Path>,
+    unassigned2: Option<&Path>,
+    threads: usize,
+    additional_args: Vec<&str>,
+    compiled_data: CompiledData,
+    demux_config: Option<DemuxConfig>,
+) {
+    let additional_args = additional_args.into_iter().collect::<Vec<_>>();
+
+    // Skip output check when demux is enabled (demux handles its own output routing)
+    if demux_config.is_none() {
+        if let Some(transformations) = &compiled_data.transformation {
+            if transformations.len() == 2
+                && (out1.as_os_str().is_empty() || out2.as_os_str().is_empty())
+            {
+                tracing::error!(
+                    "You defined a transformation into two files - you must provide two outputs"
+                );
+                return;
+            }
+        }
+    }
+
+    // Build main processing graph
+    let mut main_graph = antisequence::graph::Graph::new();
+    compiled_data.interpret(&mut main_graph, &additional_args);
+
+    // If unassigned output is requested, wrap in TryOp
+    let has_unassigned = unassigned1.is_some() || unassigned2.is_some();
+    
+    let mut graph = antisequence::graph::Graph::new();
+    let file1_str = file1.to_str().unwrap_or("");
+    let file2_str = file2.to_str().unwrap_or("");
+    graph.add(
+        antisequence::graph::InputFastqOp::from_files([file1_str, file2_str])
+            .unwrap_or_else(|e| panic!("{e}")),
+    );
+
+    if has_unassigned {
+        // Build catch graph for unassigned reads
+        let mut catch_graph = antisequence::graph::Graph::new();
+        let unassigned1_str = unassigned1.map(|p| p.to_str().unwrap_or("")).unwrap_or("/dev/null");
+        let unassigned2_str = unassigned2.map(|p| p.to_str().unwrap_or("")).unwrap_or("/dev/null");
+        
+        if !unassigned1_str.is_empty() && !unassigned2_str.is_empty() && unassigned1_str != "/dev/null" {
+            catch_graph.add(OutputFastqFileOp::from_files([
+                unassigned1_str.to_owned(),
+                unassigned2_str.to_owned(),
+            ]));
+        }
+
+        // Use TryOp to route failed reads to catch graph
+        graph.add(TryOp::new(main_graph, catch_graph));
+    } else {
+        // No unassigned output - just add main graph nodes
+        compiled_data.interpret(&mut graph, &additional_args);
+    }
+
+    // Add LookupOp for demultiplexing if configured
+    if let Some(ref config) = demux_config {
+        if let Err(e) = config.add_lookup_op(&mut graph) {
+            tracing::error!("Failed to add demux LookupOp: {}", e);
+            return;
+        }
+        tracing::info!("Demultiplexing enabled with label: {}", config.barcode_label);
+    }
+
+    let out1_str = out1.to_str().unwrap_or("");
+    let out2_str = out2.to_str().unwrap_or("");
+
+    // When demux is enabled, use expression-based output routing
+    if let Some(ref config) = demux_config {
+        // Create output directory if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
+            tracing::error!("Failed to create demux output directory: {}", e);
+            return;
+        }
+
+        let out_dir = config.output_dir.to_string_lossy();
+        let sample_attr_path = format!("{}.{}", config.barcode_label, config.sample_attr);
+        let out1_expr = format!("{}/{{{}}}_R1.fastq", out_dir, sample_attr_path);
+        let out2_expr = format!("{}/{{{}}}_R2.fastq", out_dir, sample_attr_path);
+        
+        tracing::info!("Demux output: {} and {}", out1_expr, out2_expr);
+        
+        graph.add(OutputFastqFileOp::from_files([
+            fmt_expr(out1_expr),
+            fmt_expr(out2_expr),
+        ]));
+    } else {
+        // Standard output (no demux)
+        match (out1_str, out2_str) {
+            ("", "") => {
+                graph.add(OutputFastqFileOp::from_file("/dev/null"));
+            }
+            (out1_str, "") => {
+                graph.add(OutputFastqFileOp::from_file(out1_str.to_owned()));
+            }
+            (out1_str, out2_str) => {
+                graph.add(OutputFastqFileOp::from_files([
+                    out1_str.to_owned(),
+                    out2_str.to_owned(),
+                ]));
+            }
+        }
+    }
+
+    graph.run_with_threads(threads);
 }
 
 /// Interpret geometry with optional demultiplexing support.

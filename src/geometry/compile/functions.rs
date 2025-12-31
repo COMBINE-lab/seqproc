@@ -37,8 +37,8 @@ pub enum CompiledFunction {
         max_pos: Option<usize>,
         followed_by: Option<(Vec<crate::Nucleotide>, usize)>,
     },
-    /// Search for anchor and extract preceding elements relative to found position
-    AnchorRelative,
+    /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length
+    Anchor,
 }
 
 pub enum ChangeAs {
@@ -99,7 +99,7 @@ pub fn compile_fn(
         Function::SearchWhitelist { whitelist_file, hamming_dist, max_pos, followed_by } => {
             CompiledFunction::SearchWhitelist { whitelist_file, hamming_dist, max_pos, followed_by }
         }
-        Function::AnchorRelative => CompiledFunction::AnchorRelative,
+        Function::Anchor => CompiledFunction::Anchor,
     };
 
     Ok(S(comp_fn, span))

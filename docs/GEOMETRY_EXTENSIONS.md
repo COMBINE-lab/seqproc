@@ -3,10 +3,50 @@
 This document describes the new geometry language extensions added for advanced barcode extraction patterns, particularly for protocols like SPLiT-seq that require anchor-relative positioning.
 
 ## Table of Contents
+1. [search_anchor](#search_anchor) - Search from position 0 (new)
+2. [anchor_relative](#anchor_relative) - Search from current position
+3. [search](#search) - Global search for fixed sequence
+4. [search_whitelist](#search_whitelist) - Search barcode from whitelist with optional linker validation
 
-1. [anchor_relative](#anchor_relative) - Extract elements relative to a found anchor
-2. [search](#search) - Global search for fixed sequence
-3. [search_whitelist](#search_whitelist) - Search for barcode from whitelist with optional linker validation
+---
+
+## search_anchor
+
+**Purpose:** Search for an anchor sequence from **position 0** of the read, allowing it to find anchors even when there are insertions/deletions in the preceding region.
+
+### Syntax
+
+```
+label = search_anchor(hamming(f[SEQUENCE], N))
+```
+
+- `SEQUENCE`: The anchor sequence to search for
+- `N`: Maximum hamming distance for matching
+
+### Difference from anchor_relative
+
+| Function | Search starts from |
+|----------|-------------------|
+| `search_anchor` | Position 0 (beginning of read) |
+| `anchor_relative` | Current position (after preceding cuts) |
+
+### When to Use
+
+Use `search_anchor` when:
+- The anchor might be at a **variable position** due to upstream indels
+- You want to maximize anchor detection regardless of preceding element lengths
+- Fixed-position extraction misses reads due to 1-2bp insertions/deletions
+
+### Example
+
+```
+# L1 is searched from position 0, finding it at pos 17 or 18
+l1 = search_anchor(hamming(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))
+
+2{<umi><bc3><l1><bc2>r:<l2><bc1>}
+```
+
+**Note:** Even though `<umi><bc3>` appear before `<l1>` in the pattern, `search_anchor` searches from position 0. The preceding elements are then extracted from the "before anchor" region.
 
 ---
 

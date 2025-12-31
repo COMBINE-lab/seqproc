@@ -87,8 +87,8 @@ pub enum Function {
         max_pos: Option<usize>,
         followed_by: Option<(Vec<crate::Nucleotide>, usize)>,  // (sequence, hamming_dist)
     },
-    /// `anchor_relative(F)` - search for anchor and extract preceding elements relative to found position
-    AnchorRelative,
+    /// `anchor_relative(F)` - search for anchor from position 0 and extract preceding elements with flexible length
+    Anchor,
 }
 
 impl Function {
@@ -132,7 +132,7 @@ impl Function {
                 }
                 write!(f, ")")
             }
-            AnchorRelative => write!(f, "anchor_relative({first})"),
+            Anchor => write!(f, "anchor_relative({first})"),
         }
     }
 }
@@ -526,8 +526,8 @@ pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clon
                 .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("search"),
-            just(Token::AnchorRelative)
-                .map_with_span(|_, span| S(Function::AnchorRelative, span))
+            just(Token::Anchor)
+                .map_with_span(|_, span| S(Function::Anchor, span))
                 .then(recursive_no_arg.clone())
                 .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
                 .labelled("anchor_relative"),

@@ -7,7 +7,7 @@ use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 use seqproc::{
     demux::DemuxConfig,
     error::handle_errors,
-    execute::{compile_geom, interpret_with_demux, read_pairs_to_file},
+    execute::{compile_geom, interpret_with_unassigned, read_pairs_to_file},
 };
 
 /// General puprose sequence preprocessor
@@ -56,6 +56,15 @@ pub struct Args {
     /// Output directory for demultiplexed files
     #[arg(long = "demux-out-dir", default_value = "demux_out")]
     demux_out_dir: PathBuf,
+
+    // Unassigned reads output
+    /// R1 output file for reads that failed processing (unassigned)
+    #[arg(long = "unassigned1")]
+    unassigned1: Option<PathBuf>,
+
+    /// R2 output file for reads that failed processing (unassigned)
+    #[arg(long = "unassigned2")]
+    unassigned2: Option<PathBuf>,
 }
 
 fn main() {
@@ -103,11 +112,13 @@ fn main() {
             // If no summary file is requested, preserve the existing behavior and
             // just run the transformation without collecting stats.
             if args.summary.is_none() {
-                return interpret_with_demux(
+                return interpret_with_unassigned(
                     &args.file1,
                     &args.file2,
                     &out1,
                     &out2,
+                    args.unassigned1.as_deref(),
+                    args.unassigned2.as_deref(),
                     args.threads,
                     additional_args,
                     geom,

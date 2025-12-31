@@ -567,3 +567,40 @@ fn test_simplified_geom_from_def() {
         res.ok().unwrap().get_simplified_description_string()
     );
 }
+
+#[test]
+fn test_anchor_relative_basic() {
+    // Test that anchor_relative() compiles successfully
+    let geom = String::from("1{r:}2{u[10]b[8]anchor_relative(hamming(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))b[8]}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_anchor_relative_with_label() {
+    // Test anchor_relative with a labeled linker
+    let geom = String::from("
+l1 = anchor_relative(hamming(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))
+1{r:}2{u[10]b[8]<l1>b[8]}
+");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_dual_anchor_relative() {
+    // Test geometry with two anchor_relative calls (SPLiT-seq style)
+    let geom = String::from("
+l1 = anchor_relative(hamming(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))
+l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG], 3))
+1{r:}2{u[10]b[8]<l1>b[8]<l2>b[8]}
+");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
