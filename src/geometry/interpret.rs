@@ -247,7 +247,7 @@ fn interpret_geometry(
 
                                 let mut stack = piece_stack;
                                 if piece_type == IntervalKind::Discard {
-                                    stack.push(S(CompiledFunction::Remove, 0..1));
+                                    stack.push(S(CompiledFunction::Remove, (0..1).into()));
                                 }
                                 execute_stack(stack, &this_label, &piece_size, additional_args, graph);
 
@@ -411,7 +411,7 @@ fn interpret_geometry(
                                 // Execute any stack functions on this piece
                                 let mut stack = piece_stack;
                                 if piece_type == IntervalKind::Discard {
-                                    stack.push(S(CompiledFunction::Remove, 0..1));
+                                    stack.push(S(CompiledFunction::Remove, (0..1).into()));
                                 }
                                 execute_stack(stack, &this_label, &piece_size, additional_args, graph);
 

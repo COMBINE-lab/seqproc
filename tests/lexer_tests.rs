@@ -147,7 +147,7 @@ fn arguments() {
 fn comments() {
     let src = "bc1 = b[10] # this is a comment\nbc2 = u[8]";
 
-    let (res, err) = lexer().parse_recovery(src);
+    let (res, err) = lexer().parse(src).into_output_errors();
 
     assert_eq!(err.len(), 0);
 
@@ -165,7 +165,7 @@ fn comments() {
 fn comment_only_line() {
     let src = "# Full line comment\nbc1 = b[8]";
 
-    let (res, err) = lexer().parse_recovery(src);
+    let (res, err) = lexer().parse(src).into_output_errors();
 
     assert_eq!(err.len(), 0);
 

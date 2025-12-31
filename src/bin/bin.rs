@@ -8,7 +8,6 @@ use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use seqproc::{
     demux::DemuxConfig,
-    error::handle_errors,
     execute::{compile_geom, interpret_with_unassigned, read_pairs_to_file},
 };
 
@@ -171,8 +170,9 @@ fn main() {
                 eprintln!("Failed to create summary file at {:?}", summary_path);
             }
         }
-        Err(e) => {
-            handle_errors(e, geom);
+        Err(_) => {
+            // Errors are already printed by compile_geom via parse_failure
+            exit(1);
         }
     }
 }

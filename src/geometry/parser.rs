@@ -542,6 +542,44 @@ pub fn parser<'tokens>(
                 Anchor,
                 function_arguments!(tp.clone().labelled("geometry piece for anchor_relative"))
             ),
+            // search_whitelist with 5 args: (interval, file, dist, f[SEQ], linker_dist) - followed_by
+            just(Token::SearchWhitelist)
+                .labelled("search_whitelist")
+                .map_with(|_, state| state.span())
+                .then(
+                    tp.clone()
+                        .then_ignore(just(Token::Comma))
+                        .then(file.clone().or(argument.clone()))
+                        .then_ignore(just(Token::Comma))
+                        .then(num.clone())
+                        .then_ignore(just(Token::Comma))
+                        .then(
+                            just(Token::FixedSeq)
+                                .ignore_then(
+                                    nuc.clone()
+                                        .repeated()
+                                        .at_least(1)
+                                        .collect::<Vec<_>>()
+                                        .delimited_by(just(Token::LBracket), just(Token::RBracket))
+                                )
+                        )
+                        .then_ignore(just(Token::Comma))
+                        .then(num.clone())
+                        .map_with(|res, state| S(res, state.span()))
+                        .delimited_by(just(Token::LParen), just(Token::RParen))
+                )
+                .map(|(fn_span, S(((((geom_p, path), dist), fb_seq), fb_dist), span))| {
+                    Expr::Function(
+                        S(Function::SearchWhitelist { 
+                            whitelist_file: path, 
+                            hamming_dist: dist, 
+                            max_pos: None, 
+                            followed_by: Some((fb_seq, fb_dist)) 
+                        }, fn_span),
+                        S(Box::new(geom_p), span),
+                    )
+                })
+                .labelled("search_whitelist_with_followed_by"),
             // search_whitelist with 4 args: (interval, file, dist, max_pos)
             just(Token::SearchWhitelist)
                 .labelled("search_whitelist")
