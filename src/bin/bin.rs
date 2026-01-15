@@ -24,7 +24,7 @@ pub struct Args {
 
     /// r2 fastq file
     #[arg(short = '2', long)]
-    file2: PathBuf,
+    file2: Option<PathBuf>,
 
     /// r1 out fastq file
     #[arg(short = 'o', long)]
@@ -115,7 +115,7 @@ fn main() {
             if args.summary.is_none() {
                 return interpret_with_unassigned(
                     &args.file1,
-                    &args.file2,
+                    args.file2.as_deref(),
                     &out1,
                     &out2,
                     args.unassigned1.as_deref(),
@@ -146,7 +146,7 @@ fn main() {
             let mut stats = match read_pairs_to_file(
                 geom,
                 &args.file1,
-                &args.file2,
+                args.file2.as_deref(),
                 &out1_stats,
                 &out2_stats,
                 args.threads,

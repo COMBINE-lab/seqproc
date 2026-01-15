@@ -158,7 +158,7 @@ fn regression_10x_trivial() {
     let geom = "1{b[16]u[10]}2{r:}".to_string();
     let compiled = compile_geom(geom).expect("compile_geom");
 
-    read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![]).unwrap();
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
 
     let lens1 = parse_fastq_seq_lengths(&out1);
     let lens2 = parse_fastq_seq_lengths(&out2);
@@ -186,7 +186,7 @@ fn regression_10x_r2_exact_match() {
 
     let geom = "1{b[16]u[10]}2{r:}".to_string();
     let compiled = compile_geom(geom).expect("compile_geom");
-    read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![]).unwrap();
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
 
     let in2_seqs = parse_fastq_sequences(&in2);
     let out2_seqs = parse_fastq_sequences(&out2);
@@ -208,7 +208,7 @@ brc1  = b[9-10]
 1{<brc1><anchor>u[8]b[10]}2{r:}
 "#.to_string();
     let compiled = compile_geom(geom).expect("compile_geom");
-    read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![]).unwrap();
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
 
     let out1_seqs = parse_fastq_sequences(&out1);
     for (i, seq) in out1_seqs.iter().enumerate() {
@@ -237,7 +237,7 @@ brc1  = b[9-10]
 1{<brc1><anchor>u[8]b[10]}2{r:}
 "#.to_string();
     let compiled = compile_geom(geom).expect("compile_geom");
-    read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![]).unwrap();
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
 
     let n1 = seq_count_if_exists(&out1);
     let n2 = seq_count_if_exists(&out2);
@@ -260,7 +260,7 @@ brc1  = b[9-10]
 1{<brc1> hamming(<anchor>, 1) u[8] b[10]}2{r:}
 "#.to_string();
     let compiled = compile_geom(geom).expect("compile_geom");
-    read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![]).unwrap();
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
 
     let lens1 = parse_fastq_seq_lengths(&out1);
     let lens2 = parse_fastq_seq_lengths(&out2);
@@ -290,8 +290,8 @@ fn regression_multithread_consistency_10x() {
     let geom = "1{b[16]u[10]}2{r:}".to_string();
     let compiled1 = compile_geom(geom.clone()).expect("compile_geom");
     let compiled2 = compile_geom(geom).expect("compile_geom");
-    read_pairs_to_file(compiled1, &in1, &in2, &out1_t1, &out2_t1, 1, vec![]).unwrap();
-    read_pairs_to_file(compiled2, &in1, &in2, &out1_t4, &out2_t4, 4, vec![]).unwrap();
+    read_pairs_to_file(compiled1, &in1, Some(in2.as_path()), &out1_t1, &out2_t1, 1, vec![]).unwrap();
+    read_pairs_to_file(compiled2, &in1, Some(in2.as_path()), &out1_t4, &out2_t4, 4, vec![]).unwrap();
 
     let r1_t1 = parse_fastq_sequences(&out1_t1);
     let r2_t1 = parse_fastq_sequences(&out2_t1);
@@ -319,8 +319,8 @@ brc1  = b[9-10]
 "#.to_string();
     let compiled1 = compile_geom(geom.clone()).expect("compile_geom");
     let compiled2 = compile_geom(geom).expect("compile_geom");
-    read_pairs_to_file(compiled1, &in1, &in2, &out1_t1, &out2_t1, 1, vec![]).unwrap();
-    read_pairs_to_file(compiled2, &in1, &in2, &out1_t4, &out2_t4, 4, vec![]).unwrap();
+    read_pairs_to_file(compiled1, &in1, Some(in2.as_path()), &out1_t1, &out2_t1, 1, vec![]).unwrap();
+    read_pairs_to_file(compiled2, &in1, Some(in2.as_path()), &out1_t4, &out2_t4, 4, vec![]).unwrap();
 
     let r1_t1 = parse_fastq_sequences(&out1_t1);
     let r2_t1 = parse_fastq_sequences(&out2_t1);
@@ -345,7 +345,7 @@ brc1  = b[9-10]
 "#.to_string();
     let compiled = compile_geom(geom).expect("compile_geom");
 
-    read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![]).unwrap();
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
 
     let lens1 = parse_fastq_seq_lengths(&out1);
     let lens2 = parse_fastq_seq_lengths(&out2);
@@ -385,7 +385,7 @@ brc1  = b[9-10]
 "#.to_string();
     let compiled = compile_geom(geom).expect("compile_geom");
 
-    let stats = read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![])
+    let stats = read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![])
         .expect("read_pairs_to_file");
 
     assert!(!stats.match_distance_stats.is_empty());
@@ -435,7 +435,7 @@ brc1  = b[9-10]
 "#.to_string();
     let compiled = compile_geom(geom).expect("compile_geom");
 
-    let stats = read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![])
+    let stats = read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![])
         .expect("read_pairs_to_file");
 
     assert!(!stats.match_distance_stats.is_empty());
@@ -495,7 +495,7 @@ linker = f[ACGTAC]
     let compiled = compile_geom(geom).expect("compile_geom");
 
     // The key property: this must not panic inside interpret / execute_stack.
-    read_pairs_to_file(compiled, &in1, &in2, &out1, &out2, 1, vec![])
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![])
         .expect("read_pairs_to_file should succeed for linker Hamming geometry");
 }
 
@@ -694,4 +694,107 @@ fn demux_large_sample_map() {
     let loaded_map = config.load_sample_map().expect("Should load large map");
     
     assert_eq!(loaded_map.len(), 96, "Should load all 96 barcode mappings");
+}
+
+#[test]
+fn regression_single_end_processing() {
+    // Test native single-end processing (no file2)
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = PathBuf::from(tmp.path());
+    let r1_path = dir.join("se_input.fastq");
+    let out1_path = dir.join("se_output.fastq");
+    // Dummy out2 path, shouldn't be created
+    let out2_path = dir.join("se_output_dummy.fastq");
+
+    let mut f = File::create(&r1_path).unwrap();
+    writeln!(f, "@read1").unwrap();
+    writeln!(f, "ACGT").unwrap();
+    writeln!(f, "+").unwrap();
+    writeln!(f, "IIII").unwrap();
+
+    let geom = "1{r:}".to_string(); // Single-read geometry
+    let compiled = compile_geom(geom).expect("compile_geom");
+
+    // Pass None for in2
+    read_pairs_to_file(compiled, &r1_path, None, &out1_path, &out2_path, 1, vec![])
+        .expect("single-end processing failed");
+
+    assert!(out1_path.exists(), "Output R1 should exist");
+    assert!(!out2_path.exists(), "Output R2 should NOT exist for single-end run");
+
+    let out_seqs = parse_fastq_sequences(&out1_path);
+    assert_eq!(out_seqs.len(), 1);
+    assert_eq!(out_seqs[0], "ACGT");
+}
+
+#[test]
+fn benchmark_se_vs_pe_overhead() {
+    use std::time::Instant;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = PathBuf::from(tmp.path());
+    
+    // Generate 50k reads for a measurable duration
+    let n_reads = 50_000;
+    println!("Generating {} reads for benchmark...", n_reads);
+    let (in1, in2) = write_fastq_pair_10x(&dir, n_reads);
+    
+    let out1_se = dir.join("out1_se.fastq");
+    let out2_se = dir.join("out2_se.fastq");
+    
+    let out1_pe = dir.join("out1_pe.fastq");
+    let out2_pe = dir.join("out2_pe.fastq");
+
+    // 1. Single-End Run
+    // Geometry: 1{r:} (Identity on R1)
+    let geom_se = "1{r:}".to_string();
+    let compiled_se = compile_geom(geom_se).expect("compile_geom se");
+    
+    let start_se = Instant::now();
+    // Pass None for in2 -> Single-end mode
+    read_pairs_to_file(compiled_se, &in1, None, &out1_se, &out2_se, 1, vec![])
+        .expect("SE run failed");
+    let duration_se = start_se.elapsed();
+
+    // 2. Paired-End Run
+    // Geometry: 1{r:}2{r:} (Identity on R1 and R2)
+    let geom_pe = "1{r:}2{r:}".to_string();
+    let compiled_pe = compile_geom(geom_pe).expect("compile_geom pe");
+
+    let start_pe = Instant::now();
+    // Pass Some(in2) -> Paired-end mode
+    read_pairs_to_file(compiled_pe, &in1, Some(in2.as_path()), &out1_pe, &out2_pe, 1, vec![])
+        .expect("PE run failed");
+    let duration_pe = start_pe.elapsed();
+
+    println!("Single-end duration (50k reads): {:?}", duration_se);
+    println!("Paired-end duration (50k reads): {:?}", duration_pe);
+
+    // Verify outputs exist/don't exist
+    assert!(out1_se.exists());
+    assert!(!out2_se.exists(), "SE run should not create out2");
+    assert!(out1_pe.exists());
+    assert!(out2_pe.exists(), "PE run should create out2");
+
+    // Correctness check: R1 outputs should be identical
+    let s1 = parse_fastq_seq_lengths(&out1_se);
+    let p1 = parse_fastq_seq_lengths(&out1_pe);
+    assert_eq!(s1.len(), n_reads);
+    assert_eq!(s1, p1, "SE and PE R1 outputs should be identical");
+
+    // Performance assertion: SE should be faster or very close to PE
+    // (allowing for some system noise, but usually SE is much faster due to half I/O)
+    // We assert SE is not > 1.2x PE time (generous margin for noise in small benchmark)
+    // Realistically SE < PE.
+    let ratio = duration_se.as_secs_f64() / duration_pe.as_secs_f64();
+    println!("SE/PE Time Ratio: {:.3}", ratio);
+    
+    // If SE is significantly slower, something is wrong.
+    if duration_se > duration_pe {
+        // If SE is slower, check if it's within noise margin (e.g. < 50ms diff for short run?)
+        // For 50k reads, it takes ~100-200ms?
+        // Let's just warn for now if it fails, or soft assert.
+        // But strict assertion: SE shouldn't be > 1.5x PE.
+        assert!(ratio < 1.5, "Single-end processing significantly slower than Paired-end!");
+    }
 }

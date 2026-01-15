@@ -64,7 +64,7 @@ pub struct DistanceBin {
 
 pub fn interpret(
     file1: &Path,
-    file2: &Path,
+    file2: Option<&Path>,
     out1: &Path,
     out2: &Path,
     threads: usize,
@@ -77,7 +77,7 @@ pub fn interpret(
 /// Interpret geometry with optional unassigned output and demultiplexing support.
 pub fn interpret_with_unassigned(
     file1: &Path,
-    file2: &Path,
+    file2: Option<&Path>,
     out1: &Path,
     out2: &Path,
     unassigned1: Option<&Path>,
@@ -112,9 +112,14 @@ pub fn interpret_with_unassigned(
     
     let mut graph = antisequence::graph::Graph::new();
     let file1_str = file1.to_str().unwrap_or("");
-    let file2_str = file2.to_str().unwrap_or("");
+    
+    let mut input_files = vec![file1_str];
+    if let Some(f2) = file2 {
+        input_files.push(f2.to_str().unwrap_or(""));
+    }
+
     graph.add(
-        antisequence::graph::InputFastqOp::from_files([file1_str, file2_str])
+        antisequence::graph::InputFastqOp::from_files(input_files)
             .unwrap_or_else(|e| panic!("{e}")),
     );
 
@@ -124,11 +129,13 @@ pub fn interpret_with_unassigned(
         let unassigned1_str = unassigned1.map(|p| p.to_str().unwrap_or("")).unwrap_or("/dev/null");
         let unassigned2_str = unassigned2.map(|p| p.to_str().unwrap_or("")).unwrap_or("/dev/null");
         
-        if !unassigned1_str.is_empty() && !unassigned2_str.is_empty() && unassigned1_str != "/dev/null" {
-            catch_graph.add(OutputFastqFileOp::from_files([
-                unassigned1_str.to_owned(),
-                unassigned2_str.to_owned(),
-            ]));
+        let mut unassigned_files = vec![unassigned1_str.to_owned()];
+        if file2.is_some() && !unassigned2_str.is_empty() && unassigned2_str != "/dev/null" {
+            unassigned_files.push(unassigned2_str.to_owned());
+        }
+
+        if !unassigned1_str.is_empty() && unassigned1_str != "/dev/null" {
+             catch_graph.add(OutputFastqFileOp::from_files(unassigned_files));
         }
 
         // Use TryOp to route failed reads to catch graph
@@ -160,15 +167,19 @@ pub fn interpret_with_unassigned(
 
         let out_dir = config.output_dir.to_string_lossy();
         let sample_attr_path = format!("{}.{}", config.barcode_label, config.sample_attr);
+        
         let out1_expr = format!("{}/{{{}}}_R1.fastq", out_dir, sample_attr_path);
-        let out2_expr = format!("{}/{{{}}}_R2.fastq", out_dir, sample_attr_path);
+        let mut out_exprs = vec![fmt_expr(out1_expr.clone())];
+
+        if file2.is_some() {
+            let out2_expr = format!("{}/{{{}}}_R2.fastq", out_dir, sample_attr_path);
+            tracing::info!("Demux output: {} and {}", out1_expr, out2_expr);
+            out_exprs.push(fmt_expr(out2_expr));
+        } else {
+            tracing::info!("Demux output: {}", out1_expr);
+        }
         
-        tracing::info!("Demux output: {} and {}", out1_expr, out2_expr);
-        
-        graph.add(OutputFastqFileOp::from_files([
-            fmt_expr(out1_expr),
-            fmt_expr(out2_expr),
-        ]));
+        graph.add(OutputFastqFileOp::from_files(out_exprs));
     } else {
         // Standard output (no demux)
         match (out1_str, out2_str) {
@@ -193,7 +204,7 @@ pub fn interpret_with_unassigned(
 /// Interpret geometry with optional demultiplexing support.
 pub fn interpret_with_demux(
     file1: &Path,
-    file2: &Path,
+    file2: Option<&Path>,
     out1: &Path,
     out2: &Path,
     threads: usize,
@@ -219,9 +230,14 @@ pub fn interpret_with_demux(
 
     let mut graph = antisequence::graph::Graph::new();
     let file1_str = file1.to_str().unwrap_or("");
-    let file2_str = file2.to_str().unwrap_or("");
+    
+    let mut input_files = vec![file1_str];
+    if let Some(f2) = file2 {
+        input_files.push(f2.to_str().unwrap_or(""));
+    }
+
     graph.add(
-        antisequence::graph::InputFastqOp::from_files([file1_str, file2_str])
+        antisequence::graph::InputFastqOp::from_files(input_files)
             .unwrap_or_else(|e| panic!("{e}")),
     );
 
@@ -255,14 +271,17 @@ pub fn interpret_with_demux(
         let sample_attr_path = format!("{}.{}", config.barcode_label, config.sample_attr);
         
         let out1_expr = format!("{}/{{{}}}_R1.fastq", out_dir, sample_attr_path);
-        let out2_expr = format!("{}/{{{}}}_R2.fastq", out_dir, sample_attr_path);
+        let mut out_exprs = vec![fmt_expr(out1_expr.clone())];
+
+        if file2.is_some() {
+            let out2_expr = format!("{}/{{{}}}_R2.fastq", out_dir, sample_attr_path);
+            tracing::info!("Demux output: {} and {}", out1_expr, out2_expr);
+            out_exprs.push(fmt_expr(out2_expr));
+        } else {
+            tracing::info!("Demux output: {}", out1_expr);
+        }
         
-        tracing::info!("Demux output: {} and {}", out1_expr, out2_expr);
-        
-        graph.add(OutputFastqFileOp::from_files([
-            fmt_expr(out1_expr),
-            fmt_expr(out2_expr),
-        ]));
+        graph.add(OutputFastqFileOp::from_files(out_exprs));
     } else {
         // Standard output (no demux)
         match (out1_str, out2_str) {
@@ -294,15 +313,24 @@ fn interpret_to_pipes(
     compiled_data: CompiledData,
 ) -> SeqprocStats {
     let f1 = File::create(out1).expect("Unable to open read 1 file");
-    let f2 = File::create(out2).expect("Unable to open read 2 file");
+    
+    // Handle second output stream optionally if files2 is present?
+    // But this function return signature doesn't change easily.
+    // And it is used by read_pairs_to_fifo which has r1_fifo and r2_fifo.
+    // We should probably keep assuming paired output if called via this path,
+    // OR we assume that if files2 is empty, we don't write to out2?
+    // But out2 is passed as PathBuf.
+    // Let's create f2 only if needed?
+    // But InputFastqOp needs readers.
 
-    let stream1 = BufWriter::new(f1);
-    let stream2 = BufWriter::new(f2);
-
-    let readers = files1
+    let mut readers = files1
         .iter()
-        .chain(files2.iter())
-        .map(|f| File::open(f).expect("Failed to open file"));
+        .map(|f| File::open(f).expect("Failed to open file"))
+        .collect::<Vec<_>>();
+        
+    for f in &files2 {
+         readers.push(File::open(f).expect("Failed to open file"));
+    }
 
     let additional_args = additional_args.into_iter().collect::<Vec<_>>();
 
@@ -313,7 +341,15 @@ fn interpret_to_pipes(
 
     compiled_data.interpret(&mut graph, &additional_args);
 
-    graph.add(OutputFastqOp::from_writers([stream1, stream2]));
+    let stream1 = BufWriter::new(f1);
+    
+    if !files2.is_empty() {
+        let f2 = File::create(out2).expect("Unable to open read 2 file");
+        let stream2 = BufWriter::new(f2);
+        graph.add(OutputFastqOp::from_writers([stream1, stream2]));
+    } else {
+        graph.add(OutputFastqOp::from_writer(stream1));
+    }
 
     graph.run_with_threads(threads);
 
@@ -440,14 +476,18 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, Stri
 pub fn read_pairs_to_file(
     compiled_data: CompiledData,
     in1: &Path,
-    in2: &Path,
+    in2: Option<&Path>,
     out1: &Path,
     out2: &Path,
     threads: usize,
     additional_args: Vec<&str>,
 ) -> Result<SeqprocStats> {
     let files1 = vec![in1.to_str().unwrap_or("").to_owned()];
-    let files2 = vec![in2.to_str().unwrap_or("").to_owned()];
+    let files2 = if let Some(i2) = in2 {
+        vec![i2.to_str().unwrap_or("").to_owned()]
+    } else {
+        vec![]
+    };
 
     let stats = interpret_to_pipes(
         files1,
@@ -468,7 +508,7 @@ pub fn read_pairs_to_fifo<'a: 'static>(
     r2: Vec<String>,
     additional_args: Vec<&'a str>,
 ) -> Result<FifoSeqprocData> {
-    if r1.len() != r2.len() {
+    if !r2.is_empty() && r1.len() != r2.len() {
         bail!(
             "The number of R1 files ({}) must match the number of R2 files ({})",
             r1.len(),

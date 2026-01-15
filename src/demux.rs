@@ -104,7 +104,7 @@ impl DemuxConfig {
             input_label,
             &self.sample_attr,
             fx_map,
-            self.unassigned_name.as_bytes(),
+            self.unassigned_name.as_bytes(),    // Stick in "unassigned" as bytes as the default if the barcode is not found
         );
 
         graph.add(lookup_op);

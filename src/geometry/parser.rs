@@ -655,7 +655,7 @@ pub fn parser<'tokens>(
         )
         .map_with(|(index, exprs), span| S(Read { index, exprs }, span.span()))
         .repeated()
-        .exactly(2)
+        .at_least(1)
         .collect::<Vec<_>>()
         .map_with(|v, span| S(v, span.span()));
 
