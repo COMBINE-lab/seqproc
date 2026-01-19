@@ -70,10 +70,6 @@ impl CompiledFunction {
             CompiledFunction::MapWithMismatch(_, _, _) => unimplemented!(),
             CompiledFunction::FilterWithinDist(_, _) => unimplemented!(),
             CompiledFunction::Hamming(_) => unimplemented!(),
-            // Search is handled in the interpreter, not as an expr
-            CompiledFunction::Search => unimplemented!(),
-            // SearchWhitelist is handled in the interpreter; in expr context just return the label
-            CompiledFunction::SearchWhitelist { .. } => Expr::from(label(interval_name)),
             // Anchor is handled in the interpreter, not as an expr
             CompiledFunction::Anchor => unimplemented!(),
         }
@@ -211,8 +207,9 @@ pub fn parse_file_match(path: PathBuf) -> Patterns {
     for result in rdr.deserialize() {
         let mapping: SeqprocMap = result.expect("Could not parse line in map file");
 
-        mappings.push(Pattern::Expr {
-            expr: Expr::bytes(mapping.match_patt.into()),
+        // Use Pattern::Literal for better performance (enables fast hash-based lookup)
+        mappings.push(Pattern::Literal {
+            bytes: mapping.match_patt.into(),
             attrs: vec![Data::Bytes(mapping.sub_patt.into())],
         });
     }

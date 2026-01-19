@@ -77,16 +77,6 @@ pub enum Function {
     FilterWithinDist(String, usize),
     /// `hamming(F, n)`
     Hamming(usize),
-    /// `search(F)` - forces global search for anchor
-    Search,
-    /// `search_whitelist(b[n], file, hamming_dist, max_pos, followed_by_seq, followed_by_hamming)`
-    /// - search for barcode from whitelist, optionally followed by a sequence
-    SearchWhitelist {
-        whitelist_file: String,
-        hamming_dist: usize,
-        max_pos: Option<usize>,
-        followed_by: Option<(Vec<crate::Nucleotide>, usize)>,  // (sequence, hamming_dist)
-    },
     /// `anchor_relative(F)` - search for anchor from position 0 and extract preceding elements with flexible length
     Anchor,
 }
@@ -118,21 +108,6 @@ impl Function {
             Filter(p) => write!(f, "filter({first}, {p})"),
             FilterWithinDist(p, n) => write!(f, "filter_within_dist({first}, {p}, {n})"),
             Hamming(n) => write!(f, "hamming({first}, {n})"),
-            Search => write!(f, "search({first})"),
-            SearchWhitelist { whitelist_file, hamming_dist, max_pos, followed_by } => {
-                write!(f, "search_whitelist({first}, {whitelist_file}, {hamming_dist}")?;
-                if let Some(pos) = max_pos {
-                    write!(f, ", {pos}")?;
-                }
-                if let Some((seq, dist)) = followed_by {
-                    write!(f, ", f[")?;
-                    for nuc in seq {
-                        write!(f, "{nuc}")?;
-                    }
-                    write!(f, "], {dist}")?;
-                }
-                write!(f, ")")
-            }
             Anchor => write!(f, "anchor_relative({first})"),
         }
     }
@@ -532,101 +507,11 @@ pub fn parser<'tokens>(
                 ),
                 MapWithMismatch,
             ),
-            // Search function - forces global search for anchor
-            unary_function!(
-                Search,
-                function_arguments!(tp.clone().labelled("geometry piece for search"))
-            ),
             // Anchor relative function - search for anchor and extract preceding elements
             unary_function!(
                 Anchor,
                 function_arguments!(tp.clone().labelled("geometry piece for anchor_relative"))
             ),
-            // search_whitelist with 5 args: (interval, file, dist, f[SEQ], linker_dist) - followed_by
-            just(Token::SearchWhitelist)
-                .labelled("search_whitelist")
-                .map_with(|_, state| state.span())
-                .then(
-                    tp.clone()
-                        .then_ignore(just(Token::Comma))
-                        .then(file.clone().or(argument.clone()))
-                        .then_ignore(just(Token::Comma))
-                        .then(num.clone())
-                        .then_ignore(just(Token::Comma))
-                        .then(
-                            just(Token::FixedSeq)
-                                .ignore_then(
-                                    nuc.clone()
-                                        .repeated()
-                                        .at_least(1)
-                                        .collect::<Vec<_>>()
-                                        .delimited_by(just(Token::LBracket), just(Token::RBracket))
-                                )
-                        )
-                        .then_ignore(just(Token::Comma))
-                        .then(num.clone())
-                        .map_with(|res, state| S(res, state.span()))
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                )
-                .map(|(fn_span, S(((((geom_p, path), dist), fb_seq), fb_dist), span))| {
-                    Expr::Function(
-                        S(Function::SearchWhitelist { 
-                            whitelist_file: path, 
-                            hamming_dist: dist, 
-                            max_pos: None, 
-                            followed_by: Some((fb_seq, fb_dist)) 
-                        }, fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("search_whitelist_with_followed_by"),
-            // search_whitelist with 4 args: (interval, file, dist, max_pos)
-            just(Token::SearchWhitelist)
-                .labelled("search_whitelist")
-                .map_with(|_, state| state.span())
-                .then(
-                    function_arguments!(
-                        tp.clone().labelled("geometry piece for search_whitelist"),
-                        file.clone().or(argument.clone()).labelled("whitelist file"),
-                        num.clone().labelled("hamming distance"),
-                        num.clone().labelled("max search position")
-                    )
-                )
-                .map(|(fn_span, S((((geom_p, path), dist), max_pos), span))| {
-                    Expr::Function(
-                        S(Function::SearchWhitelist { 
-                            whitelist_file: path, 
-                            hamming_dist: dist, 
-                            max_pos: Some(max_pos), 
-                            followed_by: None 
-                        }, fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("search_whitelist_with_max"),
-            // search_whitelist with 3 args: (interval, file, dist)
-            just(Token::SearchWhitelist)
-                .labelled("search_whitelist")
-                .map_with(|_, state| state.span())
-                .then(
-                    function_arguments!(
-                        tp.clone().labelled("geometry piece for search_whitelist"),
-                        file.clone().or(argument.clone()).labelled("whitelist file"),
-                        num.clone().labelled("hamming distance")
-                    )
-                )
-                .map(|(fn_span, S(((geom_p, path), dist), span))| {
-                    Expr::Function(
-                        S(Function::SearchWhitelist { 
-                            whitelist_file: path, 
-                            hamming_dist: dist, 
-                            max_pos: None, 
-                            followed_by: None 
-                        }, fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("search_whitelist"),
         ))
     })
     .map_with(|s, state| S(s, state.span()));

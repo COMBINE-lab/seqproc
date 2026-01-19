@@ -28,15 +28,6 @@ pub enum CompiledFunction {
     MapWithMismatch(String, Vec<S<CompiledFunction>>, usize),
     FilterWithinDist(String, usize),
     Hamming(usize),
-    /// Forces global search for anchor (ExactSearch or HammingSearch)
-    Search,
-    /// Searches for barcode from whitelist, optionally with followed_by linker validation
-    SearchWhitelist {
-        whitelist_file: String,
-        hamming_dist: usize,
-        max_pos: Option<usize>,
-        followed_by: Option<(Vec<crate::Nucleotide>, usize)>,
-    },
     /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length
     Anchor,
 }
@@ -96,10 +87,6 @@ pub fn compile_fn(
             CompiledFunction::FilterWithinDist(path, mismatch)
         }
         Function::Hamming(n) => CompiledFunction::Hamming(n),
-        Function::Search => CompiledFunction::Search,
-        Function::SearchWhitelist { whitelist_file, hamming_dist, max_pos, followed_by } => {
-            CompiledFunction::SearchWhitelist { whitelist_file, hamming_dist, max_pos, followed_by }
-        }
         Function::Anchor => CompiledFunction::Anchor,
     };
 

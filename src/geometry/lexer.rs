@@ -84,10 +84,6 @@ pub enum Token {
     Filter,
     /// `hamming`.
     Hamming,
-    /// `search`.
-    Search,
-    /// `search_whitelist`.
-    SearchWhitelist,
     /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length.
     Anchor,
     /// `->`.
@@ -153,8 +149,6 @@ impl fmt::Display for Token {
             FilterWithinDist => f.write_str("filter_within_dist"),
             Filter => f.write_str("filter"),
             Hamming => f.write_str("hamming"),
-            Search => f.write_str("search"),
-            SearchWhitelist => f.write_str("search_whitelist"),
             Anchor => f.write_str("anchor_relative"),
             Barcode => f.write_char('b'),
             Umi => f.write_char('u'),
@@ -236,8 +230,6 @@ pub fn lexer<'src>(
         "filter" => Token::Filter,
         "map" => Token::Map,
         "hamming" => Token::Hamming,
-        "search" => Token::Search,
-        "search_whitelist" => Token::SearchWhitelist,
         "anchor_relative" => Token::Anchor,
         "self" => Token::Self_,
         "b" => Token::Barcode,
