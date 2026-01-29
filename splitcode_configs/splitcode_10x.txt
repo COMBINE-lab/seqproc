@@ -1,8 +1,0 @@
-# Minimal splitcode config for 10x-style synthetic data
-# This config does not define any tags or extraction; it simply
-# allows splitcode to read paired FASTQs and pass them through.
-# We keep it intentionally simple to avoid imposing artificial
-# barcode structures on synthetic random barcodes.
-
-# No @header directives and no tag table rows are required for
-# a pass-through run.
