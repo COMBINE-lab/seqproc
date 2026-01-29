@@ -28,6 +28,8 @@ pub enum CompiledFunction {
     MapWithMismatch(String, Vec<S<CompiledFunction>>, usize),
     FilterWithinDist(String, usize),
     Hamming(usize),
+    /// `edit` - edit distance (Levenshtein) matching allowing insertions/deletions
+    Edit(usize),
     /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length
     Anchor,
 }
@@ -87,6 +89,7 @@ pub fn compile_fn(
             CompiledFunction::FilterWithinDist(path, mismatch)
         }
         Function::Hamming(n) => CompiledFunction::Hamming(n),
+        Function::Edit(n) => CompiledFunction::Edit(n),
         Function::Anchor => CompiledFunction::Anchor,
     };
 

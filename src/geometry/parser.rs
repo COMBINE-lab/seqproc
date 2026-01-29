@@ -77,6 +77,8 @@ pub enum Function {
     FilterWithinDist(String, usize),
     /// `hamming(F, n)`
     Hamming(usize),
+    /// `edit(F, n)` - edit distance (Levenshtein) matching allowing insertions/deletions
+    Edit(usize),
     /// `anchor_relative(F)` - search for anchor from position 0 and extract preceding elements with flexible length
     Anchor,
 }
@@ -108,6 +110,7 @@ impl Function {
             Filter(p) => write!(f, "filter({first}, {p})"),
             FilterWithinDist(p, n) => write!(f, "filter_within_dist({first}, {p}, {n})"),
             Hamming(n) => write!(f, "hamming({first}, {n})"),
+            Edit(n) => write!(f, "edit({first}, {n})"),
             Anchor => write!(f, "anchor_relative({first})"),
         }
     }
@@ -445,6 +448,7 @@ pub fn parser<'tokens>(
                     num.labelled("numerical argument to binary function")
                 ),
                 Hamming,
+                Edit,
                 Truncate,
                 TruncateLeft,
                 TruncateTo,

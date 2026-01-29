@@ -259,6 +259,15 @@ pub fn validate_composition(
                 ),
             }),
         },
+        CompiledFunction::Edit(_) => match return_type {
+            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+            _ => Err(Error {
+                span: return_type_span,
+                msg: format!(
+                    "Function Edit must take Sequence element as an argument, found: {return_type}"
+                ),
+            }),
+        },
         // anchor_relative searches for anchor from position 0 and extracts preceding elements with flexible length
         CompiledFunction::Anchor => match return_type {
             ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),

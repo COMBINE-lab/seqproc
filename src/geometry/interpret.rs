@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use antisequence::{
-    graph::MatchType::{self, ExactBoundedMatch, ExactSearch, HammingBoundedMatch, HammingSearch, PrefixAln},
+    graph::MatchType::{self, ExactBoundedMatch, ExactSearch, HammingBoundedMatch, HammingSearch, LocalAln, PrefixAln},
     *,
 };
 use expr::Expr;
@@ -165,11 +165,16 @@ fn interpret_geometry(
                         let prev_label = format!("{cur_label}{NEXT_LEFT}");
                         let next_label_str = format!("{cur_label}{NEXT_RIGHT}");
 
-                        // Get Hamming distance if specified
+                        // Get Hamming or Edit distance if specified
                         let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = anchor_stack.last() {
                             let n = *n;
                             anchor_stack.pop();
                             HammingSearch(Threshold::Count(seq.len() - n))
+                        } else if let Some(S(CompiledFunction::Edit(n), _)) = anchor_stack.last() {
+                            let n = *n;
+                            anchor_stack.pop();
+                            let identity = (seq.len() - n) as f64 / seq.len() as f64;
+                            LocalAln { identity, overlap: 1.0 }
                         } else {
                             ExactSearch
                         };
@@ -464,6 +469,9 @@ fn execute_stack(
             CompiledFunction::Hamming(_) => {
                 panic!("Hamming requires to be bound to a sequence cannot operate in isolation")
             }
+            CompiledFunction::Edit(_) => {
+                panic!("Edit requires to be bound to a sequence cannot operate in isolation")
+            }
             CompiledFunction::Map(file, fns) => {
                 let file_path = parse_additional_args(file, additional_args);
                 let patterns = parse_file_match(file_path);
@@ -615,6 +623,11 @@ impl<'a> GeometryMeta {
                         let n = *n;
                         stack.pop();
                         HammingSearch(Threshold::Count(seq.len() - n))
+                    } else if let Some(S(CompiledFunction::Edit(n), _)) = stack.last() {
+                        let n = *n;
+                        stack.pop();
+                        let identity = (seq.len() - n) as f64 / seq.len() as f64;
+                        LocalAln { identity, overlap: 1.0 }
                     } else {
                         ExactSearch
                     };
@@ -757,7 +770,7 @@ fn get_match_type(
     seq_len: usize,
     range_start: &mut usize,
 ) -> MatchType {
-    // Check for Hamming on the stack
+    // Check for Hamming or Edit on the stack
     let hamming_dist = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
         let n = *n;
         stack.pop();
@@ -766,25 +779,46 @@ fn get_match_type(
         None
     };
 
-    // Logic based on predecessor type
+    let edit_dist = if hamming_dist.is_none() {
+        if let Some(S(CompiledFunction::Edit(n), _)) = stack.last() {
+            let n = *n;
+            stack.pop();
+            Some(n)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Logic based on predecessor type and distance type
     match offset_len {
         Some(offset) => {
-            match hamming_dist {
-                Some(n) => HammingBoundedMatch {
+            if let Some(n) = hamming_dist {
+                HammingBoundedMatch {
                     threshold: Threshold::Count(seq_len - n),
                     from: *range_start,
                     to: *range_start + seq_len + offset,
-                },
-                None => ExactBoundedMatch {
+                }
+            } else if let Some(n) = edit_dist {
+                // For edit distance in bounded context, use LocalAln
+                let identity = (seq_len - n) as f64 / seq_len as f64;
+                LocalAln { identity, overlap: 1.0 }
+            } else {
+                ExactBoundedMatch {
                     from: *range_start,
                     to: *range_start + seq_len + offset,
-                },
+                }
             }
         }
         None => {
-            match hamming_dist {
-                Some(n) => HammingSearch(Threshold::Count(seq_len - n)),
-                None => ExactSearch,
+            if let Some(n) = hamming_dist {
+                HammingSearch(Threshold::Count(seq_len - n))
+            } else if let Some(n) = edit_dist {
+                let identity = (seq_len - n) as f64 / seq_len as f64;
+                LocalAln { identity, overlap: 1.0 }
+            } else {
+                ExactSearch
             }
         }
     }
