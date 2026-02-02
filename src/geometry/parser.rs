@@ -77,6 +77,10 @@ pub enum Function {
     FilterWithinDist(String, usize),
     /// `hamming(F, n)`
     Hamming(usize),
+    /// `edit(F, n)` - edit distance (Levenshtein) matching
+    Edit(usize),
+    /// `map_with_edit(I, A, F, n)` - map with edit distance tolerance
+    MapWithEdit(String, S<Box<Expr>>, usize),
     /// `anchor_relative(F)` - search for anchor from position 0 and extract preceding elements with flexible length
     Anchor,
 }
@@ -108,6 +112,11 @@ impl Function {
             Filter(p) => write!(f, "filter({first}, {p})"),
             FilterWithinDist(p, n) => write!(f, "filter_within_dist({first}, {p}, {n})"),
             Hamming(n) => write!(f, "hamming({first}, {n})"),
+            Edit(n) => write!(f, "edit({first}, {n})"),
+            MapWithEdit(p, b, n) => {
+                let S(s, _) = b;
+                write!(f, "map_with_edit({first}, {p}, {s}, {n})")
+            }
             Anchor => write!(f, "anchor_relative({first})"),
         }
     }
@@ -445,6 +454,7 @@ pub fn parser<'tokens>(
                     num.labelled("numerical argument to binary function")
                 ),
                 Hamming,
+                Edit,
                 Truncate,
                 TruncateLeft,
                 TruncateTo,
@@ -506,6 +516,7 @@ pub fn parser<'tokens>(
                     num.clone().labelled("numerical argument")
                 ),
                 MapWithMismatch,
+                MapWithEdit,
             ),
             // Anchor relative function - search for anchor and extract preceding elements
             unary_function!(

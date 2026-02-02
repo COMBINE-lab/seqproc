@@ -1,13 +1,13 @@
 use std::{path::PathBuf, str::FromStr};
 
 use antisequence::{
-    graph::MatchType::{self, ExactBoundedMatch, ExactSearch, HammingBoundedMatch, HammingSearch, PrefixAln},
+    graph::MatchType::{self, ExactBoundedMatch, ExactSearch, HammingBoundedMatch, HammingSearch, EditBoundedMatch, EditSearch, PrefixAln},
     *,
 };
 use expr::Expr;
 use graph::{
     Graph,
-    MatchType::{Exact, ExactPrefix, Hamming, HammingPrefix},
+    MatchType::{Exact, ExactPrefix, Hamming, HammingPrefix, Edit, EditPrefix},
     SelectOp, Threshold,
 };
 
@@ -165,11 +165,15 @@ fn interpret_geometry(
                         let prev_label = format!("{cur_label}{NEXT_LEFT}");
                         let next_label_str = format!("{cur_label}{NEXT_RIGHT}");
 
-                        // Get Hamming distance if specified
+                        // Get Hamming or Edit distance if specified
                         let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = anchor_stack.last() {
                             let n = *n;
                             anchor_stack.pop();
                             HammingSearch(Threshold::Count(seq.len() - n))
+                        } else if let Some(S(CompiledFunction::Edit(n), _)) = anchor_stack.last() {
+                            let n = *n;
+                            anchor_stack.pop();
+                            EditSearch(Threshold::Count(n))
                         } else {
                             ExactSearch
                         };
@@ -464,6 +468,9 @@ fn execute_stack(
             CompiledFunction::Hamming(_) => {
                 panic!("Hamming requires to be bound to a sequence cannot operate in isolation")
             }
+            CompiledFunction::Edit(_) => {
+                panic!("Edit requires to be bound to a sequence cannot operate in isolation")
+            }
             CompiledFunction::Map(file, fns) => {
                 let file_path = parse_additional_args(file, additional_args);
                 let patterns = parse_file_match(file_path);
@@ -486,6 +493,25 @@ fn execute_stack(
                     label,
                     patterns,
                     Hamming(Threshold::Count(interval_length - mismatch)),
+                    graph,
+                );
+
+                let mut fallback_graph = Graph::new();
+                execute_stack(fns, label, size, additional_args, &mut fallback_graph);
+
+                graph.add(SelectOp::new(
+                    Expr::from(expr::attr(format!("{label}.{MAPPED}"))).not(),
+                    fallback_graph,
+                ));
+            }
+            CompiledFunction::MapWithEdit(file, fns, edit_dist) => {
+                let file_path = parse_additional_args(file, additional_args);
+                let patterns = parse_file_match(file_path);
+
+                map(
+                    label,
+                    patterns,
+                    Edit(Threshold::Count(edit_dist)),
                     graph,
                 );
 
@@ -615,6 +641,10 @@ impl<'a> GeometryMeta {
                         let n = *n;
                         stack.pop();
                         HammingSearch(Threshold::Count(seq.len() - n))
+                    } else if let Some(S(CompiledFunction::Edit(n), _)) = stack.last() {
+                        let n = *n;
+                        stack.pop();
+                        EditSearch(Threshold::Count(n))
                     } else {
                         ExactSearch
                     };
@@ -635,6 +665,10 @@ impl<'a> GeometryMeta {
                         let n = *n;
                         stack.pop();
                         HammingPrefix(Threshold::Count(seq.len() - n))
+                    } else if let Some(S(CompiledFunction::Edit(n), _)) = stack.last() {
+                        let n = *n;
+                        stack.pop();
+                        EditPrefix(Threshold::Count(n))
                     } else if !stack.is_empty() {
                         PrefixAln {
                             identity: 1.0,
@@ -757,8 +791,16 @@ fn get_match_type(
     seq_len: usize,
     range_start: &mut usize,
 ) -> MatchType {
-    // Check for Hamming on the stack
+    // Check for Hamming or Edit on the stack
     let hamming_dist = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
+        let n = *n;
+        stack.pop();
+        Some(n)
+    } else {
+        None
+    };
+
+    let edit_dist = if let Some(S(CompiledFunction::Edit(n), _)) = stack.last() {
         let n = *n;
         stack.pop();
         Some(n)
@@ -769,22 +811,32 @@ fn get_match_type(
     // Logic based on predecessor type
     match offset_len {
         Some(offset) => {
-            match hamming_dist {
-                Some(n) => HammingBoundedMatch {
+            if let Some(n) = edit_dist {
+                EditBoundedMatch {
+                    threshold: Threshold::Count(n),
+                    from: *range_start,
+                    to: *range_start + seq_len + offset,
+                }
+            } else if let Some(n) = hamming_dist {
+                HammingBoundedMatch {
                     threshold: Threshold::Count(seq_len - n),
                     from: *range_start,
                     to: *range_start + seq_len + offset,
-                },
-                None => ExactBoundedMatch {
+                }
+            } else {
+                ExactBoundedMatch {
                     from: *range_start,
                     to: *range_start + seq_len + offset,
-                },
+                }
             }
         }
         None => {
-            match hamming_dist {
-                Some(n) => HammingSearch(Threshold::Count(seq_len - n)),
-                None => ExactSearch,
+            if let Some(n) = edit_dist {
+                EditSearch(Threshold::Count(n))
+            } else if let Some(n) = hamming_dist {
+                HammingSearch(Threshold::Count(seq_len - n))
+            } else {
+                ExactSearch
             }
         }
     }

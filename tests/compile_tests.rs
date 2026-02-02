@@ -513,3 +513,50 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG], 3))
 
     assert!(res.is_ok());
 }
+
+#[test]
+fn test_edit_distance_basic() {
+    // Test that edit() compiles successfully with a fixed sequence
+    let geom = String::from("1{r:}2{edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 2)b[8]}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_edit_distance_anchor_relative() {
+    // Test anchor_relative with edit distance (indel-tolerant anchor search)
+    let geom = String::from("1{r:}2{u[10]b[8]anchor_relative(edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))b[8]}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_edit_distance_with_label() {
+    // Test edit distance with a labeled linker
+    let geom = String::from("
+l1 = anchor_relative(edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 2))
+1{r:}2{u[10]b[8]<l1>b[8]}
+");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_dual_anchor_with_edit() {
+    // Test geometry with two anchor_relative calls using edit distance (for indel-tolerant long-read)
+    let geom = String::from("
+l1 = anchor_relative(edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG], 3))
+1{r:}2{u[10]b[8]<l1>b[8]<l2>b[8]}
+");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}

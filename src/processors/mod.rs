@@ -68,8 +68,10 @@ impl CompiledFunction {
             CompiledFunction::Remove => unimplemented!(),
             CompiledFunction::Map(_, _) => unimplemented!(),
             CompiledFunction::MapWithMismatch(_, _, _) => unimplemented!(),
+            CompiledFunction::MapWithEdit(_, _, _) => unimplemented!(),
             CompiledFunction::FilterWithinDist(_, _) => unimplemented!(),
             CompiledFunction::Hamming(_) => unimplemented!(),
+            CompiledFunction::Edit(_) => unimplemented!(),
             // Anchor is handled in the interpreter, not as an expr
             CompiledFunction::Anchor => unimplemented!(),
         }

@@ -228,7 +228,7 @@ pub fn validate_composition(
                 ),
             }),
         },
-        CompiledFunction::Map(..) | CompiledFunction::MapWithMismatch(..) => match return_type {
+        CompiledFunction::Map(..) | CompiledFunction::MapWithMismatch(..) | CompiledFunction::MapWithEdit(..) => match return_type {
             ReturnType::Ranged | ReturnType::FixedLen | ReturnType::FixedSeq => {
                 Ok(S(ReturnType::FixedLen, fn_span))
             }
@@ -256,6 +256,15 @@ pub fn validate_composition(
                 span: return_type_span,
                 msg: format!(
                     "Function Hamming must take Sequence element an argument, found: {return_type}"
+                ),
+            }),
+        },
+        CompiledFunction::Edit(_) => match return_type {
+            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+            _ => Err(Error {
+                span: return_type_span,
+                msg: format!(
+                    "Function Edit must take Sequence element an argument, found: {return_type}"
                 ),
             }),
         },

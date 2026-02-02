@@ -26,8 +26,10 @@ pub enum CompiledFunction {
     Normalize,
     Map(String, Vec<S<CompiledFunction>>),
     MapWithMismatch(String, Vec<S<CompiledFunction>>, usize),
+    MapWithEdit(String, Vec<S<CompiledFunction>>, usize),
     FilterWithinDist(String, usize),
     Hamming(usize),
+    Edit(usize),
     /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length
     Anchor,
 }
@@ -87,6 +89,12 @@ pub fn compile_fn(
             CompiledFunction::FilterWithinDist(path, mismatch)
         }
         Function::Hamming(n) => CompiledFunction::Hamming(n),
+        Function::Edit(n) => CompiledFunction::Edit(n),
+        Function::MapWithEdit(path, expr, edit_dist) => CompiledFunction::MapWithEdit(
+            path,
+            compile_inner_expr(expr.unboxed(), S(parent_expr, expr_span))?,
+            edit_dist,
+        ),
         Function::Anchor => CompiledFunction::Anchor,
     };
 

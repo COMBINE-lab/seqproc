@@ -84,6 +84,10 @@ pub enum Token {
     Filter,
     /// `hamming`.
     Hamming,
+    /// `edit` - edit distance (Levenshtein) matching.
+    Edit,
+    /// `map_with_edit` - map with edit distance tolerance.
+    MapWithEdit,
     /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length.
     Anchor,
     /// `->`.
@@ -149,6 +153,8 @@ impl fmt::Display for Token {
             FilterWithinDist => f.write_str("filter_within_dist"),
             Filter => f.write_str("filter"),
             Hamming => f.write_str("hamming"),
+            Edit => f.write_str("edit"),
+            MapWithEdit => f.write_str("map_with_edit"),
             Anchor => f.write_str("anchor_relative"),
             Barcode => f.write_char('b'),
             Umi => f.write_char('u'),
@@ -230,6 +236,8 @@ pub fn lexer<'src>(
         "filter" => Token::Filter,
         "map" => Token::Map,
         "hamming" => Token::Hamming,
+        "edit" => Token::Edit,
+        "map_with_edit" => Token::MapWithEdit,
         "anchor_relative" => Token::Anchor,
         "self" => Token::Self_,
         "b" => Token::Barcode,
