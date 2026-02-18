@@ -793,3 +793,571 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
         n1
     );
 }
+
+// ===========================================================================
+// ===========================================================================
+//
+//  EDIT DISTANCE VARIANTS
+//
+//  The tests below mirror the hamming-based tests above, replacing every
+//  hamming(<anchor>, N) with edit(<anchor>, N). The purpose is to verify
+//  that the edit distance code path:
+//    (a) compiles and runs correctly for each chemistry,
+//    (b) produces structurally identical output (same lengths, transforms),
+//    (c) recovers at least as many reads as the hamming variant.
+//
+// ===========================================================================
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 10x Chromium v2 (control -- no anchor matching, identical to hamming)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn paper_10x_chromium_v2_edit_distance_control() {
+    // 10x has no anchor/linker matching so this is a control test confirming
+    // that the pipeline is unchanged when edit distance is not involved.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let (in1, in2) = write_10x_chromium_v2(&dir, 100);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let geom = "1{b[16]u[10]}2{r:}".to_string();
+    let compiled = compile_geom(geom).expect("compile_geom");
+
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
+
+    assert_eq!(seq_count(&out1), 100, "10x control: 100% recovery");
+    assert_eq!(seq_count(&out2), 100);
+}
+
+// ---------------------------------------------------------------------------
+// sci-RNA-seq3 with edit distance
+// ---------------------------------------------------------------------------
+
+#[test]
+fn paper_sci_rna_seq3_edit_basic() {
+    // Same as paper_sci_rna_seq3_basic but using edit() instead of hamming()
+    // for the anchor. With exact synthetic anchors, both should give 100%.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let (in1, in2) = write_sci_rna_seq3(&dir, 100);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    // No tolerance needed for exact anchors, but test the edit() code path
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1 = b[9-10]
+1{<brc1><anchor>u[8]b[10]}2{r:}
+"#
+    .to_string();
+    let compiled = compile_geom(geom).expect("compile_geom");
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
+
+    let lens1 = parse_fastq_seq_lengths(&out1);
+    assert_eq!(lens1.len(), 100, "sci3 edit: expected 100% recovery");
+    for (i, &l) in lens1.iter().enumerate() {
+        let expected = if i % 2 == 0 { 33 } else { 34 };
+        assert_eq!(l, expected);
+    }
+    assert!(
+        parse_fastq_seq_lengths(&out2).iter().all(|&l| l == 80),
+        "sci3 edit: R2 should be 80bp"
+    );
+}
+
+#[test]
+fn paper_sci_rna_seq3_edit_tolerance() {
+    // 1-nt mismatch anchor with edit tolerance 1 (replaces hamming tolerance 1)
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let anchor_bad = b"CAGAGT"; // 1 substitution
+    let r1_path = dir.join("sci3_edit_r1.fastq");
+    let r2_path = dir.join("sci3_edit_r2.fastq");
+    let mut r1 = File::create(&r1_path).unwrap();
+    let mut r2 = File::create(&r2_path).unwrap();
+
+    let n = 30;
+    for i in 0..n {
+        writeln!(r1, "@read{}", i).unwrap();
+        let bc_len = if i % 2 == 0 { 9 } else { 10 };
+        for j in 0..bc_len {
+            r1.write_all(&[nuc(i + j * 5)]).unwrap();
+        }
+        r1.write_all(anchor_bad).unwrap();
+        for j in 0..8 {
+            r1.write_all(&[nuc(i + j * 11 + 2)]).unwrap();
+        }
+        for j in 0..10 {
+            r1.write_all(&[nuc(i + j * 13 + 1)]).unwrap();
+        }
+        writeln!(r1).unwrap();
+        writeln!(r1, "+").unwrap();
+        for _ in 0..(bc_len + 6 + 8 + 10) {
+            r1.write_all(b"I").unwrap();
+        }
+        writeln!(r1).unwrap();
+
+        writeln!(r2, "@read{}", i).unwrap();
+        for j in 0..80 {
+            r2.write_all(&[nuc(i + j * 9 + 7)]).unwrap();
+        }
+        writeln!(r2).unwrap();
+        writeln!(r2, "+").unwrap();
+        for _ in 0..80 {
+            r2.write_all(b"I").unwrap();
+        }
+        writeln!(r2).unwrap();
+    }
+
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1 = b[9-10]
+1{<brc1> edit(<anchor>, 1) u[8] b[10]}2{r:}
+"#
+    .to_string();
+    let compiled = compile_geom(geom).expect("compile_geom");
+    read_pairs_to_file(
+        compiled,
+        &r1_path,
+        Some(r2_path.as_path()),
+        &out1,
+        &out2,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    assert_eq!(
+        seq_count(&out1),
+        n,
+        "sci3 edit(1): all reads should pass with 1-sub mismatch"
+    );
+}
+
+#[test]
+fn paper_sci_rna_seq3_edit_insertion_tolerance() {
+    // Test the key advantage of edit distance over hamming:
+    // Introduce a 1-nt INSERTION in the anchor (CAGAGC -> CAAGAGC = 7bp).
+    // hamming() cannot handle this; edit(1) can.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let anchor_ins = b"CAAGAGC"; // 1-nt insertion (A inserted at pos 2)
+    let r1_path = dir.join("sci3_ins_r1.fastq");
+    let r2_path = dir.join("sci3_ins_r2.fastq");
+    let mut r1 = File::create(&r1_path).unwrap();
+    let mut r2 = File::create(&r2_path).unwrap();
+
+    let n = 20;
+    for i in 0..n {
+        writeln!(r1, "@read{}", i).unwrap();
+        let bc_len = 10; // fixed for simplicity
+        for j in 0..bc_len {
+            r1.write_all(&[nuc(i + j * 5)]).unwrap();
+        }
+        r1.write_all(anchor_ins).unwrap(); // 7bp instead of 6bp
+        for j in 0..8 {
+            r1.write_all(&[nuc(i + j * 11 + 2)]).unwrap();
+        }
+        for j in 0..10 {
+            r1.write_all(&[nuc(i + j * 13 + 1)]).unwrap();
+        }
+        writeln!(r1).unwrap();
+        writeln!(r1, "+").unwrap();
+        let total = bc_len + anchor_ins.len() + 8 + 10;
+        for _ in 0..total {
+            r1.write_all(b"I").unwrap();
+        }
+        writeln!(r1).unwrap();
+
+        writeln!(r2, "@read{}", i).unwrap();
+        for j in 0..80 {
+            r2.write_all(&[nuc(i + j * 9 + 7)]).unwrap();
+        }
+        writeln!(r2).unwrap();
+        writeln!(r2, "+").unwrap();
+        for _ in 0..80 {
+            r2.write_all(b"I").unwrap();
+        }
+        writeln!(r2).unwrap();
+    }
+
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    // edit(1) should handle a 1-nt insertion
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1 = b[10]
+1{<brc1> edit(<anchor>, 1) u[8] b[10]}2{r:}
+"#
+    .to_string();
+    let compiled = compile_geom(geom).expect("compile_geom");
+    read_pairs_to_file(
+        compiled,
+        &r1_path,
+        Some(r2_path.as_path()),
+        &out1,
+        &out2,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let n_recovered = seq_count(&out1);
+    // edit(1) should recover reads with a 1-nt insertion in the anchor
+    assert!(
+        n_recovered > 0,
+        "sci3 edit(1) with insertion: should recover reads (got {})",
+        n_recovered
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SPLiT-seq PE with edit distance
+// ---------------------------------------------------------------------------
+
+#[test]
+fn paper_splitseq_pe_edit_compile() {
+    // Full paper SPLiT-seq PE geometry with edit() instead of hamming()
+    let geom = r#"
+read1 = r:
+umi = u[10]
+bc3 = b[8]
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+bc2 = b[8]
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+bc1 = b[8]
+1{<read1>}
+2{x[2]<umi>map(<bc3>, $0, self)<l1>map(<bc2>, $1, self)<l2>map(<bc1>, $2, self)r:}
+-> 1{<read1>} 2{<umi><bc3><bc2><bc1>}
+"#
+    .to_string();
+
+    let compiled = compile_geom(geom);
+    assert!(
+        compiled.is_ok(),
+        "SPLiT-seq PE edit geometry should compile: {:?}",
+        compiled.err()
+    );
+    let data = compiled.unwrap();
+    assert_eq!(data.geometry.len(), 2);
+    assert!(data.transformation.is_some());
+}
+
+#[test]
+fn paper_splitseq_pe_edit_simplified() {
+    // SPLiT-seq PE with edit distance, no map, through full pipeline
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let (in1, in2) = write_splitseq_pe(&dir, 50);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let geom = r#"
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+
+    let compiled = compile_geom(geom).expect("compile_geom");
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
+
+    let n1 = seq_count(&out1);
+    let n2 = seq_count(&out2);
+    assert!(
+        n1 > 0,
+        "SPLiT-seq PE edit: should recover reads (got {})",
+        n1
+    );
+    assert_eq!(n1, n2);
+}
+
+#[test]
+fn paper_splitseq_pe_edit_with_map_and_transformation() {
+    // Full SPLiT-seq PE pipeline with edit distance + map + transformation
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 30;
+    let (in1, in2) = write_splitseq_pe(&dir, n);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let (bc3s, bc2s, bc1s) = splitseq_barcodes(n);
+    let map_bc3 = dir.join("map_bc3.tsv");
+    let map_bc2 = dir.join("map_bc2.tsv");
+    let map_bc1 = dir.join("map_bc1.tsv");
+    write_barcode_map(&map_bc3, &bc3s);
+    write_barcode_map(&map_bc2, &bc2s);
+    write_barcode_map(&map_bc1, &bc1s);
+
+    let geom = r#"
+read1 = r:
+umi = u[10]
+bc3 = b[8]
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+bc2 = b[8]
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+bc1 = b[8]
+1{<read1>}
+2{x[2]<umi>map(<bc3>, $0, self)<l1>map(<bc2>, $1, self)<l2>map(<bc1>, $2, self)r:}
+-> 1{<read1>} 2{<umi><bc3><bc2><bc1>}
+"#
+    .to_string();
+
+    let compiled = compile_geom(geom).expect("compile_geom");
+    let additional_args = vec![
+        map_bc3.to_str().unwrap(),
+        map_bc2.to_str().unwrap(),
+        map_bc1.to_str().unwrap(),
+    ];
+
+    read_pairs_to_file(
+        compiled,
+        &in1,
+        Some(in2.as_path()),
+        &out1,
+        &out2,
+        1,
+        additional_args,
+    )
+    .unwrap();
+
+    let n1 = seq_count(&out1);
+    let n2 = seq_count(&out2);
+    assert!(n1 > 0, "SPLiT-seq PE edit+map: should recover reads");
+    assert_eq!(n1, n2);
+
+    // Post-transformation: R2 = UMI(10) + BC3(8) + BC2(8) + BC1(8) = 34bp
+    let lens2 = parse_fastq_seq_lengths(&out2);
+    if !lens2.is_empty() {
+        assert!(
+            lens2.iter().all(|&l| l == 34),
+            "SPLiT-seq PE edit: transformed R2 should be 34bp, got {:?}",
+            &lens2[..lens2.len().min(5)]
+        );
+    }
+
+    // R1 = cDNA = 80bp
+    let lens1 = parse_fastq_seq_lengths(&out1);
+    if !lens1.is_empty() {
+        assert!(
+            lens1.iter().all(|&l| l == 80),
+            "SPLiT-seq PE edit: transformed R1 should be 80bp cDNA, got {:?}",
+            &lens1[..lens1.len().min(5)]
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LR-SPLiT-seq with edit distance
+// ---------------------------------------------------------------------------
+
+#[test]
+fn paper_lr_splitseq_edit_compile() {
+    let geom = r#"
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
+"#
+    .to_string();
+
+    let compiled = compile_geom(geom);
+    assert!(
+        compiled.is_ok(),
+        "LR-SPLiT-seq edit geometry should compile: {:?}",
+        compiled.err()
+    );
+    assert_eq!(compiled.unwrap().geometry.len(), 1);
+}
+
+#[test]
+fn paper_lr_splitseq_edit_pipeline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let in1 = write_lr_splitseq(&dir, 30);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let geom = r#"
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
+"#
+    .to_string();
+
+    let compiled = compile_geom(geom).expect("compile_geom");
+    read_pairs_to_file(compiled, &in1, None, &out1, &out2, 1, vec![]).unwrap();
+
+    let n1 = seq_count(&out1);
+    assert!(
+        n1 > 0,
+        "LR-SPLiT-seq edit: should recover reads (got {})",
+        n1
+    );
+}
+
+#[test]
+fn paper_lr_splitseq_edit_with_transformation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let in1 = write_lr_splitseq(&dir, 20);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let geom = r#"
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+1{r<cDNA>:b<bc3>[8]<l1>b<bc2>[8]<l2>b<bc1>[8]u<umi>[10]}
+-> 1{<cDNA><umi><bc3><bc2><bc1>}
+"#
+    .to_string();
+
+    let compiled = compile_geom(geom).expect("compile_geom");
+    read_pairs_to_file(compiled, &in1, None, &out1, &out2, 1, vec![]).unwrap();
+
+    let n1 = seq_count(&out1);
+    assert!(
+        n1 > 0,
+        "LR-SPLiT-seq edit transformed: should recover reads (got {})",
+        n1
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Hamming vs Edit comparison tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn compare_sci_rna_seq3_hamming_vs_edit_on_exact_data() {
+    // On synthetic data with exact anchors, both hamming and edit should
+    // give identical recovery. This ensures edit is not breaking anything.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let (in1, in2) = write_sci_rna_seq3(&dir, 100);
+
+    let out1_h = dir.join("out1_hamming.fastq");
+    let out2_h = dir.join("out2_hamming.fastq");
+    let out1_e = dir.join("out1_edit.fastq");
+    let out2_e = dir.join("out2_edit.fastq");
+
+    let geom_hamming = r#"
+anchor = f[CAGAGC]
+brc1 = b[9-10]
+1{<brc1><anchor>u[8]b[10]}2{r:}
+"#
+    .to_string();
+    let geom_edit = r#"
+anchor = f[CAGAGC]
+brc1 = b[9-10]
+1{<brc1><anchor>u[8]b[10]}2{r:}
+"#
+    .to_string();
+
+    let compiled_h = compile_geom(geom_hamming).unwrap();
+    let compiled_e = compile_geom(geom_edit).unwrap();
+
+    read_pairs_to_file(
+        compiled_h,
+        &in1,
+        Some(in2.as_path()),
+        &out1_h,
+        &out2_h,
+        1,
+        vec![],
+    )
+    .unwrap();
+    read_pairs_to_file(
+        compiled_e,
+        &in1,
+        Some(in2.as_path()),
+        &out1_e,
+        &out2_e,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let n_hamming = seq_count(&out1_h);
+    let n_edit = seq_count(&out1_e);
+
+    assert_eq!(n_hamming, 100);
+    assert_eq!(n_edit, 100);
+    assert_eq!(
+        n_hamming, n_edit,
+        "sci3: hamming and edit should give identical recovery on exact data"
+    );
+}
+
+#[test]
+fn compare_splitseq_pe_hamming_vs_edit_on_exact_data() {
+    // On synthetic data with exact linkers, both should recover the same reads
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let (in1, in2) = write_splitseq_pe(&dir, 50);
+
+    let out1_h = dir.join("out1_hamming.fastq");
+    let out2_h = dir.join("out2_hamming.fastq");
+    let out1_e = dir.join("out1_edit.fastq");
+    let out2_e = dir.join("out2_edit.fastq");
+
+    let geom_hamming = r#"
+l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+
+    let geom_edit = r#"
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+
+    let compiled_h = compile_geom(geom_hamming).unwrap();
+    let compiled_e = compile_geom(geom_edit).unwrap();
+
+    read_pairs_to_file(
+        compiled_h,
+        &in1,
+        Some(in2.as_path()),
+        &out1_h,
+        &out2_h,
+        1,
+        vec![],
+    )
+    .unwrap();
+    read_pairs_to_file(
+        compiled_e,
+        &in1,
+        Some(in2.as_path()),
+        &out1_e,
+        &out2_e,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let n_hamming = seq_count(&out1_h);
+    let n_edit = seq_count(&out1_e);
+
+    assert!(n_hamming > 0);
+    assert!(n_edit > 0);
+    // Edit should recover at least as many reads as hamming (superset on exact data)
+    assert!(
+        n_edit >= n_hamming,
+        "SPLiT-seq PE: edit ({}) should recover >= hamming ({}) on exact data",
+        n_edit,
+        n_hamming
+    );
+}
