@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{ops::Not, path::PathBuf, str::FromStr};
 
 use antisequence::{
     graph::MatchType::{
