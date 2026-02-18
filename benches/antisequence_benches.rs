@@ -1,3 +1,4 @@
+#![allow(clippy::same_item_push)]
 use std::io::Cursor;
 use std::time::Duration;
 
@@ -69,7 +70,7 @@ fn bench_10x_large(c: &mut Criterion) {
                 graph.run_with_threads(threads());
             },
             BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
@@ -97,7 +98,7 @@ fn bench_10x_10m(c: &mut Criterion) {
                 graph.run_with_threads(threads());
             },
             BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
@@ -108,7 +109,8 @@ fn bench_sci3_large_null(c: &mut Criterion) {
 anchor = f[CAGAGC]
 brc1  = b[9-10]
 1{<brc1><anchor>u[8]b[10]}2{r:}
-"#.to_string();
+"#
+    .to_string();
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3_1M_null");
@@ -128,7 +130,7 @@ brc1  = b[9-10]
                 graph.run_with_threads(threads());
             },
             BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
@@ -155,7 +157,7 @@ fn bench_10x_large_null(c: &mut Criterion) {
                 graph.run_with_threads(threads());
             },
             BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
@@ -165,7 +167,8 @@ fn bench_sci3_large(c: &mut Criterion) {
 anchor = f[CAGAGC]
 brc1  = b[9-10]
 1{<brc1><anchor>u[8]b[10]}2{r:}
-"#.to_string();
+"#
+    .to_string();
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3_1M");
@@ -187,7 +190,7 @@ brc1  = b[9-10]
                 graph.run_with_threads(threads());
             },
             BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
@@ -197,7 +200,8 @@ fn bench_sci3_10m(c: &mut Criterion) {
 anchor = f[CAGAGC]
 brc1  = b[9-10]
 1{<brc1><anchor>u[8]b[10]}2{r:}
-"#.to_string();
+"#
+    .to_string();
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3_10M");
@@ -219,7 +223,7 @@ brc1  = b[9-10]
                 graph.run_with_threads(threads());
             },
             BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
@@ -230,7 +234,8 @@ fn bench_sci3_tolerant_large(c: &mut Criterion) {
 anchor = f[CAGAGC]
 brc1  = norm(b[9-10])
 1{<brc1> hamming(<anchor>, 1) u[8] b[10]}2{r:}
-"#.to_string();
+"#
+    .to_string();
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3_tolerant_1M");
@@ -252,21 +257,28 @@ brc1  = norm(b[9-10])
                 graph.run_with_threads(1);
             },
             BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
 
 #[allow(dead_code)]
 fn bench_sci3_disk_1m(c: &mut Criterion) {
-    let r1 = match std::env::var("SCI3_R1_1M").ok() { Some(p) => p, None => return };
-    let r2 = match std::env::var("SCI3_R2_1M").ok() { Some(p) => p, None => return };
+    let r1 = match std::env::var("SCI3_R1_1M").ok() {
+        Some(p) => p,
+        None => return,
+    };
+    let r2 = match std::env::var("SCI3_R2_1M").ok() {
+        Some(p) => p,
+        None => return,
+    };
 
     let geom = r#"
 anchor = f[CAGAGC]
 brc1  = b[9-10]
 1{<brc1><anchor>u[8]b[10]}2{r:}
-"#.to_string();
+"#
+    .to_string();
     let compiled = compile_geom(geom).expect("compile geom");
 
     let mut group = c.benchmark_group("antisequence_sci_rna_seq3_disk_1M");
@@ -281,7 +293,7 @@ brc1  = b[9-10]
             let sink2 = std::io::sink();
             graph.add(OutputFastqOp::from_writers([sink1, sink2]));
             graph.run_with_threads(threads());
-        })
+        });
     });
     group.finish();
 }
@@ -398,7 +410,7 @@ fn bench_10x(c: &mut Criterion) {
                     graph.run_with_threads(threads());
                 },
                 BatchSize::SmallInput,
-            )
+            );
         });
     }
     group.finish();
@@ -433,7 +445,7 @@ brc1  = b[9-10]
                     graph.run_with_threads(threads());
                 },
                 BatchSize::SmallInput,
-            )
+            );
         });
     }
     group.finish();
@@ -469,7 +481,7 @@ brc1  = norm(b[9-10])
                     graph.run_with_threads(1);
                 },
                 BatchSize::SmallInput,
-            )
+            );
         });
     }
     group.finish();
@@ -501,14 +513,13 @@ brc1  = b[9-10]
     group.bench_function("sci3_ENA_10k", |b| {
         b.iter(|| {
             let mut graph = Graph::new();
-            graph
-                .add(InputFastqOp::from_files([r1.as_str(), r2.as_str()]).unwrap());
+            graph.add(InputFastqOp::from_files([r1.as_str(), r2.as_str()]).unwrap());
             compiled.interpret(&mut graph, &Vec::<&str>::new());
             let sink1 = std::io::sink();
             let sink2 = std::io::sink();
             graph.add(OutputFastqOp::from_writers([sink1, sink2]));
             graph.run_with_threads(1);
-        })
+        });
     });
     group.finish();
 }
@@ -524,9 +535,10 @@ brc1  = b[9-10]
     .to_string();
     let compiled = compile_geom(geom).expect("compile geom");
 
-    let base_dir = std::env::var("SCI3_DIR").ok().map(std::path::PathBuf::from).unwrap_or_else(|| {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/sci3")
-    });
+    let base_dir = std::env::var("SCI3_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/sci3"));
 
     // Parse runs from env or default to SRR7827206..=SRR7827215
     let runs: Vec<String> = if let Ok(run_list) = std::env::var("SCI3_RUNS") {
@@ -585,7 +597,7 @@ brc1  = b[9-10]
                 let sink2 = std::io::sink();
                 graph.add(OutputFastqOp::from_writers([sink1, sink2]));
                 graph.run_with_threads(threads());
-            })
+            });
         });
     }
 
@@ -602,13 +614,14 @@ brc1  = b[9-10]
                     graph.add(OutputFastqOp::from_writers([sink1, sink2]));
                     graph.run_with_threads(1);
                 }
-            })
+            });
         });
     }
     group.finish();
 }
 
-criterion_group!(benches,
+criterion_group!(
+    benches,
     bench_10x,
     // bench_10x_file_out,
     bench_sci3,

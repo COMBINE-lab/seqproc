@@ -381,3 +381,537 @@ impl GeometryPiece {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{parser::IntervalKind, Nucleotide, S};
+
+    fn span() -> crate::Span {
+        (0..1).into()
+    }
+
+    #[test]
+    fn test_return_type_display() {
+        assert_eq!(format!("{}", ReturnType::Ranged), "Ranged");
+        assert_eq!(format!("{}", ReturnType::FixedLen), "Fixed Length");
+        assert_eq!(format!("{}", ReturnType::Unbounded), "Unbounded");
+        assert_eq!(format!("{}", ReturnType::FixedSeq), "Fixed Sequence");
+        assert_eq!(format!("{}", ReturnType::Void), "Void");
+    }
+
+    #[test]
+    fn test_error_display() {
+        let e = Error {
+            span: (5..10).into(),
+            msg: "test error".to_string(),
+        };
+        let s = format!("{}", e);
+        assert!(s.contains("test error"));
+        assert!(s.contains("5"));
+        assert!(s.contains("10"));
+    }
+
+    #[test]
+    fn test_interval_display() {
+        let named = Interval::Named("foo".to_string());
+        assert_eq!(format!("{}", named), "Label: foo");
+    }
+
+    #[test]
+    fn test_geometry_piece_is_complex() {
+        let fixed = GeometryPiece {
+            type_: IntervalKind::Barcode,
+            size: IntervalShape::FixedLen(S(16, span())),
+            label: None,
+        };
+        assert!(!fixed.is_complex());
+
+        let ranged = GeometryPiece {
+            type_: IntervalKind::Barcode,
+            size: IntervalShape::RangedLen(S((8, 12), span())),
+            label: None,
+        };
+        assert!(ranged.is_complex());
+
+        let seq = GeometryPiece {
+            type_: IntervalKind::FixedSeq,
+            size: IntervalShape::FixedSeq(S(vec![Nucleotide::A], span())),
+            label: None,
+        };
+        assert!(seq.is_complex());
+    }
+
+    #[test]
+    fn test_geometry_piece_is_seq() {
+        let fixed = GeometryPiece {
+            type_: IntervalKind::Barcode,
+            size: IntervalShape::FixedLen(S(16, span())),
+            label: None,
+        };
+        assert!(!fixed.is_seq());
+
+        let seq = GeometryPiece {
+            type_: IntervalKind::FixedSeq,
+            size: IntervalShape::FixedSeq(S(vec![Nucleotide::A], span())),
+            label: None,
+        };
+        assert!(seq.is_seq());
+    }
+
+    #[test]
+    fn test_geometry_piece_simplified_description() {
+        let bc = GeometryPiece {
+            type_: IntervalKind::Barcode,
+            size: IntervalShape::FixedLen(S(16, span())),
+            label: None,
+        };
+        assert_eq!(
+            bc.get_simplified_description_string(IntervalShape::FixedLen(S(16, span()))),
+            "b[16]"
+        );
+
+        let umi = GeometryPiece {
+            type_: IntervalKind::Umi,
+            size: IntervalShape::FixedLen(S(10, span())),
+            label: None,
+        };
+        assert_eq!(
+            umi.get_simplified_description_string(IntervalShape::FixedLen(S(10, span()))),
+            "u[10]"
+        );
+
+        let read = GeometryPiece {
+            type_: IntervalKind::ReadSeq,
+            size: IntervalShape::UnboundedLen,
+            label: None,
+        };
+        assert_eq!(
+            read.get_simplified_description_string(IntervalShape::UnboundedLen),
+            "r:"
+        );
+
+        let discard = GeometryPiece {
+            type_: IntervalKind::Discard,
+            size: IntervalShape::FixedLen(S(5, span())),
+            label: None,
+        };
+        assert_eq!(
+            discard.get_simplified_description_string(IntervalShape::FixedLen(S(5, span()))),
+            "x[5]"
+        );
+    }
+
+    #[test]
+    fn test_interval_shape_update_size_to() {
+        let shape = IntervalShape::FixedLen(S(16, span()));
+        let updated = shape.update_size_to(10);
+        assert!(matches!(updated, IntervalShape::FixedLen(S(10, _))));
+    }
+
+    #[test]
+    fn test_interval_shape_update_size_add() {
+        let shape = IntervalShape::FixedLen(S(16, span()));
+        let updated = shape.update_size_add(4);
+        assert!(matches!(updated, IntervalShape::FixedLen(S(20, _))));
+
+        let ranged = IntervalShape::RangedLen(S((8, 12), span()));
+        let updated = ranged.update_size_add(4);
+        assert!(matches!(updated, IntervalShape::RangedLen(S((12, 16), _))));
+
+        let unbounded = IntervalShape::UnboundedLen;
+        let updated = unbounded.update_size_add(4);
+        assert!(matches!(updated, IntervalShape::UnboundedLen));
+    }
+
+    #[test]
+    fn test_interval_shape_update_size_sub() {
+        let shape = IntervalShape::FixedLen(S(16, span()));
+        let updated = shape.update_size_sub(4);
+        assert!(matches!(updated, IntervalShape::FixedLen(S(12, _))));
+
+        let unbounded = IntervalShape::UnboundedLen;
+        let updated = unbounded.update_size_sub(4);
+        assert!(matches!(updated, IntervalShape::UnboundedLen));
+    }
+
+    #[test]
+    fn test_interval_shape_get_normalized() {
+        let fixed = IntervalShape::FixedLen(S(16, span()));
+        let normalized = fixed.get_normalized();
+        assert!(matches!(normalized, IntervalShape::FixedLen(S(16, _))));
+
+        let ranged = IntervalShape::RangedLen(S((8, 12), span()));
+        let normalized = ranged.get_normalized();
+        // Should normalize: b + log4_roundup(b - a + 1) = 12 + log4_roundup(5) = 12 + 2 = 14
+        assert!(matches!(normalized, IntervalShape::FixedLen(_)));
+    }
+
+    #[test]
+    fn test_geometry_meta_display() {
+        let gm = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::Barcode,
+                    size: IntervalShape::FixedLen(S(16, span())),
+                    label: Some("bc1".to_string()),
+                },
+                span(),
+            ),
+            stack: vec![],
+        };
+        let s = format!("{}", gm);
+        assert!(s.contains("Geometry Meta"));
+    }
+
+    #[test]
+    fn test_geometry_piece_display() {
+        let gp = GeometryPiece {
+            type_: IntervalKind::Barcode,
+            size: IntervalShape::FixedLen(S(16, span())),
+            label: Some("bc1".to_string()),
+        };
+        let s = format!("{}", gp);
+        assert!(s.contains("bc1"));
+        assert!(s.contains("b"));
+    }
+
+    #[test]
+    fn test_geometry_meta_get_label() {
+        let gm = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::Barcode,
+                    size: IntervalShape::FixedLen(S(16, span())),
+                    label: Some("bc1".to_string()),
+                },
+                span(),
+            ),
+            stack: vec![],
+        };
+        assert_eq!(gm.get_label(), Some("bc1".to_string()));
+
+        let gm_no_label = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::Barcode,
+                    size: IntervalShape::FixedLen(S(16, span())),
+                    label: None,
+                },
+                span(),
+            ),
+            stack: vec![],
+        };
+        assert_eq!(gm_no_label.get_label(), None);
+    }
+
+    #[test]
+    fn test_geometry_meta_validate_expr() {
+        let gm = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::Barcode,
+                    size: IntervalShape::FixedLen(S(16, span())),
+                    label: None,
+                },
+                span(),
+            ),
+            stack: vec![],
+        };
+        assert!(gm.validate_expr().is_ok());
+    }
+
+    #[test]
+    fn test_validate_composition_reverse_void() {
+        let result = validate_composition(
+            S(&CompiledFunction::Reverse, span()),
+            S(ReturnType::Void, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_reverse_ok() {
+        let result = validate_composition(
+            S(&CompiledFunction::Reverse, span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_composition_revcomp_void() {
+        let result = validate_composition(
+            S(&CompiledFunction::ReverseComp, span()),
+            S(ReturnType::Void, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_truncate_void() {
+        let result = validate_composition(
+            S(&CompiledFunction::Truncate(2), span()),
+            S(ReturnType::Void, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_truncate_too_much() {
+        let result = validate_composition(
+            S(&CompiledFunction::Truncate(20), span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_truncate_to_ok() {
+        let result = validate_composition(
+            S(&CompiledFunction::TruncateTo(10), span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_composition_truncate_to_too_much() {
+        let result = validate_composition(
+            S(&CompiledFunction::TruncateTo(20), span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_remove_void() {
+        let result = validate_composition(
+            S(&CompiledFunction::Remove, span()),
+            S(ReturnType::Void, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_remove_ok() {
+        let result = validate_composition(
+            S(&CompiledFunction::Remove, span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_ok());
+        let ret = result.unwrap();
+        assert_eq!(ret.0, ReturnType::Void);
+    }
+
+    #[test]
+    fn test_validate_composition_pad_void() {
+        let result = validate_composition(
+            S(&CompiledFunction::Pad(4, Nucleotide::A), span()),
+            S(ReturnType::Void, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_pad_to_too_small() {
+        let result = validate_composition(
+            S(&CompiledFunction::PadTo(10, Nucleotide::A), span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_normalize_ranged() {
+        let result = validate_composition(
+            S(&CompiledFunction::Normalize, span()),
+            S(ReturnType::Ranged, span()),
+            &IntervalShape::RangedLen(S((8, 12), span())),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_composition_normalize_fixed_err() {
+        let result = validate_composition(
+            S(&CompiledFunction::Normalize, span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_hamming_fixedseq() {
+        let result = validate_composition(
+            S(&CompiledFunction::Hamming(1), span()),
+            S(ReturnType::FixedSeq, span()),
+            &IntervalShape::FixedSeq(S(vec![Nucleotide::A, Nucleotide::C], span())),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_composition_hamming_non_seq() {
+        let result = validate_composition(
+            S(&CompiledFunction::Hamming(1), span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_edit_fixedseq() {
+        let result = validate_composition(
+            S(&CompiledFunction::Edit(1), span()),
+            S(ReturnType::FixedSeq, span()),
+            &IntervalShape::FixedSeq(S(vec![Nucleotide::A, Nucleotide::C], span())),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_composition_edit_non_seq() {
+        let result = validate_composition(
+            S(&CompiledFunction::Edit(1), span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_anchor_fixedseq() {
+        let result = validate_composition(
+            S(&CompiledFunction::Anchor, span()),
+            S(ReturnType::FixedSeq, span()),
+            &IntervalShape::FixedSeq(S(vec![Nucleotide::A], span())),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_composition_anchor_non_seq() {
+        let result = validate_composition(
+            S(&CompiledFunction::Anchor, span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_map_ok() {
+        let result = validate_composition(
+            S(&CompiledFunction::Map("test".into(), vec![]), span()),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_composition_map_unbounded() {
+        let result = validate_composition(
+            S(&CompiledFunction::Map("test".into(), vec![]), span()),
+            S(ReturnType::Unbounded, span()),
+            &IntervalShape::UnboundedLen,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_composition_filter_within_dist() {
+        let result = validate_composition(
+            S(
+                &CompiledFunction::FilterWithinDist("test".into(), 1),
+                span(),
+            ),
+            S(ReturnType::FixedLen, span()),
+            &IntervalShape::FixedLen(S(16, span())),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compiled_function_get_change_in_len() {
+        let (n, _) = CompiledFunction::Truncate(2).get_change_in_len();
+        assert_eq!(n, 2);
+        let (n, _) = CompiledFunction::TruncateLeft(3).get_change_in_len();
+        assert_eq!(n, 3);
+        let (n, _) = CompiledFunction::PadTo(20, Nucleotide::A).get_change_in_len();
+        assert_eq!(n, 20);
+        let (n, _) = CompiledFunction::TruncateTo(10).get_change_in_len();
+        assert_eq!(n, 10);
+        let (n, _) = CompiledFunction::Pad(4, Nucleotide::A).get_change_in_len();
+        assert_eq!(n, 4);
+        let (n, _) = CompiledFunction::PadLeft(4, Nucleotide::T).get_change_in_len();
+        assert_eq!(n, 4);
+        let (n, _) = CompiledFunction::Remove.get_change_in_len();
+        assert_eq!(n, 0);
+        let (n, _) = CompiledFunction::Reverse.get_change_in_len();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_geometry_meta_get_simplified_with_stack() {
+        let gm = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::Barcode,
+                    size: IntervalShape::FixedLen(S(16, span())),
+                    label: None,
+                },
+                span(),
+            ),
+            stack: vec![S(CompiledFunction::Truncate(2), span())],
+        };
+        let desc = gm.get_simplified_description_string();
+        assert_eq!(desc, "b[14]");
+    }
+
+    #[test]
+    fn test_geometry_meta_get_simplified_seq_returns_empty() {
+        let gm = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::FixedSeq,
+                    size: IntervalShape::FixedSeq(S(vec![Nucleotide::A, Nucleotide::C], span())),
+                    label: None,
+                },
+                span(),
+            ),
+            stack: vec![],
+        };
+        assert_eq!(gm.get_simplified_description_string(), "");
+    }
+
+    #[test]
+    fn test_geometry_meta_get_simplified_remove() {
+        let gm = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::Barcode,
+                    size: IntervalShape::FixedLen(S(16, span())),
+                    label: None,
+                },
+                span(),
+            ),
+            stack: vec![S(CompiledFunction::Remove, span())],
+        };
+        assert_eq!(gm.get_simplified_description_string(), "");
+    }
+}

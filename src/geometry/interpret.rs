@@ -1,13 +1,16 @@
 use std::{path::PathBuf, str::FromStr};
 
 use antisequence::{
-    graph::MatchType::{self, ExactBoundedMatch, ExactSearch, HammingBoundedMatch, HammingSearch, EditBoundedMatch, EditSearch, PrefixAln},
+    graph::MatchType::{
+        self, EditBoundedMatch, EditSearch, ExactBoundedMatch, ExactSearch, HammingBoundedMatch,
+        HammingSearch, PrefixAln,
+    },
     *,
 };
 use expr::Expr;
 use graph::{
     Graph,
-    MatchType::{Exact, ExactPrefix, Hamming, HammingPrefix, Edit, EditPrefix},
+    MatchType::{Edit, EditPrefix, Exact, ExactPrefix, Hamming, HammingPrefix},
     SelectOp, Threshold,
 };
 
@@ -109,16 +112,16 @@ fn interpret_geometry(
                 // and use interpret_dual to extract relative to the anchor
                 let mut intermediate_fixed: Vec<&GeometryMeta> = vec![gp];
                 let mut anchor: Option<&GeometryMeta> = None;
-                let mut lookahead = geometry_iter.clone();
+                let lookahead = geometry_iter.clone();
 
-                while let Some(piece) = lookahead.next() {
+                for piece in lookahead {
                     let (_, piece_size, _, piece_stack) = piece.unpack();
                     match piece_size {
                         IntervalShape::FixedSeq(_) => {
                             // Check if this FixedSeq has Anchor modifier
-                            let has_anchor = piece_stack.iter().any(|s| {
-                                matches!(s.0, CompiledFunction::Anchor)
-                            });
+                            let has_anchor = piece_stack
+                                .iter()
+                                .any(|s| matches!(s.0, CompiledFunction::Anchor));
                             if has_anchor {
                                 anchor = Some(piece);
                             }
@@ -145,7 +148,7 @@ fn interpret_geometry(
 
                     let seq_name = label.first().unwrap();
                     let (_, cur_label) = labels(&label);
-                    
+
                     // anchor() searches from position 0 (the original read)
                     let search_label = format!("{}*", seq_name);
 
@@ -166,7 +169,9 @@ fn interpret_geometry(
                         let next_label_str = format!("{cur_label}{NEXT_RIGHT}");
 
                         // Get Hamming or Edit distance if specified
-                        let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = anchor_stack.last() {
+                        let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) =
+                            anchor_stack.last()
+                        {
                             let n = *n;
                             anchor_stack.pop();
                             HammingSearch(Threshold::Count(seq.len() - n))
@@ -190,7 +195,13 @@ fn interpret_geometry(
                         graph.add(retain_node(expr::label_exists(anchor_this_label.clone())));
 
                         // Execute any remaining stack functions on anchor
-                        execute_stack(anchor_stack, &anchor_this_label, &anchor_size, additional_args, graph);
+                        execute_stack(
+                            anchor_stack,
+                            &anchor_this_label,
+                            &anchor_size,
+                            additional_args,
+                            graph,
+                        );
 
                         // Now slice intermediate_fixed from the prev_label region (RIGHT side)
                         let total_fixed_len: usize = intermediate_fixed
@@ -251,7 +262,13 @@ fn interpret_geometry(
                                 if piece_type == IntervalKind::Discard {
                                     stack.push(S(CompiledFunction::Remove, (0..1).into()));
                                 }
-                                execute_stack(stack, &this_label, &piece_size, additional_args, graph);
+                                execute_stack(
+                                    stack,
+                                    &this_label,
+                                    &piece_size,
+                                    additional_args,
+                                    graph,
+                                );
 
                                 slice_label = next_slice_label;
                             }
@@ -292,9 +309,9 @@ fn interpret_geometry(
                 // out of the "before anchor" region after the search.
                 let mut intermediate_fixed: Vec<&GeometryMeta> = Vec::new();
                 let mut anchor: Option<&GeometryMeta> = None;
-                let mut lookahead = geometry_iter.clone();
+                let lookahead = geometry_iter.clone();
 
-                while let Some(piece) = lookahead.next() {
+                for piece in lookahead {
                     let (_, piece_size, _, _) = piece.unpack();
                     match piece_size {
                         IntervalShape::FixedSeq(_) => {
@@ -406,7 +423,13 @@ fn interpret_geometry(
                                 if piece_type == IntervalKind::Discard {
                                     stack.push(S(CompiledFunction::Remove, (0..1).into()));
                                 }
-                                execute_stack(stack, &this_label, &piece_size, additional_args, graph);
+                                execute_stack(
+                                    stack,
+                                    &this_label,
+                                    &piece_size,
+                                    additional_args,
+                                    graph,
+                                );
 
                                 slice_label = next_slice_label;
                             }
@@ -508,12 +531,7 @@ fn execute_stack(
                 let file_path = parse_additional_args(file, additional_args);
                 let patterns = parse_file_match(file_path);
 
-                map(
-                    label,
-                    patterns,
-                    Edit(Threshold::Count(edit_dist)),
-                    graph,
-                );
+                map(label, patterns, Edit(Threshold::Count(edit_dist)), graph);
 
                 let mut fallback_graph = Graph::new();
                 execute_stack(fns, label, size, additional_args, &mut fallback_graph);
@@ -625,7 +643,9 @@ impl<'a> GeometryMeta {
         match size.clone() {
             IntervalShape::FixedSeq(S(seq, _)) => {
                 // Check if Anchor is on the stack - search for anchor
-                let has_anchor = stack.iter().any(|s| matches!(s.0, CompiledFunction::Anchor));
+                let has_anchor = stack
+                    .iter()
+                    .any(|s| matches!(s.0, CompiledFunction::Anchor));
 
                 if has_anchor {
                     // Remove Anchor from stack (it's a modifier, not an operation)
@@ -637,7 +657,8 @@ impl<'a> GeometryMeta {
                     let labels = vec![prev_label.as_str(), this_label.as_str(), &next_label];
 
                     // Determine match type based on what's on stack
-                    let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
+                    let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last()
+                    {
                         let n = *n;
                         stack.pop();
                         HammingSearch(Threshold::Count(seq.len() - n))
@@ -661,7 +682,8 @@ impl<'a> GeometryMeta {
                     let labels = vec![this_label.as_str(), &next_label];
 
                     // Determine how we should perform the prefix match based on the top of the stack:
-                    let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
+                    let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last()
+                    {
                         let n = *n;
                         stack.pop();
                         HammingPrefix(Threshold::Count(seq.len() - n))
@@ -839,5 +861,380 @@ fn get_match_type(
                 ExactSearch
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::execute::compile_geom;
+
+    #[test]
+    fn test_labels_single() {
+        let (init, cur) = labels(&["seq1."]);
+        assert_eq!(init, "seq1.*");
+        assert_eq!(cur, "seq1.");
+    }
+
+    #[test]
+    fn test_labels_multiple() {
+        let (init, cur) = labels(&["seq1.", "_r"]);
+        assert_eq!(init, "seq1._r");
+        assert_eq!(cur, "seq1._r");
+    }
+
+    #[test]
+    fn test_interpret_simple_barcode_read() {
+        let data = compile_geom("1{b[16]u[10]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+        // Graph should have nodes for cut+validate barcode, cut+validate umi, cut+set read
+    }
+
+    #[test]
+    fn test_interpret_two_reads() {
+        let data = compile_geom("1{b[16]u[10]r:}2{r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_discard() {
+        let data = compile_geom("1{x[5]b[16]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_fixed_seq() {
+        let data = compile_geom("1{f[ACGT]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_hamming() {
+        let data = compile_geom("1{hamming(f[ACGT], 1)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_edit() {
+        let data = compile_geom("1{edit(f[ACGT], 1)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_rev() {
+        let data = compile_geom("1{rev(b[16])r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_revcomp() {
+        let data = compile_geom("1{revcomp(b[16])r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_trunc() {
+        let data = compile_geom("1{trunc(b[16], 2)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_trunc_to() {
+        let data = compile_geom("1{trunc_to(b[16], 10)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_remove() {
+        let data = compile_geom("1{remove(f[ACGT])r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_pad() {
+        let data = compile_geom("1{pad(b[16], 4, A)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_pad_to() {
+        let data = compile_geom("1{pad_to(b[16], 20, A)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_trunc_left() {
+        let data = compile_geom("1{trunc_left(b[16], 2)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_trunc_to_left() {
+        let data = compile_geom("1{trunc_to_left(b[16], 10)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_pad_left() {
+        let data = compile_geom("1{pad_left(b[16], 4, T)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_pad_to_left() {
+        let data = compile_geom("1{pad_to_left(b[16], 20, G)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_remove_hamming() {
+        let data = compile_geom("1{remove(hamming(f[CAG], 1))r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_labels() {
+        let data = compile_geom("1{b<bc1>[16]u<umi>[10]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_transformation() {
+        let data = compile_geom(
+            "1{b<bc>[16]u<umi>[10]r<read>:}2{r<read2>:}->1{<bc><umi>}2{<read2>}".to_string(),
+        )
+        .unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_composition() {
+        let data = compile_geom("1{trunc_to(rev(b[16]), 10)r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_complex_two_read() {
+        let data = compile_geom("1{b[16]u[12]r:}2{x[10]b[8]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_definitions() {
+        let data = compile_geom("bc1 = b[16]\n1{<bc1>r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_get_match_type_exact_search() {
+        let mut stack = vec![];
+        let mut range_start = 0;
+        let mt = get_match_type(None, &mut stack, 4, &mut range_start);
+        assert!(matches!(mt, ExactSearch));
+    }
+
+    #[test]
+    fn test_get_match_type_hamming_search() {
+        let mut stack = vec![S(CompiledFunction::Hamming(1), (0..1).into())];
+        let mut range_start = 0;
+        let mt = get_match_type(None, &mut stack, 4, &mut range_start);
+        assert!(matches!(mt, HammingSearch(_)));
+    }
+
+    #[test]
+    fn test_get_match_type_edit_search() {
+        let mut stack = vec![S(CompiledFunction::Edit(1), (0..1).into())];
+        let mut range_start = 0;
+        let mt = get_match_type(None, &mut stack, 4, &mut range_start);
+        assert!(matches!(mt, EditSearch(_)));
+    }
+
+    #[test]
+    fn test_get_match_type_exact_bounded() {
+        let mut stack = vec![];
+        let mut range_start = 0;
+        let mt = get_match_type(Some(4), &mut stack, 4, &mut range_start);
+        assert!(matches!(mt, ExactBoundedMatch { .. }));
+    }
+
+    #[test]
+    fn test_get_match_type_hamming_bounded() {
+        let mut stack = vec![S(CompiledFunction::Hamming(1), (0..1).into())];
+        let mut range_start = 0;
+        let mt = get_match_type(Some(4), &mut stack, 4, &mut range_start);
+        assert!(matches!(mt, HammingBoundedMatch { .. }));
+    }
+
+    #[test]
+    fn test_get_match_type_edit_bounded() {
+        let mut stack = vec![S(CompiledFunction::Edit(1), (0..1).into())];
+        let mut range_start = 0;
+        let mt = get_match_type(Some(4), &mut stack, 4, &mut range_start);
+        assert!(matches!(mt, EditBoundedMatch { .. }));
+    }
+
+    #[test]
+    fn test_parse_additional_args_by_index() {
+        let args = vec!["file1.txt", "file2.txt"];
+        let path = parse_additional_args("0".to_string(), &args);
+        assert_eq!(path, PathBuf::from("file1.txt"));
+    }
+
+    #[test]
+    fn test_parse_additional_args_by_path() {
+        let args: Vec<&str> = vec![];
+        let path = parse_additional_args("/some/path.txt".to_string(), &args);
+        assert_eq!(path, PathBuf::from("/some/path.txt"));
+    }
+
+    #[test]
+    fn test_interpret_unbounded_then_fixed_seq() {
+        // r: followed by f[ACGT] triggers interpret_dual (unbounded -> FixedSeq search)
+        let data = compile_geom("1{r:f[ACGT]b[16]}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_unbounded_then_hamming_fixed_seq() {
+        // r: followed by hamming(f[ACGT], 1) triggers interpret_dual with hamming search
+        let data = compile_geom("1{r:hamming(f[ACGT], 1)b[16]}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_unbounded_then_edit_fixed_seq() {
+        // r: followed by edit(f[ACGT], 1) triggers interpret_dual with edit search
+        let data = compile_geom("1{r:edit(f[ACGT], 1)b[16]}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_anchor_relative() {
+        // anchor_relative triggers the anchor path
+        let data = compile_geom("1{r:anchor_relative(f[ACGT])b[16]}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_anchor_relative_with_hamming() {
+        let data =
+            compile_geom("1{r:anchor_relative(hamming(f[ACGT], 1))b[16]}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_labeled_discard() {
+        let data = compile_geom("1{x<skip>[5]b[16]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_multiple_fixed_then_unbounded() {
+        let data = compile_geom("1{b[16]u[10]x[5]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_three_reads() {
+        let data = compile_geom("1{b[16]r:}2{u[10]r:}3{r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_fixed_seq_then_unbounded() {
+        // f[ACGT] then r: -- FixedSeq followed by unbounded
+        let data = compile_geom("1{f[ACGT]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_hamming_then_read() {
+        let data = compile_geom("1{hamming(f[ACGT], 1)b[16]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_edit_then_read() {
+        let data = compile_geom("1{edit(f[ACGT], 1)b[16]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_remove_fixed_seq() {
+        let data = compile_geom("1{remove(f[ACGT])b[16]r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_unbounded_fixed_seq_with_intermediate() {
+        // r: u[10] b[16] f[ACGT] -- unbounded, then 2 fixed-len intermediates, then anchor
+        let data = compile_geom("1{r:u[10]f[ACGT]b[16]}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_fixed_anchor_with_intermediate_fixed() {
+        // b[8] u[10] anchor_relative(f[ACGT]) r:
+        let data = compile_geom("1{b[8]u[10]anchor_relative(f[ACGT])r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_anchor_relative_with_edit() {
+        let data = compile_geom("1{r:anchor_relative(edit(f[ACGT], 1))b[16]}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_execute_stack_various_functions() {
+        // Test execute_stack through interpret with various function compositions
+        let data = compile_geom("1{revcomp(rev(b[16]))r:}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_unbounded_with_labeled_anchor() {
+        let data = compile_geom("1{r:f<linker>[ACGT]b[16]}".to_string()).unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
     }
 }

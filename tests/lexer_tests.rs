@@ -152,7 +152,7 @@ fn comments() {
     assert_eq!(err.len(), 0);
 
     let tokens: Vec<Token> = res.unwrap().into_iter().map(|(tok, _)| tok).collect();
-    
+
     assert_eq!(tokens[0], Token::Label("bc1".to_string()));
     assert_eq!(tokens[1], Token::Equals);
     assert_eq!(tokens[2], Token::Barcode);
@@ -170,7 +170,7 @@ fn comment_only_line() {
     assert_eq!(err.len(), 0);
 
     let tokens: Vec<Token> = res.unwrap().into_iter().map(|(tok, _)| tok).collect();
-    
+
     assert_eq!(tokens[0], Token::Label("bc1".to_string()));
     assert_eq!(tokens[1], Token::Equals);
     assert_eq!(tokens[2], Token::Barcode);

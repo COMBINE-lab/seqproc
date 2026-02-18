@@ -90,3 +90,63 @@ impl<T> S<Box<T>> {
         S(*self.0, self.1)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::hash_map::DefaultHasher;
+
+    #[test]
+    fn test_nucleotide_display() {
+        assert_eq!(format!("{}", Nucleotide::A), "A");
+        assert_eq!(format!("{}", Nucleotide::C), "C");
+        assert_eq!(format!("{}", Nucleotide::G), "G");
+        assert_eq!(format!("{}", Nucleotide::T), "T");
+        assert_eq!(format!("{}", Nucleotide::U), "U");
+    }
+
+    #[test]
+    fn test_nucleotide_as_str() {
+        let nucs = vec![Nucleotide::A, Nucleotide::C, Nucleotide::G, Nucleotide::T];
+        assert_eq!(Nucleotide::as_str(&nucs), "ACGT");
+        assert_eq!(Nucleotide::as_str(&[]), "");
+    }
+
+    #[test]
+    fn test_nucleotide_as_string() {
+        assert_eq!(Nucleotide::as_string(Nucleotide::A), "A");
+        assert_eq!(Nucleotide::as_string(Nucleotide::C), "C");
+        assert_eq!(Nucleotide::as_string(Nucleotide::G), "G");
+        assert_eq!(Nucleotide::as_string(Nucleotide::T), "T");
+        assert_eq!(Nucleotide::as_string(Nucleotide::U), "U");
+    }
+
+    #[test]
+    fn test_s_new() {
+        let s = S::new(42, 0..5);
+        assert_eq!(s.0, 42);
+        assert_eq!(s.1.start, 0);
+        assert_eq!(s.1.end, 5);
+    }
+
+    #[test]
+    fn test_s_hash() {
+        let s1 = S::new(42, 0..5);
+        let s2 = S::new(42, 10..20);
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        s1.hash(&mut h1);
+        s2.hash(&mut h2);
+        // Hash should be the same since it only hashes the value, not the span
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn test_s_boxed_unboxed() {
+        let s = S::new(42, 0..5);
+        let boxed = s.boxed();
+        assert_eq!(*boxed.0, 42);
+        let unboxed = boxed.unboxed();
+        assert_eq!(unboxed.0, 42);
+    }
+}

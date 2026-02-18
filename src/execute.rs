@@ -7,8 +7,8 @@ use std::{
 };
 
 use antisequence::expr::fmt_expr;
-use antisequence::graph::*;
 use antisequence::graph::TryOp;
+use antisequence::graph::*;
 use anyhow::{bail, Result};
 use chumsky::{error::Rich, input::Input, Parser};
 use nix::sys::stat;
@@ -71,10 +71,22 @@ pub fn interpret(
     additional_args: Vec<&str>,
     compiled_data: CompiledData,
 ) {
-    interpret_with_unassigned(file1, file2, out1, out2, None, None, threads, additional_args, compiled_data, None);
+    interpret_with_unassigned(
+        file1,
+        file2,
+        out1,
+        out2,
+        None,
+        None,
+        threads,
+        additional_args,
+        compiled_data,
+        None,
+    );
 }
 
 /// Interpret geometry with optional unassigned output and demultiplexing support.
+#[allow(clippy::too_many_arguments)]
 pub fn interpret_with_unassigned(
     file1: &Path,
     file2: Option<&Path>,
@@ -109,10 +121,10 @@ pub fn interpret_with_unassigned(
 
     // If unassigned output is requested, wrap in TryOp
     let has_unassigned = unassigned1.is_some() || unassigned2.is_some();
-    
+
     let mut graph = antisequence::graph::Graph::new();
     let file1_str = file1.to_str().unwrap_or("");
-    
+
     let mut input_files = vec![file1_str];
     if let Some(f2) = file2 {
         input_files.push(f2.to_str().unwrap_or(""));
@@ -126,16 +138,20 @@ pub fn interpret_with_unassigned(
     if has_unassigned {
         // Build catch graph for unassigned reads
         let mut catch_graph = antisequence::graph::Graph::new();
-        let unassigned1_str = unassigned1.map(|p| p.to_str().unwrap_or("")).unwrap_or("/dev/null");
-        let unassigned2_str = unassigned2.map(|p| p.to_str().unwrap_or("")).unwrap_or("/dev/null");
-        
+        let unassigned1_str = unassigned1
+            .map(|p| p.to_str().unwrap_or(""))
+            .unwrap_or("/dev/null");
+        let unassigned2_str = unassigned2
+            .map(|p| p.to_str().unwrap_or(""))
+            .unwrap_or("/dev/null");
+
         let mut unassigned_files = vec![unassigned1_str.to_owned()];
         if file2.is_some() && !unassigned2_str.is_empty() && unassigned2_str != "/dev/null" {
             unassigned_files.push(unassigned2_str.to_owned());
         }
 
         if !unassigned1_str.is_empty() && unassigned1_str != "/dev/null" {
-             catch_graph.add(OutputFastqFileOp::from_files(unassigned_files));
+            catch_graph.add(OutputFastqFileOp::from_files(unassigned_files));
         }
 
         // Use TryOp to route failed reads to catch graph
@@ -151,7 +167,10 @@ pub fn interpret_with_unassigned(
             tracing::error!("Failed to add demux LookupOp: {}", e);
             return;
         }
-        tracing::info!("Demultiplexing enabled with label: {}", config.barcode_label);
+        tracing::info!(
+            "Demultiplexing enabled with label: {}",
+            config.barcode_label
+        );
     }
 
     let out1_str = out1.to_str().unwrap_or("");
@@ -167,7 +186,7 @@ pub fn interpret_with_unassigned(
 
         let out_dir = config.output_dir.to_string_lossy();
         let sample_attr_path = format!("{}.{}", config.barcode_label, config.sample_attr);
-        
+
         let out1_expr = format!("{}/{{{}}}_R1.fastq", out_dir, sample_attr_path);
         let mut out_exprs = vec![fmt_expr(out1_expr.clone())];
 
@@ -178,7 +197,7 @@ pub fn interpret_with_unassigned(
         } else {
             tracing::info!("Demux output: {}", out1_expr);
         }
-        
+
         graph.add(OutputFastqFileOp::from_files(out_exprs));
     } else {
         // Standard output (no demux)
@@ -202,6 +221,7 @@ pub fn interpret_with_unassigned(
 }
 
 /// Interpret geometry with optional demultiplexing support.
+#[allow(clippy::too_many_arguments)]
 pub fn interpret_with_demux(
     file1: &Path,
     file2: Option<&Path>,
@@ -230,7 +250,7 @@ pub fn interpret_with_demux(
 
     let mut graph = antisequence::graph::Graph::new();
     let file1_str = file1.to_str().unwrap_or("");
-    
+
     let mut input_files = vec![file1_str];
     if let Some(f2) = file2 {
         input_files.push(f2.to_str().unwrap_or(""));
@@ -249,7 +269,10 @@ pub fn interpret_with_demux(
             tracing::error!("Failed to add demux LookupOp: {}", e);
             return;
         }
-        tracing::info!("Demultiplexing enabled with label: {}", config.barcode_label);
+        tracing::info!(
+            "Demultiplexing enabled with label: {}",
+            config.barcode_label
+        );
     }
 
     let out1_str = out1.to_str().unwrap_or("");
@@ -266,10 +289,10 @@ pub fn interpret_with_demux(
         // Build format expressions for dynamic file routing based on sample attribute
         // Format: {output_dir}/{sample}_R1.fastq and {output_dir}/{sample}_R2.fastq
         let out_dir = config.output_dir.to_string_lossy();
-        
+
         // The sample attribute is set on the barcode label (e.g., seq2.bc1.sample)
         let sample_attr_path = format!("{}.{}", config.barcode_label, config.sample_attr);
-        
+
         let out1_expr = format!("{}/{{{}}}_R1.fastq", out_dir, sample_attr_path);
         let mut out_exprs = vec![fmt_expr(out1_expr.clone())];
 
@@ -280,7 +303,7 @@ pub fn interpret_with_demux(
         } else {
             tracing::info!("Demux output: {}", out1_expr);
         }
-        
+
         graph.add(OutputFastqFileOp::from_files(out_exprs));
     } else {
         // Standard output (no demux)
@@ -313,7 +336,7 @@ fn interpret_to_pipes(
     compiled_data: CompiledData,
 ) -> SeqprocStats {
     let f1 = File::create(out1).expect("Unable to open read 1 file");
-    
+
     // Handle second output stream optionally if files2 is present?
     // But this function return signature doesn't change easily.
     // And it is used by read_pairs_to_fifo which has r1_fifo and r2_fifo.
@@ -327,9 +350,9 @@ fn interpret_to_pipes(
         .iter()
         .map(|f| File::open(f).expect("Failed to open file"))
         .collect::<Vec<_>>();
-        
+
     for f in &files2 {
-         readers.push(File::open(f).expect("Failed to open file"));
+        readers.push(File::open(f).expect("Failed to open file"));
     }
 
     let additional_args = additional_args.into_iter().collect::<Vec<_>>();
@@ -342,7 +365,7 @@ fn interpret_to_pipes(
     compiled_data.interpret(&mut graph, &additional_args);
 
     let stream1 = BufWriter::new(f1);
-    
+
     if !files2.is_empty() {
         let f2 = File::create(out2).expect("Unable to open read 2 file");
         let stream2 = BufWriter::new(f2);
@@ -575,4 +598,242 @@ pub fn read_pairs_to_fifo<'a: 'static>(
         r2_fifo,
         join_handle,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compile_geom_simple_barcode_read() {
+        let result = compile_geom("1{b[16]u[10]r:}".to_string());
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert_eq!(data.geometry.len(), 1);
+        assert_eq!(data.geometry[0].len(), 3);
+        assert!(data.transformation.is_none());
+    }
+
+    #[test]
+    fn test_compile_geom_two_reads() {
+        let result = compile_geom("1{b[16]u[10]r:}2{r:}".to_string());
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert_eq!(data.geometry.len(), 2);
+    }
+
+    #[test]
+    fn test_compile_geom_discard() {
+        let result = compile_geom("1{x[5]b[16]r:}".to_string());
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert_eq!(data.geometry[0].len(), 3);
+    }
+
+    #[test]
+    fn test_compile_geom_fixed_seq() {
+        let result = compile_geom("1{f[ACGT]r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_multiple_barcodes() {
+        let result = compile_geom("1{b[16]b[8]r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_rev() {
+        let result = compile_geom("1{rev(b[16])r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_revcomp() {
+        let result = compile_geom("1{revcomp(b[16])r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_trunc() {
+        let result = compile_geom("1{trunc(b[16], 2)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_trunc_to() {
+        let result = compile_geom("1{trunc_to(b[16], 10)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_remove() {
+        let result = compile_geom("1{remove(f[ACGT])r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_pad() {
+        let result = compile_geom("1{pad(b[16], 4, A)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_pad_to() {
+        let result = compile_geom("1{pad_to(b[16], 20, A)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_hamming() {
+        let result = compile_geom("1{hamming(f[ACGT], 1)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_edit() {
+        let result = compile_geom("1{edit(f[ACGT], 1)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_remove_hamming() {
+        let result = compile_geom("1{remove(hamming(f[CAG], 1))r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_with_labels() {
+        let result = compile_geom("1{b<bc1>[16]u<umi>[10]r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_complex_two_read() {
+        let result = compile_geom("1{b[16]u[12]r:}2{x[10]b[8]r:}".to_string());
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert_eq!(data.geometry.len(), 2);
+        assert_eq!(data.geometry[0].len(), 3);
+        assert_eq!(data.geometry[1].len(), 3);
+    }
+
+    #[test]
+    fn test_compile_geom_with_transformation() {
+        let result = compile_geom(
+            "1{b<bc>[16]u<umi>[10]r<read>:}2{r<read2>:}->1{<bc><umi>}2{<read2>}".to_string(),
+        );
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert!(data.transformation.is_some());
+    }
+
+    #[test]
+    fn test_compile_geom_is_complex() {
+        let data = compile_geom("1{b[16]r[100]}".to_string()).unwrap();
+        assert!(!data.is_complex_geometry());
+
+        // FixedSeq makes geometry complex
+        let data = compile_geom("1{f[ACGT]r[100]}".to_string()).unwrap();
+        assert!(data.is_complex_geometry());
+    }
+
+    #[test]
+    fn test_compile_geom_simplified_description() {
+        let data = compile_geom("1{b[16]u[10]r:}".to_string()).unwrap();
+        let desc = data.get_simplified_description_string();
+        assert!(desc.contains("b[16]"));
+        assert!(desc.contains("u[10]"));
+        assert!(desc.contains("r:"));
+    }
+
+    #[test]
+    fn test_compile_geom_with_definitions() {
+        let result = compile_geom("bc1 = b[16]\n1{<bc1>r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_multiple_umi() {
+        let result = compile_geom("1{b[16]u[10]u[8]r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_trunc_left() {
+        let result = compile_geom("1{trunc_left(b[16], 2)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_trunc_to_left() {
+        let result = compile_geom("1{trunc_to_left(b[16], 10)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_pad_left() {
+        let result = compile_geom("1{pad_left(b[16], 4, T)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_geom_pad_to_left() {
+        let result = compile_geom("1{pad_to_left(b[16], 20, G)r:}".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_seqproc_stats_serialization() {
+        let stats = SeqprocStats {
+            seqproc_version: "0.1.0".to_string(),
+            call: Some("test".to_string()),
+            n_fastqs: 2,
+            n_processed: 100,
+            n_reads_max: 1000,
+            total_fragments: 100,
+            failed_parsing: 5,
+            read_length_mean: vec![150.0, 150.0],
+            read_length_min: vec![100, 100],
+            read_length_max: vec![200, 200],
+            match_distance_stats: vec![],
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("seqproc_version"));
+        assert!(json.contains("0.1.0"));
+    }
+
+    #[test]
+    fn test_match_distance_stats_serialization() {
+        let stats = MatchDistanceStats {
+            label: "test".to_string(),
+            unmatched: 10,
+            distance_histogram: vec![
+                DistanceBin {
+                    distance: 0,
+                    count: 90,
+                },
+                DistanceBin {
+                    distance: 1,
+                    count: 5,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("\"label\":\"test\""));
+    }
+
+    #[test]
+    fn test_compile_geom_simplified_with_transform() {
+        let data =
+            compile_geom("1{b<bc>[16]u<umi>[10]r:}2{r:}->1{<bc><umi>}2{<bc>}".to_string()).unwrap();
+        let desc = data.get_simplified_description_string();
+        assert!(!desc.is_empty());
+    }
+
+    #[test]
+    fn test_compile_geom_composition() {
+        let result = compile_geom("1{trunc_to(rev(b[16]), 10)r:}".to_string());
+        assert!(result.is_ok());
+    }
 }

@@ -1,6 +1,5 @@
 use std::process::exit;
 
-use clap::arg;
 use std::fs::File;
 use std::io;
 use std::path::PathBuf;
@@ -97,8 +96,7 @@ fn main() {
     // Build demux config if demux-map is provided
     let demux_config = args.demux_map.as_ref().map(|map_path| {
         let label = args.demux_label.as_deref().unwrap_or("seq2.bc1");
-        DemuxConfig::new(map_path.clone(), label)
-            .with_output_dir(args.demux_out_dir.clone())
+        DemuxConfig::new(map_path.clone(), label).with_output_dir(args.demux_out_dir.clone())
     });
 
     let (out1, out2) = match (args.out1, args.out2) {

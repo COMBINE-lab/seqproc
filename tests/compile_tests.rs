@@ -480,7 +480,9 @@ fn test_simplified_geom_from_def() {
 #[test]
 fn test_anchor_relative_basic() {
     // Test that anchor_relative() compiles successfully
-    let geom = String::from("1{r:}2{u[10]b[8]anchor_relative(hamming(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))b[8]}");
+    let geom = String::from(
+        "1{r:}2{u[10]b[8]anchor_relative(hamming(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))b[8]}",
+    );
 
     let res = compile_geom(geom);
 
@@ -490,10 +492,12 @@ fn test_anchor_relative_basic() {
 #[test]
 fn test_anchor_relative_with_label() {
     // Test anchor_relative with a labeled linker
-    let geom = String::from("
+    let geom = String::from(
+        "
 l1 = anchor_relative(hamming(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))
 1{r:}2{u[10]b[8]<l1>b[8]}
-");
+",
+    );
 
     let res = compile_geom(geom);
 
@@ -503,11 +507,13 @@ l1 = anchor_relative(hamming(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))
 #[test]
 fn test_dual_anchor_relative() {
     // Test geometry with two anchor_relative calls (SPLiT-seq style)
-    let geom = String::from("
+    let geom = String::from(
+        "
 l1 = anchor_relative(hamming(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))
 l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG], 3))
 1{r:}2{u[10]b[8]<l1>b[8]<l2>b[8]}
-");
+",
+    );
 
     let res = compile_geom(geom);
 
@@ -537,13 +543,18 @@ fn test_edit_distance_rejects_barcode() {
     let res = parse_res.unwrap();
     let res = compile(res);
 
-    assert!(res.is_err(), "edit() should reject barcode (non-sequence) arguments");
+    assert!(
+        res.is_err(),
+        "edit() should reject barcode (non-sequence) arguments"
+    );
 }
 
 #[test]
 fn test_edit_distance_anchor_relative() {
     // Test anchor_relative with edit distance (indel-tolerant anchor search)
-    let geom = String::from("1{r:}2{u[10]b[8]anchor_relative(edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))b[8]}");
+    let geom = String::from(
+        "1{r:}2{u[10]b[8]anchor_relative(edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))b[8]}",
+    );
 
     let res = compile_geom(geom);
 
@@ -553,10 +564,12 @@ fn test_edit_distance_anchor_relative() {
 #[test]
 fn test_edit_distance_with_label() {
     // Test edit distance with a labeled linker
-    let geom = String::from("
+    let geom = String::from(
+        "
 l1 = anchor_relative(edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 2))
 1{r:}2{u[10]b[8]<l1>b[8]}
-");
+",
+    );
 
     let res = compile_geom(geom);
 
@@ -566,11 +579,13 @@ l1 = anchor_relative(edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 2))
 #[test]
 fn test_dual_anchor_with_edit() {
     // Test geometry with two anchor_relative calls using edit distance (for indel-tolerant long-read)
-    let geom = String::from("
+    let geom = String::from(
+        "
 l1 = anchor_relative(edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))
 l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG], 3))
 1{r:}2{u[10]b[8]<l1>b[8]<l2>b[8]}
-");
+",
+    );
 
     let res = compile_geom(geom);
 

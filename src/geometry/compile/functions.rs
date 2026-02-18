@@ -191,3 +191,255 @@ fn compile_inner_expr(
 
     Ok(self_stack)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{parser::IntervalKind, parser::IntervalShape, Nucleotide};
+
+    fn span() -> crate::Span {
+        (0..1).into()
+    }
+
+    fn make_barcode_expr() -> S<Expr> {
+        S(
+            Expr::GeomPiece(
+                IntervalKind::Barcode,
+                IntervalShape::FixedLen(S(16, span())),
+            ),
+            span(),
+        )
+    }
+
+    #[test]
+    fn test_compile_fn_reverse() {
+        let result = compile_fn(S(Function::Reverse, span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap().0, CompiledFunction::Reverse));
+    }
+
+    #[test]
+    fn test_compile_fn_reverse_comp() {
+        let result = compile_fn(S(Function::ReverseComp, span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap().0, CompiledFunction::ReverseComp));
+    }
+
+    #[test]
+    fn test_compile_fn_truncate() {
+        let result = compile_fn(S(Function::Truncate(2), span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap().0, CompiledFunction::Truncate(2)));
+    }
+
+    #[test]
+    fn test_compile_fn_truncate_left() {
+        let result = compile_fn(S(Function::TruncateLeft(3), span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap().0,
+            CompiledFunction::TruncateLeft(3)
+        ));
+    }
+
+    #[test]
+    fn test_compile_fn_truncate_to() {
+        let result = compile_fn(S(Function::TruncateTo(10), span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap().0,
+            CompiledFunction::TruncateTo(10)
+        ));
+    }
+
+    #[test]
+    fn test_compile_fn_truncate_to_left() {
+        let result = compile_fn(S(Function::TruncateToLeft(10), span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap().0,
+            CompiledFunction::TruncateToLeft(10)
+        ));
+    }
+
+    #[test]
+    fn test_compile_fn_remove() {
+        let result = compile_fn(S(Function::Remove, span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap().0, CompiledFunction::Remove));
+    }
+
+    #[test]
+    fn test_compile_fn_pad() {
+        let result = compile_fn(
+            S(Function::Pad(4, Nucleotide::A), span()),
+            make_barcode_expr(),
+        );
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap().0,
+            CompiledFunction::Pad(4, Nucleotide::A)
+        ));
+    }
+
+    #[test]
+    fn test_compile_fn_pad_left() {
+        let result = compile_fn(
+            S(Function::PadLeft(4, Nucleotide::T), span()),
+            make_barcode_expr(),
+        );
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap().0,
+            CompiledFunction::PadLeft(4, Nucleotide::T)
+        ));
+    }
+
+    #[test]
+    fn test_compile_fn_pad_to() {
+        let result = compile_fn(
+            S(Function::PadTo(20, Nucleotide::G), span()),
+            make_barcode_expr(),
+        );
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap().0,
+            CompiledFunction::PadTo(20, Nucleotide::G)
+        ));
+    }
+
+    #[test]
+    fn test_compile_fn_pad_to_left() {
+        let result = compile_fn(
+            S(Function::PadToLeft(20, Nucleotide::C), span()),
+            make_barcode_expr(),
+        );
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap().0,
+            CompiledFunction::PadToLeft(20, Nucleotide::C)
+        ));
+    }
+
+    #[test]
+    fn test_compile_fn_normalize() {
+        let result = compile_fn(S(Function::Normalize, span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap().0, CompiledFunction::Normalize));
+    }
+
+    #[test]
+    fn test_compile_fn_hamming() {
+        let result = compile_fn(S(Function::Hamming(1), span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap().0, CompiledFunction::Hamming(1)));
+    }
+
+    #[test]
+    fn test_compile_fn_edit() {
+        let result = compile_fn(S(Function::Edit(2), span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap().0, CompiledFunction::Edit(2)));
+    }
+
+    #[test]
+    fn test_compile_fn_filter() {
+        let result = compile_fn(
+            S(Function::Filter("test".into()), span()),
+            make_barcode_expr(),
+        );
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap().0,
+            CompiledFunction::FilterWithinDist(_, 0)
+        ));
+    }
+
+    #[test]
+    fn test_compile_fn_filter_within_dist() {
+        let result = compile_fn(
+            S(Function::FilterWithinDist("test".into(), 2), span()),
+            make_barcode_expr(),
+        );
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap().0,
+            CompiledFunction::FilterWithinDist(_, 2)
+        ));
+    }
+
+    #[test]
+    fn test_compile_fn_anchor() {
+        let result = compile_fn(S(Function::Anchor, span()), make_barcode_expr());
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap().0, CompiledFunction::Anchor));
+    }
+
+    #[test]
+    fn test_compile_fn_map() {
+        let self_expr = S(Box::new(Expr::Self_), span());
+        let result = compile_fn(
+            S(Function::Map("file.tsv".into(), self_expr), span()),
+            make_barcode_expr(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_fn_map_with_mismatch() {
+        let self_expr = S(Box::new(Expr::Self_), span());
+        let result = compile_fn(
+            S(
+                Function::MapWithMismatch("file.tsv".into(), self_expr, 1),
+                span(),
+            ),
+            make_barcode_expr(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_fn_map_with_edit() {
+        let self_expr = S(Box::new(Expr::Self_), span());
+        let result = compile_fn(
+            S(
+                Function::MapWithEdit("file.tsv".into(), self_expr, 1),
+                span(),
+            ),
+            make_barcode_expr(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_inner_expr_simple_self() {
+        let self_expr = S(Expr::Self_, span());
+        let parent = make_barcode_expr();
+        let result = compile_inner_expr(self_expr, parent);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_compile_inner_expr_with_function() {
+        let self_expr = S(
+            Expr::Function(
+                S(Function::Truncate(2), span()),
+                S(Box::new(Expr::Self_), span()),
+            ),
+            span(),
+        );
+        let parent = make_barcode_expr();
+        let result = compile_inner_expr(self_expr, parent);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_compile_inner_expr_invalid_no_self() {
+        let bad_expr = S(Expr::Label(S("foo".into(), span())), span());
+        let parent = make_barcode_expr();
+        let result = compile_inner_expr(bad_expr, parent);
+        assert!(result.is_err());
+    }
+}

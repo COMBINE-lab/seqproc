@@ -220,3 +220,176 @@ pub fn parse_file_match(path: PathBuf) -> Patterns {
         .with_multimatch_name(AMBIG)
         .with_pattern_name(MAPPED)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use antisequence::expr::label;
+
+    #[test]
+    fn test_into_transform_expr() {
+        let te = into_transform_expr("seq1.*", vec!["seq1.left", "seq1.right"]);
+        te.check_size(1, 2, "test");
+    }
+
+    #[test]
+    fn test_into_transform_expr_with_discard() {
+        let te = into_transform_expr("seq1.*", vec!["seq1.left", "_"]);
+        te.check_size(1, 2, "test");
+    }
+
+    #[test]
+    fn test_cut_node() {
+        let te = into_transform_expr("seq1.*", vec!["seq1.left", "seq1.right"]);
+        let _op = cut_node(te, Expr::from(4isize));
+    }
+
+    #[test]
+    fn test_set_node_label() {
+        let _op = set_node(LabelOrAttr::Label("seq1.*"), Expr::from(b"ACGT".to_vec()));
+    }
+
+    #[test]
+    fn test_set_node_attr() {
+        let _op = set_node(LabelOrAttr::Attr("seq1.*.score"), Expr::from(42isize));
+    }
+
+    #[test]
+    fn test_retain_node() {
+        let _op = retain_node(Expr::from(true));
+    }
+
+    #[test]
+    fn test_valid_label_length_exact() {
+        let _op = valid_label_length("seq1.*", 16, None);
+    }
+
+    #[test]
+    fn test_valid_label_length_range() {
+        let _op = valid_label_length("seq1.*", 8, Some(12));
+    }
+
+    #[test]
+    fn test_trim_node() {
+        let _op = trim_node([label("seq1.left")]);
+    }
+
+    #[test]
+    fn test_match_node() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let _op = match_node(
+            patterns,
+            "seq1.*",
+            vec!["seq1.bc", "seq1.rest"],
+            ExactPrefix,
+        );
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_reverse() {
+        let expr = CompiledFunction::Reverse.to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_revcomp() {
+        let expr = CompiledFunction::ReverseComp.to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_truncate() {
+        let expr = CompiledFunction::Truncate(2).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_truncate_left() {
+        let expr = CompiledFunction::TruncateLeft(2).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_truncate_to() {
+        let expr = CompiledFunction::TruncateTo(10).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_truncate_to_left() {
+        let expr = CompiledFunction::TruncateToLeft(10).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_pad() {
+        let expr = CompiledFunction::Pad(4, Nucleotide::A).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_pad_left() {
+        let expr = CompiledFunction::PadLeft(4, Nucleotide::T).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_pad_to() {
+        let expr = CompiledFunction::PadTo(20, Nucleotide::G).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_pad_to_left() {
+        let expr = CompiledFunction::PadToLeft(20, Nucleotide::C).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_normalize() {
+        let range = 8..=12usize;
+        let expr = CompiledFunction::Normalize.to_expr("seq1.*", &Some(range));
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_match_node_exact() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let _op = match_node(patterns, "seq1.*", vec!["seq1.*"], Exact);
+    }
+
+    #[test]
+    fn test_match_node_exact_prefix() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let _op = match_node(
+            patterns,
+            "seq1.*",
+            vec!["seq1.left", "seq1.right"],
+            ExactPrefix,
+        );
+    }
+
+    #[test]
+    fn test_match_node_hamming() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let _op = match_node(
+            patterns,
+            "seq1.*",
+            vec!["seq1.*"],
+            Hamming(Threshold::Count(3)),
+        );
+    }
+
+    #[test]
+    fn test_map_function_full() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let mut g = Graph::new();
+        map("seq1.bc", patterns, Exact, &mut g);
+    }
+
+    #[test]
+    fn test_into_transform_expr_multiple() {
+        let te = into_transform_expr("seq1.*", vec!["seq1.a", "seq1.b", "seq1.c"]);
+        te.check_size(1, 3, "test");
+    }
+}

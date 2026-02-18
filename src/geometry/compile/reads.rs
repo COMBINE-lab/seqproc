@@ -52,7 +52,7 @@ pub fn validate_geometry(
         // Check if we're in needs_anchor state and hit another variable-length segment
         if needs_anchor && matches!(type_, ReturnType::Unbounded | ReturnType::Ranged) {
             return Err(Error {
-                span: span.clone(),
+                span: *span,
                 msg: "Ambiguous Geometry: variable-length segment after Unbounded/Ranged requires a FixedSeq anchor in between".to_string(),
             });
         }
@@ -105,7 +105,7 @@ pub fn validate_geometry(
             };
             let S(_, span) = &gm.expr;
             return Err(Error {
-                span: span.clone(),
+                span: *span,
                 msg: "Ambiguous Geometry: variable-length segment followed by fixed-length segments requires a FixedSeq anchor".to_string(),
             });
         }

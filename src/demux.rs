@@ -5,9 +5,9 @@
 //! to sample identifiers, then routes reads to per-sample output files.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 
 use antisequence::expr::label;
 use antisequence::graph::{Graph, LookupOp};
@@ -72,7 +72,7 @@ impl DemuxConfig {
         for line in reader.lines() {
             let line = line?;
             let line = line.trim();
-            
+
             // Skip empty lines and comments
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -88,10 +88,11 @@ impl DemuxConfig {
     }
 
     /// Add the LookupOp to the graph for demultiplexing.
-    /// 
+    ///
     /// The barcode_label should be in the format "seqN.label" (e.g., "seq2.bc1").
     pub fn add_lookup_op(&self, graph: &mut Graph<NoTrace>) -> Result<(), String> {
-        let sample_map = self.load_sample_map()
+        let sample_map = self
+            .load_sample_map()
             .map_err(|e| format!("Failed to load sample map: {}", e))?;
 
         // Convert HashMap to rustc_hash::FxHashMap which LookupOp expects
@@ -104,7 +105,7 @@ impl DemuxConfig {
             input_label,
             &self.sample_attr,
             fx_map,
-            self.unassigned_name.as_bytes(),    // Stick in "unassigned" as bytes as the default if the barcode is not found
+            self.unassigned_name.as_bytes(), // Stick in "unassigned" as bytes as the default if the barcode is not found
         );
 
         graph.add(lookup_op);
@@ -119,7 +120,7 @@ impl DemuxConfig {
         format!(
             "{}/{{seq2.{}.{}}}_R{}.fastq.gz",
             dir,
-            self.barcode_label.split('.').last().unwrap_or("bc"),
+            self.barcode_label.split('.').next_back().unwrap_or("bc"),
             self.sample_attr,
             read_num
         )
@@ -155,15 +156,14 @@ mod tests {
         let map = config.load_sample_map().unwrap();
 
         assert_eq!(map.len(), 3);
-        assert_eq!(map.get(&b"AACGTGAT".to_vec()), Some(&b"sample_A".to_vec()));
-        assert_eq!(map.get(&b"TGGTGGTA".to_vec()), Some(&b"sample_B".to_vec()));
-        assert_eq!(map.get(&b"AACAACCA".to_vec()), Some(&b"sample_C".to_vec()));
+        assert_eq!(map.get(b"AACGTGAT".as_slice()), Some(&b"sample_A".to_vec()));
+        assert_eq!(map.get(b"TGGTGGTA".as_slice()), Some(&b"sample_B".to_vec()));
+        assert_eq!(map.get(b"AACAACCA".as_slice()), Some(&b"sample_C".to_vec()));
     }
 
     #[test]
     fn test_output_path_expr() {
-        let config = DemuxConfig::new("/path/to/map.tsv", "seq2.bc1")
-            .with_output_dir("my_output");
+        let config = DemuxConfig::new("/path/to/map.tsv", "seq2.bc1").with_output_dir("my_output");
 
         assert_eq!(
             config.output_path_expr(1),

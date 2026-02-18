@@ -258,10 +258,7 @@ pub fn lexer<'src>(
     let token = choice((nucs, argument, ident, transformto, int, ctrl, special, file));
 
     // Comments: # to end of line
-    let comment = just('#')
-        .then(none_of("\n\r").repeated())
-        .to(())
-        .padded();
+    let comment = just('#').then(none_of("\n\r").repeated()).to(()).padded();
 
     token
         .map_with(|tok, state| Some((tok, state.span())))
@@ -270,4 +267,248 @@ pub fn lexer<'src>(
         .repeated()
         .collect::<Vec<_>>()
         .map(|tokens| tokens.into_iter().flatten().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chumsky::Parser;
+
+    fn lex(input: &str) -> Vec<Token> {
+        lexer()
+            .parse(input)
+            .into_result()
+            .unwrap()
+            .into_iter()
+            .map(|(tok, _)| tok)
+            .collect()
+    }
+
+    #[test]
+    fn test_lex_simple_geometry() {
+        let tokens = lex("1{b[16]}2{r:}");
+        assert!(tokens.contains(&Token::Num(1)));
+        assert!(tokens.contains(&Token::Num(16)));
+        assert!(tokens.contains(&Token::Barcode));
+        assert!(tokens.contains(&Token::ReadSeq));
+        assert!(tokens.contains(&Token::LBrace));
+        assert!(tokens.contains(&Token::RBrace));
+        assert!(tokens.contains(&Token::LBracket));
+        assert!(tokens.contains(&Token::RBracket));
+        assert!(tokens.contains(&Token::Colon));
+    }
+
+    #[test]
+    fn test_lex_nucleotides() {
+        let tokens = lex("A T G C U");
+        assert_eq!(
+            tokens,
+            vec![Token::A, Token::T, Token::G, Token::C, Token::U]
+        );
+    }
+
+    #[test]
+    fn test_lex_interval_types() {
+        let tokens = lex("b u x r f");
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Barcode,
+                Token::Umi,
+                Token::Discard,
+                Token::ReadSeq,
+                Token::FixedSeq
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_functions() {
+        let tokens = lex("rev revcomp trunc trunc_left trunc_to trunc_to_left");
+        assert!(tokens.contains(&Token::Reverse));
+        assert!(tokens.contains(&Token::ReverseComp));
+        assert!(tokens.contains(&Token::Truncate));
+        assert!(tokens.contains(&Token::TruncateLeft));
+        assert!(tokens.contains(&Token::TruncateTo));
+        assert!(tokens.contains(&Token::TruncateToLeft));
+    }
+
+    #[test]
+    fn test_lex_more_functions() {
+        let tokens = lex("remove pad pad_left pad_to pad_to_left norm");
+        assert!(tokens.contains(&Token::Remove));
+        assert!(tokens.contains(&Token::Pad));
+        assert!(tokens.contains(&Token::PadLeft));
+        assert!(tokens.contains(&Token::PadTo));
+        assert!(tokens.contains(&Token::PadToLeft));
+        assert!(tokens.contains(&Token::Normalize));
+    }
+
+    #[test]
+    fn test_lex_map_functions() {
+        let tokens = lex("map map_with_mismatch filter filter_within_dist hamming edit map_with_edit anchor_relative");
+        assert!(tokens.contains(&Token::Map));
+        assert!(tokens.contains(&Token::MapWithMismatch));
+        assert!(tokens.contains(&Token::Filter));
+        assert!(tokens.contains(&Token::FilterWithinDist));
+        assert!(tokens.contains(&Token::Hamming));
+        assert!(tokens.contains(&Token::Edit));
+        assert!(tokens.contains(&Token::MapWithEdit));
+        assert!(tokens.contains(&Token::Anchor));
+    }
+
+    #[test]
+    fn test_lex_transform_to() {
+        let tokens = lex("->");
+        assert_eq!(tokens, vec![Token::TransformTo]);
+    }
+
+    #[test]
+    fn test_lex_argument() {
+        let tokens = lex("$1 $2 $3");
+        assert_eq!(tokens, vec![Token::Arg(1), Token::Arg(2), Token::Arg(3)]);
+    }
+
+    #[test]
+    fn test_lex_file() {
+        let tokens = lex("\"path/to/file.txt\"");
+        assert_eq!(tokens, vec![Token::File("path/to/file.txt".to_string())]);
+    }
+
+    #[test]
+    fn test_lex_label() {
+        let tokens = lex("myLabel");
+        assert_eq!(tokens, vec![Token::Label("myLabel".to_string())]);
+    }
+
+    #[test]
+    fn test_lex_reserved() {
+        let tokens = lex("_reserved");
+        assert_eq!(tokens, vec![Token::Reserved("_reserved".to_string())]);
+    }
+
+    #[test]
+    fn test_lex_self() {
+        let tokens = lex("self");
+        assert_eq!(tokens, vec![Token::Self_]);
+    }
+
+    #[test]
+    fn test_lex_comment() {
+        let tokens = lex("b # this is a comment\nu");
+        assert_eq!(tokens, vec![Token::Barcode, Token::Umi]);
+    }
+
+    #[test]
+    fn test_lex_ctrl_tokens() {
+        let tokens = lex("( ) [ ] { } , < >");
+        assert_eq!(
+            tokens,
+            vec![
+                Token::LParen,
+                Token::RParen,
+                Token::LBracket,
+                Token::RBracket,
+                Token::LBrace,
+                Token::RBrace,
+                Token::Comma,
+                Token::LAngle,
+                Token::RAngle,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_special() {
+        let tokens = lex("= -");
+        assert_eq!(tokens, vec![Token::Equals, Token::Dash]);
+    }
+
+    #[test]
+    fn test_lex_complex_geometry() {
+        let tokens = lex("1{b[16]u[10]r:}2{x[10]b[8]r:}");
+        assert!(tokens.len() > 10);
+        // Verify key tokens are present
+        assert!(tokens.contains(&Token::Num(16)));
+        assert!(tokens.contains(&Token::Num(10)));
+        assert!(tokens.contains(&Token::Num(8)));
+        assert!(tokens.contains(&Token::Umi));
+        assert!(tokens.contains(&Token::Discard));
+    }
+
+    #[test]
+    fn test_lex_ranged_len() {
+        let tokens = lex("b[8-12]");
+        assert!(tokens.contains(&Token::Barcode));
+        assert!(tokens.contains(&Token::Num(8)));
+        assert!(tokens.contains(&Token::Dash));
+        assert!(tokens.contains(&Token::Num(12)));
+    }
+
+    #[test]
+    fn test_lex_fixed_seq() {
+        let tokens = lex("f[ACGT]");
+        assert!(tokens.contains(&Token::FixedSeq));
+        assert!(tokens.contains(&Token::A));
+        assert!(tokens.contains(&Token::C));
+        assert!(tokens.contains(&Token::G));
+        assert!(tokens.contains(&Token::T));
+    }
+
+    #[test]
+    fn test_token_display() {
+        assert_eq!(format!("{}", Token::EOF), "EOF");
+        assert_eq!(format!("{}", Token::Num(42)), "42");
+        assert_eq!(format!("{}", Token::LParen), "(");
+        assert_eq!(format!("{}", Token::RParen), ")");
+        assert_eq!(format!("{}", Token::LBracket), "[");
+        assert_eq!(format!("{}", Token::RBracket), "]");
+        assert_eq!(format!("{}", Token::LBrace), "{");
+        assert_eq!(format!("{}", Token::RBrace), "}");
+        assert_eq!(format!("{}", Token::LAngle), "<");
+        assert_eq!(format!("{}", Token::RAngle), ">");
+        assert_eq!(format!("{}", Token::Comma), ",");
+        assert_eq!(format!("{}", Token::Equals), "=");
+        assert_eq!(format!("{}", Token::Dash), "-");
+        assert_eq!(format!("{}", Token::Colon), ":");
+        assert_eq!(format!("{}", Token::Reverse), "rev");
+        assert_eq!(format!("{}", Token::ReverseComp), "revcomp");
+        assert_eq!(format!("{}", Token::Truncate), "trunc");
+        assert_eq!(format!("{}", Token::TruncateLeft), "trunc_left");
+        assert_eq!(format!("{}", Token::TruncateTo), "trunc_to");
+        assert_eq!(format!("{}", Token::TruncateToLeft), "trunc_to_left");
+        assert_eq!(format!("{}", Token::Remove), "remove");
+        assert_eq!(format!("{}", Token::Pad), "pad");
+        assert_eq!(format!("{}", Token::PadLeft), "pad_left");
+        assert_eq!(format!("{}", Token::PadTo), "pad_to");
+        assert_eq!(format!("{}", Token::PadToLeft), "pad_to_left");
+        assert_eq!(format!("{}", Token::Normalize), "norm");
+        assert_eq!(format!("{}", Token::Map), "map");
+        assert_eq!(format!("{}", Token::MapWithMismatch), "map_with_mismatch");
+        assert_eq!(format!("{}", Token::FilterWithinDist), "filter_within_dist");
+        assert_eq!(format!("{}", Token::Filter), "filter");
+        assert_eq!(format!("{}", Token::Hamming), "hamming");
+        assert_eq!(format!("{}", Token::Edit), "edit");
+        assert_eq!(format!("{}", Token::MapWithEdit), "map_with_edit");
+        assert_eq!(format!("{}", Token::Anchor), "anchor_relative");
+        assert_eq!(format!("{}", Token::Barcode), "b");
+        assert_eq!(format!("{}", Token::Umi), "u");
+        assert_eq!(format!("{}", Token::Discard), "x");
+        assert_eq!(format!("{}", Token::ReadSeq), "r");
+        assert_eq!(format!("{}", Token::FixedSeq), "f");
+        assert_eq!(format!("{}", Token::TransformTo), "->");
+        assert_eq!(format!("{}", Token::Self_), "self");
+        assert_eq!(format!("{}", Token::Arg(1)), "$1");
+        assert_eq!(format!("{}", Token::A), "A");
+        assert_eq!(format!("{}", Token::T), "T");
+        assert_eq!(format!("{}", Token::G), "G");
+        assert_eq!(format!("{}", Token::C), "C");
+        assert_eq!(format!("{}", Token::U), "U");
+        assert_eq!(format!("{}", Token::Label("foo".into())), "foo");
+        assert_eq!(format!("{}", Token::File("bar.txt".into())), "\"bar.txt\"");
+        assert_eq!(
+            format!("{}", Token::Reserved("_r".into())),
+            "cannot prefix labed with '_': _r"
+        );
+    }
 }

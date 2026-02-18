@@ -486,8 +486,8 @@ pub fn parser<'tokens>(
                 ternary_function,
                 function_arguments!(
                     tp.clone().labelled("geometry piece to 'map'"),
-                    file.clone().labelled("file name")
-                        .or(argument.clone().labelled("argument from commandline")),
+                    file.labelled("file name")
+                        .or(argument.labelled("argument from commandline")),
                     tp.clone()
                         .labelled("geometry piece after mapping")
                         .map_with(|transf_p, state| S(Box::new(transf_p), state.span()))
@@ -499,8 +499,8 @@ pub fn parser<'tokens>(
                 function_arguments!(
                     tp.clone()
                         .labelled("geometry piece to 'filter_within_dist'"),
-                    file.clone().labelled("file name")
-                        .or(argument.clone().labelled("argument from commandline")),
+                    file.labelled("file name")
+                        .or(argument.labelled("argument from commandline")),
                     num.labelled("numerical argument")
                 )
             ),
@@ -508,12 +508,12 @@ pub fn parser<'tokens>(
                 quaternary_function,
                 function_arguments!(
                     tp.clone().labelled("geometry piece to 'map_with_mismatch'"),
-                    file.clone().labelled("file name")
-                        .or(argument.clone().labelled("argument from commandline")),
+                    file.labelled("file name")
+                        .or(argument.labelled("argument from commandline")),
                     tp.clone()
                         .labelled("geometry piece after mapping")
                         .map_with(|transf_p, state| S(Box::new(transf_p), state.span())),
-                    num.clone().labelled("numerical argument")
+                    num.labelled("numerical argument")
                 ),
                 MapWithMismatch,
                 MapWithEdit,
@@ -591,4 +591,258 @@ pub fn parser<'tokens>(
                 transforms,
             }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Nucleotide, S};
+
+    fn span() -> Span {
+        (0..1).into()
+    }
+
+    #[test]
+    fn test_interval_shape_display() {
+        let fixed = IntervalShape::FixedLen(S(16, span()));
+        assert_eq!(format!("{}", fixed), "[16]");
+
+        let seq = IntervalShape::FixedSeq(S(
+            vec![Nucleotide::A, Nucleotide::C, Nucleotide::G, Nucleotide::T],
+            span(),
+        ));
+        assert_eq!(format!("{}", seq), "[ACGT]");
+
+        let ranged = IntervalShape::RangedLen(S((8, 12), span()));
+        assert_eq!(format!("{}", ranged), "[8-12]");
+
+        let unbounded = IntervalShape::UnboundedLen;
+        assert_eq!(format!("{}", unbounded), ":");
+    }
+
+    #[test]
+    fn test_interval_kind_display() {
+        assert_eq!(format!("{}", IntervalKind::Barcode), "b");
+        assert_eq!(format!("{}", IntervalKind::Umi), "u");
+        assert_eq!(format!("{}", IntervalKind::Discard), "x");
+        assert_eq!(format!("{}", IntervalKind::ReadSeq), "r");
+        assert_eq!(format!("{}", IntervalKind::FixedSeq), "f");
+    }
+
+    #[test]
+    fn test_expr_display_self() {
+        assert_eq!(format!("{}", Expr::Self_), "self");
+    }
+
+    #[test]
+    fn test_expr_display_label() {
+        let e = Expr::Label(S("foo".to_string(), span()));
+        assert_eq!(format!("{}", e), "<foo>");
+    }
+
+    #[test]
+    fn test_expr_display_geom_piece() {
+        let e = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        assert_eq!(format!("{}", e), "b[16]");
+    }
+
+    #[test]
+    fn test_expr_display_labeled() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        let e = Expr::LabeledGeomPiece(S("bc1".to_string(), span()), S(Box::new(inner), span()));
+        assert_eq!(format!("{}", e), "bc1=b[16]");
+    }
+
+    #[test]
+    fn test_expr_display_function_reverse() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        let e = Expr::Function(S(Function::Reverse, span()), S(Box::new(inner), span()));
+        assert_eq!(format!("{}", e), "rev(b[16])");
+    }
+
+    #[test]
+    fn test_expr_display_function_revcomp() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        let e = Expr::Function(S(Function::ReverseComp, span()), S(Box::new(inner), span()));
+        assert_eq!(format!("{}", e), "revcomp(b[16])");
+    }
+
+    #[test]
+    fn test_function_fmt_variants() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+
+        let trunc = Expr::Function(
+            S(Function::Truncate(2), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", trunc), "trunc(b[16], 2)");
+
+        let trunc_left = Expr::Function(
+            S(Function::TruncateLeft(2), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", trunc_left), "trunc_left(b[16], 2)");
+
+        let trunc_to = Expr::Function(
+            S(Function::TruncateTo(10), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", trunc_to), "trunc_to(b[16], 10)");
+
+        let trunc_to_left = Expr::Function(
+            S(Function::TruncateToLeft(10), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", trunc_to_left), "trunc_to_left(b[16], 10)");
+
+        let remove = Expr::Function(
+            S(Function::Remove, span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", remove), "remove(b[16])");
+
+        let pad = Expr::Function(
+            S(Function::Pad(4, Nucleotide::A), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", pad), "pad(b[16], 4, A)");
+
+        let pad_left = Expr::Function(
+            S(Function::PadLeft(4, Nucleotide::T), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", pad_left), "pad_left(b[16], 4, T)");
+
+        let pad_to = Expr::Function(
+            S(Function::PadTo(20, Nucleotide::G), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", pad_to), "pad_to(b[16], 20, G)");
+
+        let pad_to_left = Expr::Function(
+            S(Function::PadToLeft(20, Nucleotide::C), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", pad_to_left), "pad_to_left(b[16], 20, C)");
+
+        let norm = Expr::Function(
+            S(Function::Normalize, span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", norm), "norm(b[16])");
+
+        let hamming = Expr::Function(
+            S(Function::Hamming(1), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", hamming), "hamming(b[16], 1)");
+
+        let edit = Expr::Function(
+            S(Function::Edit(1), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", edit), "edit(b[16], 1)");
+
+        let anchor = Expr::Function(
+            S(Function::Anchor, span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", anchor), "anchor_relative(b[16])");
+
+        let filter = Expr::Function(
+            S(Function::Filter("test".into()), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", filter), "filter(b[16], test)");
+
+        let filter_within = Expr::Function(
+            S(Function::FilterWithinDist("test".into(), 2), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(
+            format!("{}", filter_within),
+            "filter_within_dist(b[16], test, 2)"
+        );
+    }
+
+    #[test]
+    fn test_function_fmt_map_variants() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        let self_expr = Expr::Self_;
+
+        let map = Expr::Function(
+            S(
+                Function::Map("file.tsv".into(), S(Box::new(self_expr.clone()), span())),
+                span(),
+            ),
+            S(Box::new(inner.clone()), span()),
+        );
+        let s = format!("{}", map);
+        assert!(s.contains("map("));
+        assert!(s.contains("file.tsv"));
+
+        let map_mm = Expr::Function(
+            S(
+                Function::MapWithMismatch(
+                    "file.tsv".into(),
+                    S(Box::new(self_expr.clone()), span()),
+                    1,
+                ),
+                span(),
+            ),
+            S(Box::new(inner.clone()), span()),
+        );
+        let s = format!("{}", map_mm);
+        assert!(s.contains("map_with_mismatch("));
+
+        let map_edit = Expr::Function(
+            S(
+                Function::MapWithEdit("file.tsv".into(), S(Box::new(self_expr.clone()), span()), 1),
+                span(),
+            ),
+            S(Box::new(inner.clone()), span()),
+        );
+        let s = format!("{}", map_edit);
+        assert!(s.contains("map_with_edit("));
+    }
+
+    #[test]
+    fn test_make_geom_piece_no_label() {
+        let piece = make_geom_piece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+            None,
+            span(),
+        );
+        assert!(matches!(piece, Expr::GeomPiece(IntervalKind::Barcode, _)));
+    }
+
+    #[test]
+    fn test_make_geom_piece_with_label() {
+        let piece = make_geom_piece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+            Some(Expr::Label(S("bc1".to_string(), span()))),
+            span(),
+        );
+        assert!(matches!(piece, Expr::LabeledGeomPiece(_, _)));
+    }
 }

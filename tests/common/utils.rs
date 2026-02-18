@@ -12,7 +12,7 @@ pub struct ParsedInput<'a> {
 
 pub fn result_with_errs<'a>(input: &'a str) -> ParsedInput<'a> {
     // lex input
-    let (lex_res, lex_errs) = lexer::lexer().parse(&input).into_output_errors();
+    let (lex_res, lex_errs) = lexer::lexer().parse(input).into_output_errors();
     let tokens = lex_res.unwrap();
 
     let tokens = tokens

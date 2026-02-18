@@ -155,3 +155,51 @@ pub fn label_transformation(
 
     numbered_transformation
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::execute::compile_geom;
+
+    #[test]
+    fn test_compile_transformation_basic() {
+        let data = compile_geom(
+            "1{b<bc>[16]u<umi>[10]r<read>:}2{r<read2>:}->1{<bc><umi>}2{<read2>}".to_string(),
+        )
+        .unwrap();
+        assert!(data.transformation.is_some());
+        let tr = data.transformation.unwrap();
+        assert_eq!(tr.len(), 2);
+    }
+
+    #[test]
+    fn test_compile_transformation_with_function() {
+        let data = compile_geom(
+            "1{b<bc>[16]u<umi>[10]r<read>:}2{r<read2>:}->1{rev(<bc>)<umi>}2{<read2>}".to_string(),
+        )
+        .unwrap();
+        assert!(data.transformation.is_some());
+    }
+
+    #[test]
+    fn test_label_transformation() {
+        let labels = vec![
+            (Interval::Named("bc".to_string()), 1),
+            (Interval::Named("umi".to_string()), 1),
+        ];
+        let tr = vec![vec!["bc".to_string(), "umi".to_string()]];
+        let result = label_transformation(tr, &labels);
+        assert_eq!(result[0][0], "seq1.bc");
+        assert_eq!(result[0][1], "seq1.umi");
+    }
+
+    #[test]
+    fn test_find_num() {
+        let labels = vec![
+            (Interval::Named("bc".to_string()), 1),
+            (Interval::Named("umi".to_string()), 2),
+        ];
+        assert_eq!(find_num("bc", &labels), "1");
+        assert_eq!(find_num("umi", &labels), "2");
+    }
+}
