@@ -525,6 +525,22 @@ fn test_edit_distance_basic() {
 }
 
 #[test]
+fn test_edit_distance_rejects_barcode() {
+    // edit() must only accept a fixed sequence (f[...]), not a barcode (b[...])
+    let src = "1{r:}2{edit(b[8], 2)r:}";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
+    let res = compile(res);
+
+    assert!(res.is_err(), "edit() should reject barcode (non-sequence) arguments");
+}
+
+#[test]
 fn test_edit_distance_anchor_relative() {
     // Test anchor_relative with edit distance (indel-tolerant anchor search)
     let geom = String::from("1{r:}2{u[10]b[8]anchor_relative(edit(f[GTGGCCGATGTTTCGCATCGGCGTACGACT], 3))b[8]}");
