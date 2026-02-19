@@ -1,7 +1,7 @@
 mod common;
 
 use seqproc::{
-    parser::{Definition, Expr, Function, IntervalKind, IntervalShape, Read},
+    parser::{Definition, Expr, Function, IntervalKind, IntervalShape, Read, TransformOutput},
     Nucleotide, S,
 };
 
@@ -62,6 +62,7 @@ fn transformation() {
     let expected_res = vec![
         S::new(
             Read {
+                annotations: vec![],
                 index: S::new(1, 16..17),
                 exprs: vec![S::new(Expr::Label(S::new("t".to_string(), 18..21)), 18..21)],
             },
@@ -69,6 +70,7 @@ fn transformation() {
         ),
         S::new(
             Read {
+                annotations: vec![],
                 index: S::new(2, 22..23),
                 exprs: vec![S::new(
                     Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::UnboundedLen),
@@ -81,7 +83,10 @@ fn transformation() {
 
     assert!(lex_errs.is_empty());
     assert!(parse_errs.is_empty());
-    assert_eq!(res.transforms.unwrap().0, expected_res);
+    match res.transforms.unwrap().0 {
+        TransformOutput::Direct(reads) => assert_eq!(reads, expected_res),
+        _ => panic!("Expected TransformOutput::Direct"),
+    }
 }
 
 #[test]
@@ -119,6 +124,7 @@ fn hamming() {
     };
 
     let expected_res = Read {
+        annotations: vec![],
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::Function(
@@ -153,6 +159,7 @@ fn remove() {
     };
 
     let expected_res = Read {
+        annotations: vec![],
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::Function(
@@ -201,6 +208,7 @@ fn nested() {
     };
 
     let expected_res = Read {
+        annotations: vec![],
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::Function(
@@ -241,6 +249,7 @@ fn labeled_unbounded() {
     };
 
     let expected_res = Read {
+        annotations: vec![],
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::LabeledGeomPiece(
@@ -278,6 +287,7 @@ fn ranged() {
     };
 
     let expected_res = Read {
+        annotations: vec![],
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::GeomPiece(
@@ -309,6 +319,7 @@ fn fixed() {
     };
 
     let expected_res = Read {
+        annotations: vec![],
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::GeomPiece(
@@ -340,6 +351,7 @@ fn fixed_seq() {
     };
 
     let expected_res = Read {
+        annotations: vec![],
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::GeomPiece(
@@ -474,4 +486,108 @@ fn filter_test_too_many_args() {
 
     assert!(lex_errs.is_empty());
     assert_eq!(1, parse_errs.len());
+}
+
+#[test]
+fn annotation_on_read() {
+    // Annotation syntax: #[match_ori(either)] before a read declaration.
+    let src = "#[match_ori(either)] 1{b[10]r:}2{r:}";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
+
+    let res = parse_res.unwrap();
+    // First read should have one annotation
+    assert_eq!(res.reads.0[0].0.annotations.len(), 1);
+    assert_eq!(res.reads.0[0].0.annotations[0].0.name.0, "match_ori");
+    assert_eq!(res.reads.0[0].0.annotations[0].0.args.len(), 1);
+    assert_eq!(res.reads.0[0].0.annotations[0].0.args[0].0, "either");
+    // Second read should have no annotations
+    assert_eq!(res.reads.0[1].0.annotations.len(), 0);
+}
+
+#[test]
+fn annotation_simplified_with_transform() {
+    // Simplified form (recommended): annotation + direct transform, no match block.
+    let src = "#[match_ori(either)] 1{u[10]b[8]f[CAGAGC]b[8]r:}2{r:} -> 1{<umi><bc1><bc2>}2{r:}";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
+
+    let res = parse_res.unwrap();
+    assert_eq!(res.reads.0[0].0.annotations.len(), 1);
+    assert!(res.transforms.is_some());
+    match &res.transforms.unwrap().0 {
+        TransformOutput::Direct(_) => {}
+        _ => panic!("Expected TransformOutput::Direct"),
+    }
+}
+
+#[test]
+fn match_block_transform() {
+    // Match block syntax: -> match 1.ori { fw => 1{...}, rc => 1{...} }
+    let src = "#[match_ori(either)] 1{u[10]b[8]r:}2{r:} -> match 1.ori { fw => 1{<umi><bc>}2{r:}, rc => 1{<umi><bc>}2{r:} }";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
+
+    let res = parse_res.unwrap();
+    assert!(res.transforms.is_some());
+    match &res.transforms.unwrap().0 {
+        TransformOutput::Match {
+            read_ref,
+            attr,
+            fw_arm,
+            rc_arm,
+        } => {
+            assert_eq!(read_ref.0, 1);
+            assert_eq!(attr.0, "ori");
+            assert!(!fw_arm.is_empty());
+            assert!(!rc_arm.is_empty());
+        }
+        _ => panic!("Expected TransformOutput::Match"),
+    }
+}
+
+#[test]
+fn no_annotation_backward_compat() {
+    // Existing syntax without annotations should still work.
+    let src = "1{b[16]u[10]r:}2{r:} -> 1{<barcode><umi>}2{r:}";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
+
+    let res = parse_res.unwrap();
+    // No annotations
+    assert!(res.reads.0[0].0.annotations.is_empty());
+    assert!(res.reads.0[1].0.annotations.is_empty());
+    // Direct transform
+    match &res.transforms.unwrap().0 {
+        TransformOutput::Direct(_) => {}
+        _ => panic!("Expected TransformOutput::Direct"),
+    }
 }

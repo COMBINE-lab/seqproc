@@ -168,8 +168,21 @@ fn main() {
                 eprintln!("Failed to create summary file at {:?}", summary_path);
             }
         }
-        Err(_) => {
-            // Errors are already printed by compile_geom via parse_failure
+        Err(errs) => {
+            use ariadne::{Color, Label, Report, ReportKind, Source};
+            for err in &errs {
+                Report::build(ReportKind::Error, ((), err.span().into_range()))
+                    .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+                    .with_message(err.to_string())
+                    .with_label(
+                        Label::new(((), err.span().into_range()))
+                            .with_message(err.reason().to_string())
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .print(Source::from(&geom))
+                    .unwrap();
+            }
             exit(1);
         }
     }

@@ -192,24 +192,44 @@ pub struct Definition {
     pub expr: S<Expr>,
 }
 
+/// An annotation on a read declaration: `#[match_ori(either)]`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// A read, with index and expression: `1{hamming(<brc>, 1)}`.
+pub struct Annotation {
+    pub name: S<String>,
+    pub args: Vec<S<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A read, with optional annotations, index, and expressions: `#[match_ori(either)] 1{...}`.
 pub struct Read {
+    pub annotations: Vec<S<Annotation>>,
     pub index: S<usize>,
     pub exprs: Vec<S<Expr>>,
 }
 
+/// Output specification after `->`: either direct reads or a match block.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TransformOutput {
+    /// Direct output: `-> 1{<bc>} 2{<read>}`
+    Direct(Vec<S<Read>>),
+    /// Match block: `-> match 1.ori { fw => 1{...}, rc => 1{...} }`
+    Match {
+        read_ref: S<usize>,
+        attr: S<String>,
+        fw_arm: Vec<S<Read>>,
+        rc_arm: Vec<S<Read>>,
+    },
+}
+
 /// A full EFGDL file: 0+ definitions, then input reads, then transformed reads.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-
 pub struct Description {
     /// The list of definitions at the top of an EFGDL file:
-    /// `brc = b[10] foo = f[CAGAGC]`.``
+    /// `brc = b[10] foo = f[CAGAGC]`.
     pub definitions: S<Vec<S<Definition>>>,
     pub reads: S<Vec<S<Read>>>,
-    /// List of reads specifying the output of a transformation:
-    /// ` -> 1{<brc>pad(<anchor>, 3, A)<read>}`.
-    pub transforms: Option<S<Vec<S<Read>>>>,
+    /// Output specification after `->`, if present.
+    pub transforms: Option<S<TransformOutput>>,
 }
 
 fn make_geom_piece(
@@ -538,18 +558,48 @@ pub fn parser<'tokens>(
         .collect()
         .map_with(|defs, span| S(defs, span.span()));
 
-    let reads = num
-        .labelled("read number")
-        .map_with(|n, state| S(n, state.span()))
-        .then(
-            transformed_pieces
-                .clone()
-                .repeated()
-                .at_least(1)
-                .collect()
-                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+    // Parse annotation: #[name(arg1, arg2, ...)]
+    let annotation = just(Token::HashBracket)
+        .ignore_then(
+            label
+                .map_with(|name, state| S(name, state.span()))
+                .then(
+                    label
+                        .map_with(|a, state| S(a, state.span()))
+                        .separated_by(just(Token::Comma))
+                        .collect::<Vec<_>>()
+                        .delimited_by(just(Token::LParen), just(Token::RParen)),
+                )
+                .then_ignore(just(Token::RBracket)),
         )
-        .map_with(|(index, exprs), span| S(Read { index, exprs }, span.span()))
+        .map_with(|(name, args), state| S(Annotation { name, args }, state.span()));
+
+    let reads = annotation
+        .clone()
+        .repeated()
+        .collect::<Vec<_>>()
+        .then(
+            num.labelled("read number")
+                .map_with(|n, state| S(n, state.span()))
+                .then(
+                    transformed_pieces
+                        .clone()
+                        .repeated()
+                        .at_least(1)
+                        .collect()
+                        .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+                ),
+        )
+        .map_with(|(annotations, (index, exprs)), span| {
+            S(
+                Read {
+                    annotations,
+                    index,
+                    exprs,
+                },
+                span.span(),
+            )
+        })
         .repeated()
         .at_least(1)
         .collect::<Vec<_>>()
@@ -565,20 +615,77 @@ pub fn parser<'tokens>(
                 .collect()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map_with(|(index, exprs), state| S(Read { index, exprs }, state.span()));
+        .map_with(|(index, exprs), state| {
+            S(
+                Read {
+                    annotations: vec![],
+                    index,
+                    exprs,
+                },
+                state.span(),
+            )
+        });
+
+    // Parse match block: match 1.ori { fw => 1{...} 2{...}, rc => 1{...} 2{...} }
+    let match_block = just(Token::Match)
+        .ignore_then(
+            num.labelled("read reference in match")
+                .map_with(|n, state| S(n, state.span())),
+        )
+        .then_ignore(just(Token::Dot))
+        .then(
+            label
+                .labelled("attribute name in match")
+                .map_with(|a, state| S(a, state.span())),
+        )
+        .then(
+            just(Token::Fw)
+                .ignore_then(just(Token::FatArrow))
+                .ignore_then(
+                    transform_read
+                        .clone()
+                        .repeated()
+                        .at_least(1)
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(just(Token::Comma))
+                .then(
+                    just(Token::Rc)
+                        .ignore_then(just(Token::FatArrow))
+                        .ignore_then(
+                            transform_read
+                                .clone()
+                                .repeated()
+                                .at_least(1)
+                                .collect::<Vec<_>>(),
+                        ),
+                )
+                .then_ignore(just(Token::Comma).or_not())
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map(
+            |((read_ref, attr), (fw_arm, rc_arm))| TransformOutput::Match {
+                read_ref,
+                attr,
+                fw_arm,
+                rc_arm,
+            },
+        );
 
     let transformations = choice((
         end().map(|_| None),
         just(Token::TransformTo)
-            .then(
+            .ignore_then(choice((
+                match_block.then(end()).map(|(m, _)| m),
                 transform_read
                     .repeated()
                     .at_least(1)
                     .at_most(2)
                     .collect::<Vec<_>>()
-                    .then(end()),
-            )
-            .map_with(|(_, (val, _)), state| Some(S(val, state.span()))),
+                    .then(end())
+                    .map(|(val, _)| TransformOutput::Direct(val)),
+            )))
+            .map_with(|output, state| Some(S(output, state.span()))),
     ));
 
     Box::new(

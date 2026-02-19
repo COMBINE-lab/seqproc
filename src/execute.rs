@@ -492,8 +492,10 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, Stri
         .unwrap_or_else(|errs| parse_failure(&errs[0], geom.clone()));
 
     // compile ast
-    compile(description)
-        .map_err(|e| parse_failure(&Rich::<String>::custom(e.span, e.msg), geom.clone()))
+    compile(description).map_err(|e| {
+        let rich = Rich::<String>::custom(e.span, e.msg);
+        vec![rich.into_owned()]
+    })
 }
 
 pub fn read_pairs_to_file(

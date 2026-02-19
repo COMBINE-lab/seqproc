@@ -90,6 +90,18 @@ pub enum Token {
     MapWithEdit,
     /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length.
     Anchor,
+    /// `#[` - annotation start.
+    HashBracket,
+    /// `match` keyword.
+    Match,
+    /// `=>` - fat arrow for match arms.
+    FatArrow,
+    /// `.` - dot for attribute access.
+    Dot,
+    /// `fw` - forward orientation.
+    Fw,
+    /// `rc` - reverse complement orientation.
+    Rc,
     /// `->`.
     TransformTo,
     /// `$n`, where `n` is a numeric literal.
@@ -156,6 +168,12 @@ impl fmt::Display for Token {
             Edit => f.write_str("edit"),
             MapWithEdit => f.write_str("map_with_edit"),
             Anchor => f.write_str("anchor_relative"),
+            HashBracket => f.write_str("#["),
+            Match => f.write_str("match"),
+            FatArrow => f.write_str("=>"),
+            Dot => f.write_char('.'),
+            Fw => f.write_str("fw"),
+            Rc => f.write_str("rc"),
             Barcode => f.write_char('b'),
             Umi => f.write_char('u'),
             Discard => f.write_char('x'),
@@ -189,6 +207,7 @@ pub fn lexer<'src>(
         just('=').to(Token::Equals),
         just('-').to(Token::Dash),
         just(':').to(Token::Colon),
+        just('.').to(Token::Dot),
     ));
 
     let file = just('"')
@@ -205,6 +224,10 @@ pub fn lexer<'src>(
         .map(|((), (f, _))| Token::File(f.into_iter().collect::<String>()));
 
     let transformto = just('-').then(just('>')).to(Token::TransformTo);
+
+    let fatarrow = just('=').then(just('>')).to(Token::FatArrow);
+
+    let hash_bracket = just('#').then(just('[')).to(Token::HashBracket);
 
     let argument = just('$')
         .then(text::int(10).from_str().unwrapped())
@@ -239,6 +262,9 @@ pub fn lexer<'src>(
         "edit" => Token::Edit,
         "map_with_edit" => Token::MapWithEdit,
         "anchor_relative" => Token::Anchor,
+        "match" => Token::Match,
+        "fw" => Token::Fw,
+        "rc" => Token::Rc,
         "self" => Token::Self_,
         "b" => Token::Barcode,
         "u" => Token::Umi,
@@ -255,10 +281,24 @@ pub fn lexer<'src>(
     });
 
     // TODO: remove recovery
-    let token = choice((nucs, argument, ident, transformto, int, ctrl, special, file));
+    let token = choice((
+        nucs,
+        argument,
+        ident,
+        hash_bracket,
+        fatarrow,
+        transformto,
+        int,
+        ctrl,
+        special,
+        file,
+    ));
 
-    // Comments: # to end of line
-    let comment = just('#').then(none_of("\n\r").repeated()).to(()).padded();
+    // Comments: # to end of line (but not #[ which starts an annotation)
+    let comment = just('#')
+        .then(none_of("[\n\r").then(none_of("\n\r").repeated()).or_not())
+        .to(())
+        .padded();
 
     token
         .map_with(|tok, state| Some((tok, state.span())))
@@ -510,5 +550,70 @@ mod tests {
             format!("{}", Token::Reserved("_r".into())),
             "cannot prefix labed with '_': _r"
         );
+        assert_eq!(format!("{}", Token::HashBracket), "#[");
+        assert_eq!(format!("{}", Token::Match), "match");
+        assert_eq!(format!("{}", Token::FatArrow), "=>");
+        assert_eq!(format!("{}", Token::Dot), ".");
+        assert_eq!(format!("{}", Token::Fw), "fw");
+        assert_eq!(format!("{}", Token::Rc), "rc");
+    }
+
+    #[test]
+    fn test_lex_annotation() {
+        let tokens = lex("#[match_ori(either)]");
+        assert_eq!(
+            tokens,
+            vec![
+                Token::HashBracket,
+                Token::Label("match_ori".to_string()),
+                Token::LParen,
+                Token::Label("either".to_string()),
+                Token::RParen,
+                Token::RBracket,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_match_block_tokens() {
+        let tokens = lex("match 1.ori { fw => rc => }");
+        assert!(tokens.contains(&Token::Match));
+        assert!(tokens.contains(&Token::Dot));
+        assert!(tokens.contains(&Token::Label("ori".to_string())));
+        assert!(tokens.contains(&Token::Fw));
+        assert!(tokens.contains(&Token::FatArrow));
+        assert!(tokens.contains(&Token::Rc));
+    }
+
+    #[test]
+    fn test_lex_comment_vs_annotation() {
+        // # followed by non-[ is a comment
+        let tokens = lex("b # this is a comment\nu");
+        assert_eq!(tokens, vec![Token::Barcode, Token::Umi]);
+
+        // #[ starts an annotation, not a comment
+        let tokens = lex("#[foo(bar)]");
+        assert_eq!(
+            tokens,
+            vec![
+                Token::HashBracket,
+                Token::Label("foo".to_string()),
+                Token::LParen,
+                Token::Label("bar".to_string()),
+                Token::RParen,
+                Token::RBracket,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_fat_arrow_vs_equals() {
+        // => should be FatArrow, not Equals + RAngle
+        let tokens = lex("=>");
+        assert_eq!(tokens, vec![Token::FatArrow]);
+
+        // = alone is Equals
+        let tokens = lex("=");
+        assert_eq!(tokens, vec![Token::Equals]);
     }
 }

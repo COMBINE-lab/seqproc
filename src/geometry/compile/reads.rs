@@ -151,6 +151,7 @@ pub fn compile_reads(
         Read {
             index: S(num, _),
             exprs: read_exprs,
+            ..
         },
         _,
     ) in reads

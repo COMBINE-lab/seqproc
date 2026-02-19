@@ -11,7 +11,7 @@ use expr::Expr;
 use graph::{
     Graph,
     MatchType::{Edit, EditPrefix, Exact, ExactPrefix, Hamming, HammingPrefix},
-    SelectOp, Threshold,
+    SelectOp, Threshold, TryOrientationOp,
 };
 
 use crate::{
@@ -58,15 +58,44 @@ impl<'a> CompiledData {
         let Self {
             geometry,
             transformation,
+            read_annotations,
+            ..
         } = self;
 
         for (i, read_geometry) in geometry.iter().enumerate() {
-            interpret_geometry(
-                graph,
-                read_geometry,
-                &format!("seq{}.", i + 1),
-                additional_args,
-            );
+            let read_idx = i + 1; // 1-based
+
+            // Check if this read has a match_ori(either) annotation.
+            let has_match_ori = read_annotations.iter().any(|ra| {
+                ra.read_idx == read_idx
+                    && ra.annotations.iter().any(|S(ann, _)| {
+                        ann.name.0 == "match_ori"
+                            && ann.args.first().map(|a| a.0.as_str()) == Some("either")
+                    })
+            });
+
+            if has_match_ori {
+                // Build geometry into a separate inner graph, then wrap
+                // it in TryOrientationOp so the read is tried in both
+                // forward and reverse-complement orientations.
+                let mut inner = Graph::new();
+                interpret_geometry(
+                    &mut inner,
+                    read_geometry,
+                    &format!("seq{}.", read_idx),
+                    additional_args,
+                );
+                let read_idx_u8 = u8::try_from(read_idx)
+                    .expect("read index must fit in u8 (validated at compile time)");
+                graph.add(TryOrientationOp::new(inner, read_idx_u8, b"ori"));
+            } else {
+                interpret_geometry(
+                    graph,
+                    read_geometry,
+                    &format!("seq{}.", read_idx),
+                    additional_args,
+                );
+            }
         }
 
         if let Some(transformation) = transformation {
