@@ -105,7 +105,7 @@ brc1 = b[1-4]
     } = result_with_errs(src);
     let res = parse_res.unwrap();
 
-    let def_map = compile_definitions(res.definitions)?;
+    let (def_map, _warnings) = compile_definitions(res.definitions)?;
 
     assert_eq!(2, def_map.len());
 
@@ -125,9 +125,9 @@ brc = b[1-4]
         parse_errs: _,
     } = result_with_errs(src);
     let res = parse_res.unwrap();
-    let def_map = compile_definitions(res.definitions);
+    let def_result = compile_definitions(res.definitions);
 
-    assert!(def_map.is_err());
+    assert!(def_result.is_err());
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn label_replacement() {
     } = result_with_errs(src);
     let res = parse_res.unwrap();
 
-    let def_map = compile_definitions(res.definitions).unwrap();
+    let (def_map, _) = compile_definitions(res.definitions).unwrap();
 
     let res = compile_reads(res.reads, def_map);
 
@@ -161,7 +161,7 @@ fn no_variable() {
     } = result_with_errs(src);
     let res = parse_res.unwrap();
 
-    let def_map = compile_definitions(res.definitions).unwrap();
+    let (def_map, _) = compile_definitions(res.definitions).unwrap();
 
     let res = compile_reads(res.reads, def_map);
 
@@ -197,7 +197,7 @@ brc = b[10]
     } = result_with_errs(src);
     let res = parse_res.unwrap();
 
-    let def_map = compile_definitions(res.definitions).unwrap();
+    let (def_map, _) = compile_definitions(res.definitions).unwrap();
 
     let res = compile_reads(res.reads, def_map);
 
@@ -218,9 +218,9 @@ brc1 = pad(<brc>, 1, A)
     } = result_with_errs(src);
     let res = parse_res.unwrap();
 
-    let def_map = compile_definitions(res.definitions);
+    let def_result = compile_definitions(res.definitions);
 
-    assert!(def_map.is_err());
+    assert!(def_result.is_err());
 }
 
 #[test]

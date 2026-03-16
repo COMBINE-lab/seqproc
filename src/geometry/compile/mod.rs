@@ -135,6 +135,8 @@ pub struct CompiledData {
     pub element_annotations: Vec<ElementAnnotations>,
     /// Conditional output match block, if present.
     pub match_block: Option<CompiledMatchBlock>,
+    /// Deprecation warnings collected during compilation.
+    pub warnings: Vec<String>,
 }
 
 impl CompiledData {
@@ -262,7 +264,7 @@ pub fn compile(
     }
 
     // validate definition block
-    let map = {
+    let (map, warnings) = {
         let def_res = compile_definitions(definitions);
 
         if let Err(e) = def_res {
@@ -298,6 +300,7 @@ pub fn compile(
                 transformation: Some(transformation),
                 element_annotations,
                 match_block: None,
+                warnings,
             })
         }
         Some(S(
@@ -366,6 +369,7 @@ pub fn compile(
                     rc_map,
                     base_map,
                 }),
+                warnings,
             })
         }
         None => {
@@ -376,6 +380,7 @@ pub fn compile(
                 transformation: None,
                 element_annotations,
                 match_block: None,
+                warnings,
             })
         }
     }

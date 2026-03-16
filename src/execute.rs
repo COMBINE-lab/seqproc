@@ -492,10 +492,17 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, Stri
         .unwrap_or_else(|errs| parse_failure(&errs[0], geom.clone()));
 
     // compile ast
-    compile(description).map_err(|e| {
+    let compiled = compile(description).map_err(|e| {
         let rich = Rich::<String>::custom(e.span, e.msg);
         vec![rich.into_owned()]
-    })
+    })?;
+
+    // LANG-DEPRECATE: Print deprecation warnings to stderr.
+    for warning in &compiled.warnings {
+        eprintln!("Warning: {}", warning);
+    }
+
+    Ok(compiled)
 }
 
 pub fn read_pairs_to_file(

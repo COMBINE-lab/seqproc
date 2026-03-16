@@ -173,8 +173,9 @@ fn check_annotation_conflicts(
 
 pub fn compile_definitions(
     S(defs, _): S<Vec<S<Definition>>>,
-) -> Result<HashMap<String, GeometryMeta>, Error> {
+) -> Result<(HashMap<String, GeometryMeta>, Vec<String>), Error> {
     let mut map = HashMap::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     let mut err: Option<Error> = None;
 
@@ -193,6 +194,35 @@ pub fn compile_definitions(
             break;
         }
         let mut gm = res.unwrap();
+
+        // LANG-DEPRECATE: Check for old function-call matching modifiers
+        // in the stack and emit deprecation warnings.
+        for S(fn_, _) in &gm.stack {
+            match fn_ {
+                CompiledFunction::Hamming(n) => {
+                    warnings.push(format!(
+                        "deprecated: hamming({}) on definition '{}'; \
+                         use #[hamming({})] annotation instead",
+                        n, label_str, n
+                    ));
+                }
+                CompiledFunction::Edit(n) => {
+                    warnings.push(format!(
+                        "deprecated: edit({}) on definition '{}'; \
+                         use #[edit({})] annotation instead",
+                        n, label_str, n
+                    ));
+                }
+                CompiledFunction::Anchor => {
+                    warnings.push(format!(
+                        "deprecated: anchor_relative() on definition '{}'; \
+                         use #[search(relative)] annotation instead",
+                        label_str
+                    ));
+                }
+                _ => {}
+            }
+        }
 
         // LANG-MIGRATE-HAMMING / LANG-MIGRATE-EDIT / LANG-MIGRATE-SEARCH:
         // Convert matching-modifier annotations into compiled functions and
@@ -250,7 +280,7 @@ pub fn compile_definitions(
         return Err(e);
     }
 
-    Ok(map)
+    Ok((map, warnings))
 }
 
 #[cfg(test)]
@@ -614,6 +644,74 @@ mod tests {
         assert!(
             result.is_err(),
             "#[search(absolute)] with unrecognized arg should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_deprecation_warning_for_old_hamming_syntax() {
+        // LANG-DEPRECATE: Old hamming() function syntax should emit a
+        // deprecation warning suggesting the new #[hamming(N)] annotation.
+        let data = compile_geom("anchor = hamming(f[CATAGC], 1)\n1{x:<anchor>x:}2{r:}".to_string())
+            .expect("old hamming syntax should still compile");
+        assert!(
+            data.warnings
+                .iter()
+                .any(|w| w.contains("deprecated") && w.contains("hamming")),
+            "should emit deprecation warning for hamming(), got: {:?}",
+            data.warnings
+        );
+    }
+
+    #[test]
+    fn test_deprecation_warning_for_old_edit_syntax() {
+        let data = compile_geom("anchor = edit(f[CATAGC], 1)\n1{x:<anchor>x:}2{r:}".to_string())
+            .expect("old edit syntax should still compile");
+        assert!(
+            data.warnings
+                .iter()
+                .any(|w| w.contains("deprecated") && w.contains("edit")),
+            "should emit deprecation warning for edit(), got: {:?}",
+            data.warnings
+        );
+    }
+
+    #[test]
+    fn test_deprecation_warning_for_old_anchor_relative_syntax() {
+        let data =
+            compile_geom("l1 = anchor_relative(f[CAGAGC])\n1{x[2]b[8]<l1>r:}2{r:}".to_string())
+                .expect("old anchor_relative syntax should still compile");
+        assert!(
+            data.warnings
+                .iter()
+                .any(|w| w.contains("deprecated") && w.contains("anchor_relative")),
+            "should emit deprecation warning for anchor_relative(), got: {:?}",
+            data.warnings
+        );
+    }
+
+    #[test]
+    fn test_no_deprecation_warning_for_new_annotation_syntax() {
+        // New annotation syntax should NOT emit any deprecation warnings.
+        let data =
+            compile_geom("#[hamming(1)] anchor = f[CATAGC]\n1{x:<anchor>x:}2{r:}".to_string())
+                .expect("new annotation syntax should compile");
+        assert!(
+            data.warnings.is_empty(),
+            "new annotation syntax should not emit warnings, got: {:?}",
+            data.warnings
+        );
+    }
+
+    #[test]
+    fn test_no_deprecation_warning_for_new_stacked_syntax() {
+        let data = compile_geom(
+            "#[search(relative)] #[edit(1)] l1 = f[CAGAGC]\n1{x[2]b[8]<l1>r:}2{r:}".to_string(),
+        )
+        .expect("stacked annotation syntax should compile");
+        assert!(
+            data.warnings.is_empty(),
+            "stacked annotation syntax should not emit warnings, got: {:?}",
+            data.warnings
         );
     }
 }
