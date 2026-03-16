@@ -1961,14 +1961,11 @@ fn paper_splitseq_pe_annotation_on_r2_only() {
 // ===========================================================================
 
 #[test]
-fn bug1_divergent_match_block_arms_rejected() {
-    // BUG 1: The compiler compiles both fw and rc match block arms but the
-    // interpreter only ever uses the fw arm. If a user writes different arms,
-    // the rc arm is silently discarded, causing incorrect output.
-    //
-    // FIX: The compiler should reject match blocks where fw and rc arms
-    // produce different transformations, since the forward-orientation
-    // invariant means they must be identical.
+fn bug1_divergent_match_block_arms_accepted() {
+    // LANG-COND-OUTPUT: Different match block arms are now supported.
+    // The interpreter uses SelectOp to conditionally apply the correct
+    // arm based on the runtime attribute value (e.g., ori=fw vs ori=rc).
+    // Previously this was rejected; now it compiles successfully.
     let geom = r#"
 #[match_ori(either)]
 1{f[CAGAGC]b<bc>[8]r<rest>:}
@@ -1980,10 +1977,10 @@ fn bug1_divergent_match_block_arms_rejected() {
     .to_string();
     let result = compile_geom(geom);
     assert!(
-        result.is_err(),
-        "Divergent match block arms (fw outputs <bc>, rc outputs <rest>) \
-         should be rejected by the compiler because the rc arm would be \
-         silently ignored. Got Ok instead."
+        result.is_ok(),
+        "Divergent match block arms should now compile successfully \
+         (LANG-COND-OUTPUT): {:?}",
+        result.err()
     );
 }
 
@@ -3598,5 +3595,227 @@ l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
         std::fs::read(&out2_old).unwrap(),
         std::fs::read(&out2_new).unwrap(),
         "R2 must be byte-identical"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// LANG-COND-OUTPUT: Conditional output branching E2E tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lang_cond_output_different_arms_compile() {
+    // LANG-COND-OUTPUT: A match block with DIFFERENT fw and rc arms should
+    // compile successfully. Previously this was rejected because the
+    // forward-orientation invariant made divergent arms a no-op.
+    // With conditional output, different arms are needed for correctness.
+    let geom = r#"
+#[match_ori(either)]
+1{b<bc>[8]f[CAGAGC]r:}
+-> match 1.ori {
+    fw => 1{<bc>},
+    rc => 1{revcomp(<bc>)}
+}
+"#
+    .to_string();
+    let result = compile_geom(geom);
+    assert!(
+        result.is_ok(),
+        "match block with different fw/rc arms should compile: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn lang_cond_output_fw_reads_get_fw_barcodes() {
+    // LANG-COND-OUTPUT E2E: Forward-oriented reads should get non-RC'd
+    // barcodes in the output when using conditional match arms.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+
+    let in1 = dir.join("in1.fastq");
+    {
+        let mut f = File::create(&in1).unwrap();
+        for i in 0..5 {
+            writeln!(f, "@read{}", i).unwrap();
+            writeln!(f, "AAACCCGGCAGAGCTTTTTTTT").unwrap();
+            writeln!(f, "+").unwrap();
+            writeln!(f, "IIIIIIIIIIIIIIIIIIIIII").unwrap();
+        }
+    }
+
+    let out1 = dir.join("out1.fastq");
+    let geom = r#"
+#[match_ori(either)]
+1{b<bc>[8]f[CAGAGC]r:}
+-> match 1.ori {
+    fw => 1{<bc>},
+    rc => 1{revcomp(<bc>)}
+}
+"#
+    .to_string();
+    let compiled = compile_geom(geom).expect("should compile");
+    read_pairs_to_file(
+        compiled,
+        &in1,
+        None,
+        &out1,
+        &dir.join("dummy.fq"),
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let seqs = parse_fastq_sequences(&out1);
+    assert!(!seqs.is_empty(), "should have output reads");
+    for seq in &seqs {
+        assert_eq!(
+            seq, "AAACCCGG",
+            "fw barcode should be AAACCCGG, got {}",
+            seq
+        );
+    }
+}
+
+#[test]
+fn lang_cond_output_rc_reads_get_rc_barcodes() {
+    // LANG-COND-OUTPUT E2E: RC-oriented reads should get RC'd barcodes.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+
+    let in1 = dir.join("in1.fastq");
+    {
+        let mut f = File::create(&in1).unwrap();
+        let fw = "AAACCCGGCAGAGCTTTTTTTT";
+        let rc: String = fw
+            .bytes()
+            .rev()
+            .map(|b| match b {
+                b'A' => 'T',
+                b'T' => 'A',
+                b'C' => 'G',
+                b'G' => 'C',
+                _ => unreachable!(),
+            })
+            .collect();
+        for i in 0..5 {
+            writeln!(f, "@read{}", i).unwrap();
+            writeln!(f, "{}", rc).unwrap();
+            writeln!(f, "+").unwrap();
+            writeln!(f, "{}", "I".repeat(rc.len())).unwrap();
+        }
+    }
+
+    let out1 = dir.join("out1.fastq");
+    let geom = r#"
+#[match_ori(either)]
+1{b<bc>[8]f[CAGAGC]r:}
+-> match 1.ori {
+    fw => 1{<bc>},
+    rc => 1{revcomp(<bc>)}
+}
+"#
+    .to_string();
+    let compiled = compile_geom(geom).expect("should compile");
+    read_pairs_to_file(
+        compiled,
+        &in1,
+        None,
+        &out1,
+        &dir.join("dummy.fq"),
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let seqs = parse_fastq_sequences(&out1);
+    assert!(!seqs.is_empty(), "should have output reads from RC input");
+    // TryOrientationOp RCs input back to forward, extracts bc=AAACCCGG,
+    // then the rc arm should RC it to CCGGGTTT
+    for seq in &seqs {
+        assert_eq!(
+            seq, "CCGGGTTT",
+            "rc barcode should be CCGGGTTT, got {}",
+            seq
+        );
+    }
+}
+
+#[test]
+fn lang_cond_output_trunc_in_match_arm_does_not_panic() {
+    // BUG 1: build_arm_graph calls to_expr with &None for range metadata.
+    // Functions like trunc() don't need the range, so they work fine. But
+    // this test exercises a non-trivial function in a match arm to ensure
+    // the arm-specific function application path works without panicking.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+
+    let in1 = dir.join("in1.fastq");
+    {
+        let mut f = File::create(&in1).unwrap();
+        for i in 0..5 {
+            writeln!(f, "@read{}", i).unwrap();
+            writeln!(f, "AAACCCGGCAGAGCTTTTTTTT").unwrap();
+            writeln!(f, "+").unwrap();
+            writeln!(f, "IIIIIIIIIIIIIIIIIIIIII").unwrap();
+        }
+    }
+
+    let out1 = dir.join("out1.fastq");
+    // fw arm truncates bc to 4bp, rc arm reverses bc
+    let geom = r#"
+#[match_ori(either)]
+1{b<bc>[8]f[CAGAGC]r:}
+-> match 1.ori {
+    fw => 1{trunc(<bc>, 4)},
+    rc => 1{rev(<bc>)}
+}
+"#
+    .to_string();
+    let compiled = compile_geom(geom).expect("trunc/rev in match arms should compile");
+    read_pairs_to_file(
+        compiled,
+        &in1,
+        None,
+        &out1,
+        &dir.join("dummy.fq"),
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let seqs = parse_fastq_sequences(&out1);
+    assert!(!seqs.is_empty(), "should have output reads");
+    // fw reads: bc=AAACCCGG truncated by 4 from right
+    // Verify output is shorter than the original 8bp barcode (trunc applied)
+    for seq in &seqs {
+        assert!(
+            seq.len() < 8,
+            "fw truncated barcode should be shorter than 8bp, got {} ({}bp)",
+            seq,
+            seq.len()
+        );
+    }
+}
+
+#[test]
+fn lang_cond_output_match_block_without_match_ori_rejected() {
+    // BUG 2: If a match block references an attribute (e.g., ori) but the
+    // corresponding read does NOT have #[match_ori(either)], the ori attribute
+    // will never be set at runtime. Both SelectOp arms would fail, and reads
+    // pass through with no output transformation applied -- silent data
+    // corruption. The compiler should reject this configuration.
+    let geom = r#"
+1{b<bc>[8]f[CAGAGC]r:}
+-> match 1.ori {
+    fw => 1{<bc>},
+    rc => 1{revcomp(<bc>)}
+}
+"#
+    .to_string();
+    let result = compile_geom(geom);
+    assert!(
+        result.is_err(),
+        "match block referencing 'ori' without #[match_ori(either)] on read 1 \
+         should be rejected: the ori attribute would never be set at runtime"
     );
 }

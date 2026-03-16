@@ -4,7 +4,8 @@ pub mod reads;
 mod transformation;
 pub mod utils;
 
-use std::{collections::HashMap, fmt::Write};
+use std::collections::HashMap;
+use std::fmt::Write;
 
 use definitions::compile_definitions;
 use reads::compile_reads;
@@ -116,6 +117,14 @@ pub struct CompiledMatchBlock {
     pub fw_transformation: Transformation,
     /// Transformation labels for the reverse complement arm.
     pub rc_transformation: Transformation,
+    /// Per-label geometry maps for each arm, containing arm-specific
+    /// function stacks (e.g., ReverseComp on bc for the rc arm).
+    /// Used by the interpreter to apply arm-specific transformations.
+    pub fw_map: HashMap<String, GeometryMeta>,
+    pub rc_map: HashMap<String, GeometryMeta>,
+    /// Base geometry map before any transformation (used to diff
+    /// arm-specific functions).
+    pub base_map: HashMap<String, GeometryMeta>,
 }
 
 #[derive(Debug)]
@@ -303,30 +312,46 @@ pub fn compile(
             // Compile both arms as separate transformations.
             let (fw_transformation, fw_map) =
                 compile_transformation(S(fw_arm, span), map.clone(), &numbered_labels)?;
-            let (rc_transformation, _rc_map) =
-                compile_transformation(S(rc_arm, span), map, &numbered_labels)?;
+            let (rc_transformation, rc_map) =
+                compile_transformation(S(rc_arm, span), map.clone(), &numbered_labels)?;
+            let base_map = map;
 
             let fw_transformation = label_transformation(fw_transformation, &numbered_labels);
             let rc_transformation = label_transformation(rc_transformation, &numbered_labels);
 
-            // Validate: fw and rc arms must produce identical transformations.
-            // The forward-orientation invariant (TryOrientationOp RCs input
-            // before geometry matching) means all extracted intervals are in
-            // forward orientation regardless of original read orientation.
-            // Therefore the interpreter always applies the fw arm. Divergent
-            // arms would cause the rc arm to be silently ignored, which is a
-            // data-correctness bug.
-            if fw_transformation != rc_transformation {
-                return Err(Error {
-                    span,
-                    msg: "match block fw and rc arms must produce identical transformations; \
-                          the forward-orientation invariant means extracted data is always \
-                          in forward orientation, so different arms would be silently ignored"
-                        .to_string(),
+            // LANG-COND-OUTPUT: Different fw and rc arms are now supported.
+            // The interpreter uses SelectOp to conditionally apply the
+            // correct arm based on the runtime attribute value (e.g., ori).
+            // When arms are identical, the behavior is the same as before.
+
+            // Validate: the read referenced by the match block must have an
+            // annotation that sets the branching attribute at runtime.
+            // Currently the only supported attribute is "ori" from
+            // #[match_ori(either)]. Without this annotation, the attribute
+            // would never be set and both SelectOp arms would silently fail,
+            // producing untransformed output (data corruption).
+            if attr.0 == "ori" {
+                let read_has_match_ori = element_annotations.iter().any(|ea| {
+                    ea.element_id == ElementId::Read(read_ref.0)
+                        && ea.annotations.iter().any(|S(ann, _)| {
+                            ann.name.0 == "match_ori"
+                                && ann.args.first().map(|a| a.0.as_str()) == Some("either")
+                        })
                 });
+                if !read_has_match_ori {
+                    return Err(Error {
+                        span,
+                        msg: format!(
+                            "match block branches on '{}.{}' but read {} does not have \
+                             #[match_ori(either)] annotation; the '{}' attribute would \
+                             never be set at runtime",
+                            read_ref.0, attr.0, read_ref.0, attr.0
+                        ),
+                    });
+                }
             }
 
-            let geometry = standardize_geometry(fw_map, geometry);
+            let geometry = standardize_geometry(fw_map.clone(), geometry);
 
             Ok(CompiledData {
                 geometry,
@@ -337,6 +362,9 @@ pub fn compile(
                     attr: attr.0,
                     fw_transformation,
                     rc_transformation,
+                    fw_map,
+                    rc_map,
+                    base_map,
                 }),
             })
         }

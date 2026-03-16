@@ -102,7 +102,83 @@ impl<'a> CompiledData {
             }
         }
 
-        if let Some(transformation) = transformation {
+        // Apply output transformation(s).
+        // If a match_block is present, use SelectOp to conditionally apply
+        // different transformations based on a runtime attribute value.
+        // Otherwise, apply the single transformation unconditionally.
+        if let Some(match_block) = &self.match_block {
+            let attr_name = format!("seq{}.*.{}", match_block.read_ref, match_block.attr);
+
+            // Helper: build a subgraph for one arm's transformation.
+            // For each label in the arm's transformation, check if the arm's
+            // compiled map has extra functions compared to the base geometry.
+            // If so, apply those functions (e.g., revcomp) before the label
+            // rearrangement.
+            let build_arm_graph = |arm_transformation: &[Vec<String>],
+                                   arm_map: &std::collections::HashMap<
+                String,
+                crate::compile::utils::GeometryMeta,
+            >|
+             -> Graph {
+                let mut arm_graph = Graph::new();
+
+                // Apply arm-specific per-label functions (diff vs base map).
+                for tr_labels in arm_transformation.iter() {
+                    for full_label in tr_labels.iter() {
+                        // full_label is like "seq1.bc" -- extract just "bc"
+                        let short_label = full_label.split('.').nth(1).unwrap_or(full_label);
+
+                        let arm_stack_len = arm_map
+                            .get(short_label)
+                            .map(|gm| gm.stack.len())
+                            .unwrap_or(0);
+                        let base_stack_len = match_block
+                            .base_map
+                            .get(short_label)
+                            .map(|gm| gm.stack.len())
+                            .unwrap_or(0);
+
+                        // If the arm has extra functions, apply them.
+                        if arm_stack_len > base_stack_len {
+                            if let Some(arm_gm) = arm_map.get(short_label) {
+                                // The extra functions are at the front of the
+                                // arm's stack (compile_transformation prepends).
+                                let extra_count = arm_stack_len - base_stack_len;
+                                for S(fn_, _) in arm_gm.stack.iter().take(extra_count).rev() {
+                                    arm_graph.add(set_node(
+                                        LabelOrAttr::Label(full_label),
+                                        fn_.clone().to_expr(full_label, &None),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Apply the label rearrangement.
+                for (i, tr) in arm_transformation.iter().enumerate() {
+                    let seq_name = format!("seq{}.*", i + 1);
+                    let tr = format!("{{{}}}", tr.join("}{"));
+                    arm_graph.add(set_node(
+                        LabelOrAttr::Label(&seq_name),
+                        antisequence::expr::fmt_expr(tr),
+                    ));
+                }
+
+                arm_graph
+            };
+
+            let fw_graph = build_arm_graph(&match_block.fw_transformation, &match_block.fw_map);
+            let rc_graph = build_arm_graph(&match_block.rc_transformation, &match_block.rc_map);
+
+            // SelectOp for fw: apply fw_graph when attr == "fw"
+            let fw_selector = Expr::from(antisequence::expr::attr(&attr_name)).eq(b"fw".to_vec());
+            graph.add(SelectOp::new(fw_selector, fw_graph));
+
+            // SelectOp for rc: apply rc_graph when attr == "rc"
+            let rc_selector = Expr::from(antisequence::expr::attr(&attr_name)).eq(b"rc".to_vec());
+            graph.add(SelectOp::new(rc_selector, rc_graph));
+        } else if let Some(transformation) = transformation {
             for (i, tr) in transformation.iter().enumerate() {
                 let seq_name = format!("seq{}.*", i + 1);
                 let tr = format!("{{{}}}", tr.join("}{"));
