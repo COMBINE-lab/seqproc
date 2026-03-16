@@ -3223,3 +3223,151 @@ l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
         ids_hamming.difference(&ids_edit).count()
     );
 }
+
+// ===========================================================================
+// 11. Read order preservation tests (PAPER-6-4)
+//
+// When --preserve-order is set (implemented as threads=1), output reads
+// must appear in the same order as the input FASTQ. These tests verify:
+//   (a) Single-threaded execution preserves input order for all chemistries
+//   (b) 100%-recovery geometries produce output IDs identical to input IDs
+// ===========================================================================
+
+#[test]
+fn preserve_order_10x_single_thread() {
+    // 10x Chromium v2 with 100% recovery: output read IDs must be in the
+    // exact same order as input read IDs when using 1 thread (the
+    // --preserve-order implementation).
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 500;
+    let (in1, in2) = write_10x_chromium_v2(&dir, n);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let geom = "bc = b[16]\numi = u[10]\nbio = r:\n1{<bc><umi>}2{<bio>}\n-> 1{<bc><umi>}2{<bio>}"
+        .to_string();
+    let compiled = compile_geom(geom).expect("compile");
+
+    // threads=1 is the --preserve-order implementation
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
+
+    let in_ids = parse_fastq_read_ids(&in1);
+    let out_ids = parse_fastq_read_ids(&out1);
+
+    assert_eq!(in_ids.len(), n, "All input reads must be present");
+    assert_eq!(out_ids.len(), n, "All output reads must be present");
+
+    // Order must be preserved exactly
+    assert_eq!(
+        in_ids, out_ids,
+        "preserve-order: 10x output read IDs must be in identical order to input"
+    );
+}
+
+#[test]
+fn preserve_order_sci_rna_seq3_single_thread() {
+    // sci-RNA-seq3 with 100% recovery on synthetic data: output order
+    // must match input order when using 1 thread.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 300;
+    let (in1, in2) = write_sci_rna_seq3(&dir, n);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1 = b[9-10]
+1{<brc1><anchor>u[8]b[10]}2{r:}
+"#
+    .to_string();
+    let compiled = compile_geom(geom).expect("compile");
+
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
+
+    let in_ids = parse_fastq_read_ids(&in1);
+    let out_ids = parse_fastq_read_ids(&out1);
+
+    assert_eq!(in_ids.len(), n);
+    assert_eq!(out_ids.len(), n);
+    assert_eq!(
+        in_ids, out_ids,
+        "preserve-order: sci-RNA-seq3 output must match input order"
+    );
+}
+
+#[test]
+fn preserve_order_splitseq_pe_partial_recovery() {
+    // SPLiT-seq PE with anchor_relative: some reads may be filtered.
+    // The SURVIVING reads must appear in the same relative order as they
+    // appeared in the input.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 200;
+    let (in1, in2) = write_splitseq_pe(&dir, n);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let geom = r#"
+l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+    let compiled = compile_geom(geom).expect("compile");
+
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
+
+    let in_ids = parse_fastq_read_ids(&in1);
+    let out_ids = parse_fastq_read_ids(&out1);
+
+    assert!(
+        !out_ids.is_empty(),
+        "SPLiT-seq PE must recover at least some reads"
+    );
+
+    // Output IDs must be a subsequence of input IDs (same relative order)
+    let mut in_iter = in_ids.iter();
+    for out_id in &out_ids {
+        let found = in_iter.any(|in_id| in_id == out_id);
+        assert!(
+            found,
+            "preserve-order: output read '{}' not found in remaining input sequence \
+             -- output is not a subsequence of input",
+            out_id
+        );
+    }
+}
+
+#[test]
+fn preserve_order_r1_and_r2_lockstep() {
+    // When using --preserve-order, R1 and R2 output must be in lock-step:
+    // the Nth read in R1 output corresponds to the Nth read in R2 output,
+    // and both correspond to the same input read.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 300;
+    let (in1, in2) = write_10x_chromium_v2(&dir, n);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    let geom = "bc = b[16]\numi = u[10]\nbio = r:\n1{<bc><umi>}2{<bio>}\n-> 1{<bc><umi>}2{<bio>}"
+        .to_string();
+    let compiled = compile_geom(geom).expect("compile");
+
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![]).unwrap();
+
+    let r1_ids = parse_fastq_read_ids(&out1);
+    let r2_ids = parse_fastq_read_ids(&out2);
+
+    assert_eq!(r1_ids.len(), n);
+    assert_eq!(r2_ids.len(), n);
+
+    // R1 and R2 must have the same read IDs in the same order
+    assert_eq!(
+        r1_ids, r2_ids,
+        "preserve-order: R1 and R2 output must be in lock-step (same read IDs, same order)"
+    );
+}

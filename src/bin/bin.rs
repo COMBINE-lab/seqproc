@@ -37,6 +37,13 @@ pub struct Args {
     #[arg(short, long, default_value_t = 1)]
     threads: usize,
 
+    /// Preserve input read order in the output. When set, output reads are
+    /// guaranteed to appear in the same order as the input FASTQ. This is
+    /// useful when downstream tools expect paired files to be in lock-step
+    /// without re-sorting. Internally this forces single-threaded execution.
+    #[arg(long)]
+    preserve_order: bool,
+
     /// Optional path where JSON summary statistics will be written
     #[arg(short = 's', long = "summary")]
     summary: Option<PathBuf>,
@@ -87,6 +94,20 @@ fn main() {
 
     let compiled_efgdl = compile_geom(geom.clone());
 
+    // When --preserve-order is set, force single-threaded execution to
+    // guarantee output reads appear in the same order as input reads.
+    let threads = if args.preserve_order {
+        if args.threads > 1 {
+            tracing::info!(
+                "--preserve-order is set: overriding --threads {} to 1 for ordered output",
+                args.threads
+            );
+        }
+        1
+    } else {
+        args.threads
+    };
+
     let additional_args = args
         .additional
         .iter()
@@ -118,7 +139,7 @@ fn main() {
                     &out2,
                     args.unassigned1.as_deref(),
                     args.unassigned2.as_deref(),
-                    args.threads,
+                    threads,
                     additional_args,
                     geom,
                     demux_config,
@@ -147,7 +168,7 @@ fn main() {
                 args.file2.as_deref(),
                 &out1_stats,
                 &out2_stats,
-                args.threads,
+                threads,
                 additional_args,
             ) {
                 Ok(s) => s,
