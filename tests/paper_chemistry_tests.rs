@@ -529,9 +529,9 @@ fn paper_splitseq_pe_compile() {
 read1 = r:
 umi = u[10]
 bc3 = b[8]
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
 bc2 = b[8]
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 bc1 = b[8]
 1{<read1>}
 2{x[2]<umi>map(<bc3>, $0, self)<l1>map(<bc2>, $1, self)<l2>map(<bc1>, $2, self)r:}
@@ -564,8 +564,8 @@ fn paper_splitseq_pe_simplified_no_map() {
     let out2 = dir.join("out2.fastq");
 
     let geom = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -613,9 +613,9 @@ fn paper_splitseq_pe_with_map_and_transformation() {
 read1 = r:
 umi = u[10]
 bc3 = b[8]
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
 bc2 = b[8]
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 bc1 = b[8]
 1{<read1>}
 2{x[2]<umi>map(<bc3>, $0, self)<l1>map(<bc2>, $1, self)<l2>map(<bc1>, $2, self)r:}
@@ -684,9 +684,9 @@ fn paper_splitseq_pe_r1_is_cdna_after_transformation() {
 read1 = r:
 umi = u[10]
 bc3 = b[8]
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
 bc2 = b[8]
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 bc1 = b[8]
 1{<read1>}
 2{x[2]<umi>map(<bc3>, $0, self)<l1>map(<bc2>, $1, self)<l2>map(<bc1>, $2, self)r:}
@@ -722,8 +722,8 @@ fn paper_lr_splitseq_compile() {
     // LR-SPLiT-seq uses the same linker structure as SPLiT-seq PE but in a
     // single-end long read. Verify the geometry compiles.
     let geom = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
     .to_string();
@@ -749,8 +749,8 @@ fn paper_lr_splitseq_single_end_pipeline() {
     let out2 = dir.join("out2.fastq"); // unused for single-end but required by API
 
     let geom = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
     .to_string();
@@ -776,8 +776,8 @@ fn paper_lr_splitseq_with_transformation() {
     let out2 = dir.join("out2.fastq");
 
     let geom = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r<cDNA>:b<bc3>[8]<l1>b<bc2>[8]<l2>b<bc1>[8]u<umi>[10]}
 -> 1{<cDNA><umi><bc3><bc2><bc1>}
 "#
@@ -1029,9 +1029,9 @@ fn paper_splitseq_pe_edit_compile() {
 read1 = r:
 umi = u[10]
 bc3 = b[8]
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
 bc2 = b[8]
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 bc1 = b[8]
 1{<read1>}
 2{x[2]<umi>map(<bc3>, $0, self)<l1>map(<bc2>, $1, self)<l2>map(<bc1>, $2, self)r:}
@@ -1060,8 +1060,8 @@ fn paper_splitseq_pe_edit_simplified() {
     let out2 = dir.join("out2.fastq");
 
     let geom = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -1102,9 +1102,9 @@ fn paper_splitseq_pe_edit_with_map_and_transformation() {
 read1 = r:
 umi = u[10]
 bc3 = b[8]
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
 bc2 = b[8]
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 bc1 = b[8]
 1{<read1>}
 2{x[2]<umi>map(<bc3>, $0, self)<l1>map(<bc2>, $1, self)<l2>map(<bc1>, $2, self)r:}
@@ -1163,8 +1163,8 @@ bc1 = b[8]
 #[test]
 fn paper_lr_splitseq_edit_compile() {
     let geom = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
     .to_string();
@@ -1187,8 +1187,8 @@ fn paper_lr_splitseq_edit_pipeline() {
     let out2 = dir.join("out2.fastq");
 
     let geom = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
     .to_string();
@@ -1213,8 +1213,8 @@ fn paper_lr_splitseq_edit_with_transformation() {
     let out2 = dir.join("out2.fastq");
 
     let geom = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r<cDNA>:b<bc3>[8]<l1>b<bc2>[8]<l2>b<bc1>[8]u<umi>[10]}
 -> 1{<cDNA><umi><bc3><bc2><bc1>}
 "#
@@ -1309,16 +1309,16 @@ fn compare_splitseq_pe_hamming_vs_edit_on_exact_data() {
     let out2_e = dir.join("out2_edit.fastq");
 
     let geom_hamming = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
     .to_string();
 
     let geom_edit = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -1753,8 +1753,8 @@ fn annotation_no_annotation_unchanged() {
 fn paper_lr_splitseq_match_ori_compile() {
     // The actual paper chemistry with match_ori annotation should compile.
     let geom = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
@@ -1767,10 +1767,13 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
     );
     let data = compiled.unwrap();
     assert_eq!(data.geometry.len(), 1);
-    assert_eq!(data.element_annotations.len(), 1);
-    assert_eq!(
-        data.element_annotations[0].element_id,
-        seqproc::compile::ElementId::Read(1)
+    // 3 element_annotations: read 1 (match_ori), l1 (search+hamming), l2 (search+hamming)
+    assert_eq!(data.element_annotations.len(), 3);
+    assert!(
+        data.element_annotations
+            .iter()
+            .any(|ea| ea.element_id == seqproc::compile::ElementId::Read(1)),
+        "should have read-level match_ori annotation"
     );
 }
 
@@ -1787,8 +1790,8 @@ fn paper_lr_splitseq_match_ori_recovery_improvement() {
     let out_fw1 = dir.join("fw_out1.fastq");
     let out_fw2 = dir.join("fw_out2.fastq");
     let geom_fw = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
     .to_string();
@@ -1800,8 +1803,8 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
     let out_ori1 = dir.join("ori_out1.fastq");
     let out_ori2 = dir.join("ori_out2.fastq");
     let geom_ori = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
@@ -1822,8 +1825,8 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
 fn paper_lr_splitseq_match_ori_edit_compile() {
     // LR-SPLiT-seq with edit distance AND match_ori should compile.
     let geom = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
@@ -1847,8 +1850,8 @@ fn paper_lr_splitseq_match_ori_with_transformation() {
     let out2 = dir.join("out2.fastq");
 
     let geom = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r<read>:b<bc3>[8]<l1>b<bc2>[8]<l2>b<bc1>[8]u<umi>[10]}
 -> 1{<umi><bc1><bc2><bc3>}
@@ -2032,8 +2035,8 @@ fn e2e_lr_splitseq_annotation_recovery_head_to_head() {
     let out_base1 = dir.join("base_out1.fastq");
     let out_base2 = dir.join("base_out2.fastq");
     let geom_base = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
     .to_string();
@@ -2045,8 +2048,8 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
     let out_ann1 = dir.join("ann_out1.fastq");
     let out_ann2 = dir.join("ann_out2.fastq");
     let geom_ann = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
@@ -2116,8 +2119,8 @@ fn e2e_lr_splitseq_annotation_with_transform_head_to_head() {
     let out_base1 = dir.join("base_tr_out1.fastq");
     let out_base2 = dir.join("base_tr_out2.fastq");
     let geom_base = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r<read>:b<bc3>[8]<l1>b<bc2>[8]<l2>b<bc1>[8]u<umi>[10]}
 -> 1{<umi><bc1><bc2><bc3>}
 "#
@@ -2130,8 +2133,8 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
     let out_ann1 = dir.join("ann_tr_out1.fastq");
     let out_ann2 = dir.join("ann_tr_out2.fastq");
     let geom_ann = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r<read>:b<bc3>[8]<l1>b<bc2>[8]<l2>b<bc1>[8]u<umi>[10]}
 -> 1{<umi><bc1><bc2><bc3>}
@@ -2203,14 +2206,14 @@ fn e2e_lr_splitseq_runtime_regression_head_to_head() {
     let (in1, _, _) = write_lr_splitseq_mixed_orientation(&dir, n);
 
     let geom_base_str = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
     .to_string();
     let geom_ann_str = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#
@@ -2298,27 +2301,27 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
 
 // Four geometry strings: the 2x2 of {annotation, no-annotation} x {hamming, edit}
 const GEOM_NO_ANN_HAMMING: &str = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#;
 
 const GEOM_NO_ANN_EDIT: &str = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#;
 
 const GEOM_ANN_HAMMING: &str = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#;
 
 const GEOM_ANN_EDIT: &str = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#;
@@ -2734,7 +2737,7 @@ fn test_table2_sciseq3() {
     // Exact structure from configs/seqproc/sciseq3_edit.geom
     // (omitting filter_within_dist since synthetic data has no whitelists)
     let geom = r#"
-anchor = edit(f[CAGAGC], 1)
+#[edit(1)] anchor = f[CAGAGC]
 brc1 = b[9-10]
 brc2 = b[10]
 umi = u[8]
@@ -2853,9 +2856,9 @@ fn test_table2_splitseq_pe_edit() {
 read1 = r:
 umi = u[10]
 bc3 = b[8]
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
 bc2 = b[8]
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG], 6))
+#[search(relative)] #[edit(6)] l2 = f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG]
 bc1 = b[6]
 1{<read1>}
 2{x[2]<umi><bc3><l1><bc2><l2><bc1>r:}
@@ -2918,8 +2921,8 @@ fn test_table2_lr_splitseq_ann_edit() {
 
     // The paper's actual config: annotation + edit distance
     let geom_paper = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 #[match_ori(either)]
 1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
 "#;
@@ -3143,8 +3146,8 @@ fn test_edit_vs_hamming_recovery() {
     let out1_h = dir.join("hamming_out1.fastq");
     let out2_h = dir.join("hamming_out2.fastq");
     let geom_hamming = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -3166,8 +3169,8 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
     let out1_e = dir.join("edit_out1.fastq");
     let out2_e = dir.join("edit_out2.fastq");
     let geom_edit = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -3310,8 +3313,8 @@ fn preserve_order_splitseq_pe_partial_recovery() {
     let out2 = dir.join("out2.fastq");
 
     let geom = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -3393,8 +3396,8 @@ fn lang_migrate_hamming_annotation_vs_function_identical_output() {
     let out1_old = dir.join("old_out1.fastq");
     let out2_old = dir.join("old_out2.fastq");
     let geom_old = r#"
-l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -3415,8 +3418,8 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
     let out1_new = dir.join("new_out1.fastq");
     let out2_new = dir.join("new_out2.fastq");
     let geom_new = r#"
-#[hamming(6)] l1 = anchor_relative(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT])
-#[hamming(3)] l2 = anchor_relative(f[ATCCACGTGCTTGAGA])
+#[search(relative)] #[hamming(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -3472,8 +3475,8 @@ fn lang_migrate_edit_annotation_vs_function_identical_output() {
     let out1_old = dir.join("old_out1.fastq");
     let out2_old = dir.join("old_out2.fastq");
     let geom_old = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -3493,8 +3496,8 @@ l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
     let out1_new = dir.join("new_out1.fastq");
     let out2_new = dir.join("new_out2.fastq");
     let geom_new = r#"
-#[edit(6)] l1 = anchor_relative(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT])
-#[edit(3)] l2 = anchor_relative(f[ATCCACGTGCTTGAGA])
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
@@ -3542,8 +3545,8 @@ fn lang_migrate_search_stacked_annotation_vs_function_identical_output() {
     let out1_old = dir.join("old_out1.fastq");
     let out2_old = dir.join("old_out2.fastq");
     let geom_old = r#"
-l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
-l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
 1{r:}
 2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
 "#
