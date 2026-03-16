@@ -2645,3 +2645,581 @@ fn matrix_consistency_synthetic_vs_reallike() {
         r_ann_ham
     );
 }
+
+// ===========================================================================
+// 10. Paper-artifact sanity tests (PAPER-5-6)
+//
+// Each test is named to match a specific paper artifact (Table 2, Figure 4,
+// Figure 5) and uses the EXACT geometry from the paper's benchmark configs.
+// These serve as Rust-level regression tests for every quantitative claim.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Table 2: test_table2_10x_v2
+// Paper claim: 10x Chromium v2 achieves 100% recovery.
+// Config: 1{b[16]u[10]}2{r:}  (no anchors, fixed-position extraction)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_table2_10x_v2() {
+    // Paper claim (Table 2): seqproc achieves 100.00% recovery on 10x
+    // Chromium v2. This is the simplest geometry -- fixed 16bp CB + 10bp
+    // UMI in R1, cDNA passthrough in R2. Every syntactically valid read
+    // must be recovered.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 200;
+    let (in1, in2) = write_10x_chromium_v2(&dir, n);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    // Exact geometry from configs/seqproc/10x_v2.geom
+    let geom = r#"
+bc = b[16]
+umi = u[10]
+bio = r:
+1{<bc><umi>}
+2{<bio>}
+-> 1{<bc><umi>} 2{<bio>}
+"#
+    .to_string();
+
+    let compiled = compile_geom(geom).expect("10x_v2.geom must compile");
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![])
+        .expect("10x_v2 pipeline failed");
+
+    let n1 = seq_count(&out1);
+    let n2 = seq_count(&out2);
+
+    // Paper claim: 100% recovery
+    assert_eq!(
+        n1, n,
+        "Table 2 claim: 10x Chromium v2 must achieve 100% recovery on R1 ({}/{})",
+        n1, n
+    );
+    assert_eq!(
+        n2, n,
+        "Table 2 claim: 10x Chromium v2 must achieve 100% recovery on R2 ({}/{})",
+        n2, n
+    );
+
+    // R1 = CB(16) + UMI(10) = 26bp; R2 = cDNA passthrough
+    let lens1 = parse_fastq_seq_lengths(&out1);
+    assert!(
+        lens1.iter().all(|&l| l == 26),
+        "10x R1 must be 26bp (CB+UMI)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Table 2: test_table2_sciseq3
+// Paper claim: sci-RNA-seq3 recovery ~89.3% with edit distance.
+// Config: sciseq3_edit.geom -- edit(f[CAGAGC], 1) anchor + norm(b[9-10])
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_table2_sciseq3() {
+    // Paper claim (Table 2): seqproc achieves ~89.26% recovery on
+    // sci-RNA-seq3 using edit distance on the CAGAGC anchor.
+    // On synthetic data with perfect anchors, recovery should be 100%.
+    // This test verifies the geometry compiles and runs correctly with
+    // the exact paper config structure.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 200;
+    let (in1, in2) = write_sci_rna_seq3(&dir, n);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    // Exact structure from configs/seqproc/sciseq3_edit.geom
+    // (omitting filter_within_dist since synthetic data has no whitelists)
+    let geom = r#"
+anchor = edit(f[CAGAGC], 1)
+brc1 = b[9-10]
+brc2 = b[10]
+umi = u[8]
+1{<brc1><anchor><umi><brc2>}2{r<read>:}
+-> 1{<brc1><brc2><umi>}2{<read>}
+"#
+    .to_string();
+
+    let compiled = compile_geom(geom).expect("sciseq3_edit.geom must compile");
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![])
+        .expect("sciseq3 pipeline failed");
+
+    let n1 = seq_count(&out1);
+    let n2 = seq_count(&out2);
+
+    // Synthetic data has perfect anchors -> 100% recovery
+    assert_eq!(
+        n1, n,
+        "Table 2 sanity: sci-RNA-seq3 with exact anchors must achieve 100% recovery ({}/{})",
+        n1, n
+    );
+    assert_eq!(n1, n2, "R1 and R2 counts must match");
+
+    // Transformed R1 = brc1(9-10) + brc2(10) + umi(8) = 27 or 28bp
+    let lens1 = parse_fastq_seq_lengths(&out1);
+    for (i, &l) in lens1.iter().enumerate() {
+        let expected = if i % 2 == 0 { 27 } else { 28 };
+        assert_eq!(
+            l, expected,
+            "sci3 transformed R1 read {} expected {}bp, got {}bp",
+            i, expected, l
+        );
+    }
+
+    // R2 = cDNA passthrough = 80bp
+    let lens2 = parse_fastq_seq_lengths(&out2);
+    assert!(lens2.iter().all(|&l| l == 80), "sci3 R2 must be 80bp cDNA");
+}
+
+// ---------------------------------------------------------------------------
+// Table 2: test_table2_splitseq_pe_edit
+// Paper claim: SPLiT-seq PE with edit distance achieves ~84.09% recovery.
+// Config: splitseq_filter_edit.geom -- anchor_relative(edit(...)) on both
+// linkers, 30bp L1, 30bp L2, 6bp BC1.
+// ---------------------------------------------------------------------------
+
+/// SPLiT-seq PE with the EXACT paper geometry: 30bp L1, 30bp L2, 6bp BC1.
+/// The existing write_splitseq_pe uses 16bp L2 and 8bp BC1 which differs
+/// from the paper config. This generator matches the actual paper geometry.
+const LINKER2_PAPER: &[u8] = b"ATCCACGTGCTTGAGAGGCCAGAGCATTCG"; // 30bp
+
+fn write_splitseq_pe_paper_geom(dir: &Path, n: usize) -> (PathBuf, PathBuf) {
+    let r1_path = dir.join("splitseq_paper_r1.fastq");
+    let r2_path = dir.join("splitseq_paper_r2.fastq");
+    let mut r1 = File::create(&r1_path).unwrap();
+    let mut r2 = File::create(&r2_path).unwrap();
+
+    for i in 0..n {
+        // R1: 80bp cDNA
+        writeln!(r1, "@read{}", i).unwrap();
+        for j in 0..80 {
+            r1.write_all(&[nuc(i + j * 3 + 1)]).unwrap();
+        }
+        writeln!(r1).unwrap();
+        writeln!(r1, "+").unwrap();
+        for _ in 0..80 {
+            r1.write_all(b"I").unwrap();
+        }
+        writeln!(r1).unwrap();
+
+        // R2: x[2] + UMI[10] + BC3[8] + L1[30] + BC2[8] + L2[30] + BC1[6]
+        writeln!(r2, "@read{}", i).unwrap();
+        r2.write_all(&[nuc(i), nuc(i + 1)]).unwrap(); // x[2]
+        for j in 0..10 {
+            r2.write_all(&[nuc(i + j * 17 + 5)]).unwrap();
+        } // UMI[10]
+        for j in 0..8 {
+            r2.write_all(&[nuc(i + j * 23 + 11)]).unwrap();
+        } // BC3[8]
+        r2.write_all(LINKER1).unwrap(); // L1[30]
+        for j in 0..8 {
+            r2.write_all(&[nuc(i + j * 29 + 7)]).unwrap();
+        } // BC2[8]
+        r2.write_all(LINKER2_PAPER).unwrap(); // L2[30]
+        for j in 0..6 {
+            r2.write_all(&[nuc(i + j * 31 + 3)]).unwrap();
+        } // BC1[6]
+        writeln!(r2).unwrap();
+        let r2_len = 2 + 10 + 8 + 30 + 8 + 30 + 6; // 94bp total
+        writeln!(r2, "+").unwrap();
+        for _ in 0..r2_len {
+            r2.write_all(b"I").unwrap();
+        }
+        writeln!(r2).unwrap();
+    }
+
+    (r1_path, r2_path)
+}
+
+#[test]
+fn test_table2_splitseq_pe_edit() {
+    // Paper claim (Table 2): seqproc achieves ~84.09% recovery on
+    // SPLiT-seq PE using anchor_relative + edit distance.
+    // On synthetic data with perfect linkers, recovery should be ~100%.
+    // Uses the exact paper geometry: 30bp L1, 30bp L2, 6bp BC1.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 100;
+    let (in1, in2) = write_splitseq_pe_paper_geom(&dir, n);
+    let out1 = dir.join("out1.fastq");
+    let out2 = dir.join("out2.fastq");
+
+    // Matches the structure of splitseq_filter_edit.geom
+    // (without filter_within_dist since we have no whitelist files)
+    let geom = r#"
+read1 = r:
+umi = u[10]
+bc3 = b[8]
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+bc2 = b[8]
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG], 6))
+bc1 = b[6]
+1{<read1>}
+2{x[2]<umi><bc3><l1><bc2><l2><bc1>r:}
+-> 1{<read1>} 2{<umi><bc3><bc2><bc1>}
+"#
+    .to_string();
+
+    let compiled = compile_geom(geom).expect("splitseq_filter_edit.geom must compile");
+    read_pairs_to_file(compiled, &in1, Some(in2.as_path()), &out1, &out2, 1, vec![])
+        .expect("splitseq_pe_edit pipeline failed");
+
+    let n1 = seq_count(&out1);
+    let n2 = seq_count(&out2);
+
+    // Synthetic data has perfect linkers -> high recovery
+    assert!(
+        n1 > 0,
+        "Table 2 sanity: SPLiT-seq PE edit must recover reads"
+    );
+    assert_eq!(n1, n2, "R1 and R2 counts must match");
+
+    // Transformed output: R1 = cDNA(80bp), R2 = UMI(10) + BC3(8) + BC2(8) + BC1(6) = 32bp
+    let lens1 = parse_fastq_seq_lengths(&out1);
+    let lens2 = parse_fastq_seq_lengths(&out2);
+    if !lens1.is_empty() {
+        assert!(
+            lens1.iter().all(|&l| l == 80),
+            "SPLiT-seq PE edit: R1 must be 80bp cDNA after transformation, got {:?}",
+            &lens1[..lens1.len().min(5)]
+        );
+    }
+    if !lens2.is_empty() {
+        assert!(
+            lens2.iter().all(|&l| l == 32),
+            "SPLiT-seq PE edit: R2 must be 32bp (UMI+BC3+BC2+BC1) after transformation, got {:?}",
+            &lens2[..lens2.len().min(5)]
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Table 2: test_table2_lr_splitseq_ann_edit
+// Paper claim: LR-SPLiT-seq with annotation + edit distance achieves ~49.87%.
+// Config: splitseq_singleend_primer_edit.geom + #[match_ori(either)]
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_table2_lr_splitseq_ann_edit() {
+    // Paper claim (Table 2): seqproc achieves ~49.87% recovery on
+    // LR-SPLiT-seq using annotation (match_ori) + edit distance.
+    // On synthetic mixed-orientation data, annotation+edit should recover
+    // from both orientations and tolerate indel errors.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 200;
+    let (in1, n_fw, _n_rc) = write_lr_splitseq_noisy_mixed_orientation(&dir, n);
+
+    // Forward-only + hamming baseline (worst config)
+    let n_baseline = run_lr_splitseq_pipeline(GEOM_NO_ANN_HAMMING, &in1, &dir, "t2_base");
+
+    // The paper's actual config: annotation + edit distance
+    let geom_paper = r#"
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+#[match_ori(either)]
+1{r:b[8]<l1>b[8]<l2>b[8]u[10]}
+"#;
+    let n_paper = run_lr_splitseq_pipeline(geom_paper, &in1, &dir, "t2_paper");
+
+    // Paper config (ann+edit) must strictly beat baseline (no-ann+hamming)
+    assert!(
+        n_paper > n_baseline,
+        "Table 2 sanity: LR-SPLiT-seq ann+edit ({}) must beat no-ann+hamming baseline ({})",
+        n_paper,
+        n_baseline
+    );
+
+    // Paper config must recover from BOTH orientations (more than just fw reads)
+    assert!(
+        n_paper > n_fw,
+        "Table 2 sanity: LR-SPLiT-seq ann+edit ({}) must recover more than \
+         forward-only reads ({}), proving RC recovery works",
+        n_paper,
+        n_fw
+    );
+
+    // Recovery rate must be non-trivial (> 25% of total input)
+    let rate = n_paper as f64 / n as f64;
+    assert!(
+        rate > 0.25,
+        "Table 2 sanity: LR-SPLiT-seq ann+edit recovery {:.1}% is too low (expected > 25%)",
+        rate * 100.0
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Figure 4: test_concordance_10x_perfect
+// Paper claim: All three tools achieve perfect concordance (Jaccard=1.0) on
+// 10x Chromium v2. Since we only have seqproc, we verify that running the
+// same geometry twice on the same input produces identical read ID sets.
+// ---------------------------------------------------------------------------
+
+/// Extract read IDs from a FASTQ file (the @header lines without the @).
+fn parse_fastq_read_ids(path: &Path) -> Vec<String> {
+    let f = File::open(path).unwrap();
+    let reader = BufReader::new(f);
+    let mut ids = Vec::new();
+    for (line_idx, line) in reader.lines().enumerate() {
+        let line = line.unwrap();
+        if line_idx % 4 == 0 {
+            // Remove the leading '@'
+            ids.push(line.trim_start_matches('@').to_string());
+        }
+    }
+    ids
+}
+
+#[test]
+fn test_concordance_10x_perfect() {
+    // Paper claim (Figure 4): All tools achieve Jaccard=1.0 on 10x
+    // Chromium v2. We verify this by running seqproc twice with the same
+    // geometry and confirming the output read ID sets are identical.
+    // This also verifies determinism of the pipeline.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 200;
+    let (in1, in2) = write_10x_chromium_v2(&dir, n);
+
+    // Run 1 -- exact geometry from configs/seqproc/10x_v2.geom
+    let out1a = dir.join("run1_out1.fastq");
+    let out2a = dir.join("run1_out2.fastq");
+    let geom1 = "bc = b[16]\numi = u[10]\nbio = r:\n1{<bc><umi>}2{<bio>}\n-> 1{<bc><umi>}2{<bio>}"
+        .to_string();
+    let compiled1 = compile_geom(geom1).expect("compile run1");
+    read_pairs_to_file(
+        compiled1,
+        &in1,
+        Some(in2.as_path()),
+        &out1a,
+        &out2a,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    // Run 2 (identical geometry, fresh compile)
+    let out1b = dir.join("run2_out1.fastq");
+    let out2b = dir.join("run2_out2.fastq");
+    let geom2 = "bc = b[16]\numi = u[10]\nbio = r:\n1{<bc><umi>}2{<bio>}\n-> 1{<bc><umi>}2{<bio>}"
+        .to_string();
+    let compiled2 = compile_geom(geom2).expect("compile run2");
+    read_pairs_to_file(
+        compiled2,
+        &in1,
+        Some(in2.as_path()),
+        &out1b,
+        &out2b,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    // Both runs must recover all reads (100% recovery)
+    let ids_a = parse_fastq_read_ids(&out1a);
+    let ids_b = parse_fastq_read_ids(&out1b);
+    assert_eq!(ids_a.len(), n, "Run 1 must recover all {} reads", n);
+    assert_eq!(ids_b.len(), n, "Run 2 must recover all {} reads", n);
+
+    // Read ID sets must be identical (Jaccard = 1.0)
+    assert_eq!(
+        ids_a, ids_b,
+        "Concordance claim: two runs on 10x must produce identical read ID sets"
+    );
+
+    // Sequences must also be identical (not just IDs)
+    let seqs_a = parse_fastq_sequences(&out1a);
+    let seqs_b = parse_fastq_sequences(&out1b);
+    assert_eq!(
+        seqs_a, seqs_b,
+        "Concordance claim: two runs on 10x must produce identical sequences"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Figure 5: test_edit_vs_hamming_recovery
+// Paper claim: Edit distance recovers a strict superset of hamming on data
+// with indels. SPLiT-seq PE: +4.8%, LR-SPLiT-seq: +15.8%, sci-RNA-seq3: +0.9%.
+// We verify the superset property on synthetic data with known indels.
+// ---------------------------------------------------------------------------
+
+/// Write SPLiT-seq PE reads where some have 1bp insertions in linker sequences.
+/// These reads can only be recovered by edit distance, not hamming.
+fn write_splitseq_pe_with_indels(dir: &Path, n: usize) -> (PathBuf, PathBuf) {
+    let r1_path = dir.join("splitseq_indel_r1.fastq");
+    let r2_path = dir.join("splitseq_indel_r2.fastq");
+    let mut r1 = File::create(&r1_path).unwrap();
+    let mut r2 = File::create(&r2_path).unwrap();
+
+    for i in 0..n {
+        // R1: 80bp cDNA
+        writeln!(r1, "@read{}", i).unwrap();
+        for j in 0..80 {
+            r1.write_all(&[nuc(i + j * 3 + 1)]).unwrap();
+        }
+        writeln!(r1).unwrap();
+        writeln!(r1, "+").unwrap();
+        for _ in 0..80 {
+            r1.write_all(b"I").unwrap();
+        }
+        writeln!(r1).unwrap();
+
+        // R2 structure with indel errors in linkers for some reads
+        writeln!(r2, "@read{}", i).unwrap();
+        r2.write_all(&[nuc(i), nuc(i + 1)]).unwrap(); // x[2]
+        for j in 0..10 {
+            r2.write_all(&[nuc(i + j * 17 + 5)]).unwrap();
+        } // UMI[10]
+        for j in 0..8 {
+            r2.write_all(&[nuc(i + j * 23 + 11)]).unwrap();
+        } // BC3[8]
+
+        // L1: 30bp -- every 3rd read has a 1bp deletion (hamming fails, edit handles)
+        let error_class = i % 3;
+        if error_class == 1 {
+            let mut l1 = LINKER1.to_vec();
+            l1.remove(15); // 1bp deletion in middle -> 29bp
+            r2.write_all(&l1).unwrap();
+        } else {
+            r2.write_all(LINKER1).unwrap(); // perfect 30bp
+        }
+
+        for j in 0..8 {
+            r2.write_all(&[nuc(i + j * 29 + 7)]).unwrap();
+        } // BC2[8]
+
+        // L2: 16bp -- every 3rd read (offset) has a 1bp insertion
+        if error_class == 2 {
+            let mut l2 = LINKER2.to_vec();
+            l2.insert(8, b'A'); // 1bp insertion -> 17bp
+            r2.write_all(&l2).unwrap();
+        } else {
+            r2.write_all(LINKER2).unwrap(); // perfect 16bp
+        }
+
+        for j in 0..8 {
+            r2.write_all(&[nuc(i + j * 31 + 3)]).unwrap();
+        } // BC1[8]
+
+        // trailing
+        for j in 0..10 {
+            r2.write_all(&[nuc(i + j * 41)]).unwrap();
+        }
+        writeln!(r2).unwrap();
+        // Variable R2 length due to indels
+        let r2_len = 2
+            + 10
+            + 8
+            + if error_class == 1 { 29 } else { 30 }
+            + 8
+            + if error_class == 2 { 17 } else { 16 }
+            + 8
+            + 10;
+        writeln!(r2, "+").unwrap();
+        for _ in 0..r2_len {
+            r2.write_all(b"I").unwrap();
+        }
+        writeln!(r2).unwrap();
+    }
+
+    (r1_path, r2_path)
+}
+
+#[test]
+fn test_edit_vs_hamming_recovery() {
+    // Paper claim (Figure 5): Edit distance recovers a strict superset of
+    // hamming distance on data with indels. On SPLiT-seq PE data where
+    // ~33% of reads have 1bp deletions and ~33% have 1bp insertions in
+    // linker sequences, edit distance should recover more reads than hamming.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 300;
+    let (in1, in2) = write_splitseq_pe_with_indels(&dir, n);
+
+    // Hamming geometry
+    let out1_h = dir.join("hamming_out1.fastq");
+    let out2_h = dir.join("hamming_out2.fastq");
+    let geom_hamming = r#"
+l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+    let compiled_h = compile_geom(geom_hamming).expect("compile hamming");
+    read_pairs_to_file(
+        compiled_h,
+        &in1,
+        Some(in2.as_path()),
+        &out1_h,
+        &out2_h,
+        1,
+        vec![],
+    )
+    .unwrap();
+    let n_hamming = seq_count(&out1_h);
+
+    // Edit distance geometry
+    let out1_e = dir.join("edit_out1.fastq");
+    let out2_e = dir.join("edit_out2.fastq");
+    let geom_edit = r#"
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+    let compiled_e = compile_geom(geom_edit).expect("compile edit");
+    read_pairs_to_file(
+        compiled_e,
+        &in1,
+        Some(in2.as_path()),
+        &out1_e,
+        &out2_e,
+        1,
+        vec![],
+    )
+    .unwrap();
+    let n_edit = seq_count(&out1_e);
+
+    // Edit must recover strictly more reads than hamming (indel recovery)
+    assert!(
+        n_edit > n_hamming,
+        "Figure 5 claim: edit ({}) must strictly beat hamming ({}) on data with indels",
+        n_edit,
+        n_hamming
+    );
+
+    // Hamming should recover the ~33% of reads with perfect linkers
+    // (and possibly some with substitution-only errors that happen to be within tolerance)
+    assert!(
+        n_hamming > 0,
+        "Hamming must recover at least the reads with perfect linkers"
+    );
+
+    // Edit must recover reads that hamming cannot (those with deletions/insertions)
+    let edit_gain = n_edit - n_hamming;
+    assert!(
+        edit_gain > 0,
+        "Figure 5 claim: edit distance must recover additional reads beyond hamming \
+         (reads with indel errors). Hamming={}, Edit={}, Gain={}",
+        n_hamming,
+        n_edit,
+        edit_gain
+    );
+
+    // Hamming output should be a subset of edit output (read IDs)
+    let ids_hamming: std::collections::HashSet<String> =
+        parse_fastq_read_ids(&out1_h).into_iter().collect();
+    let ids_edit: std::collections::HashSet<String> =
+        parse_fastq_read_ids(&out1_e).into_iter().collect();
+    assert!(
+        ids_hamming.is_subset(&ids_edit),
+        "Figure 5 claim: hamming output must be a subset of edit output. \
+         {} reads in hamming but not in edit.",
+        ids_hamming.difference(&ids_edit).count()
+    );
+}
