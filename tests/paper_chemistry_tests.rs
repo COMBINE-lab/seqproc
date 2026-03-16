@@ -1767,8 +1767,11 @@ l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
     );
     let data = compiled.unwrap();
     assert_eq!(data.geometry.len(), 1);
-    assert_eq!(data.read_annotations.len(), 1);
-    assert_eq!(data.read_annotations[0].read_idx, 1);
+    assert_eq!(data.element_annotations.len(), 1);
+    assert_eq!(
+        data.element_annotations[0].element_id,
+        seqproc::compile::ElementId::Read(1)
+    );
 }
 
 #[test]
@@ -3369,5 +3372,231 @@ fn preserve_order_r1_and_r2_lockstep() {
     assert_eq!(
         r1_ids, r2_ids,
         "preserve-order: R1 and R2 output must be in lock-step (same read IDs, same order)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// LANG-MIGRATE-HAMMING: Annotation syntax equivalence E2E tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lang_migrate_hamming_annotation_vs_function_identical_output() {
+    // LANG-MIGRATE-HAMMING: The new annotation syntax
+    //   #[hamming(6)] l1 = anchor_relative(f[SEQ])
+    // must produce byte-identical output to the old function syntax
+    //   l1 = anchor_relative(hamming(f[SEQ], 6))
+    // This test runs both through the full pipeline on the same input
+    // and verifies the output FASTQs are identical.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 50;
+    let (in1, in2) = write_splitseq_pe(&dir, n);
+
+    // Old syntax: hamming() wrapping the FixedSeq
+    let out1_old = dir.join("old_out1.fastq");
+    let out2_old = dir.join("old_out2.fastq");
+    let geom_old = r#"
+l1 = anchor_relative(hamming(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(hamming(f[ATCCACGTGCTTGAGA], 3))
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+    let compiled_old = compile_geom(geom_old).expect("old syntax should compile");
+    read_pairs_to_file(
+        compiled_old,
+        &in1,
+        Some(in2.as_path()),
+        &out1_old,
+        &out2_old,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    // New syntax: #[hamming(N)] annotation on plain f[SEQ]
+    let out1_new = dir.join("new_out1.fastq");
+    let out2_new = dir.join("new_out2.fastq");
+    let geom_new = r#"
+#[hamming(6)] l1 = anchor_relative(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT])
+#[hamming(3)] l2 = anchor_relative(f[ATCCACGTGCTTGAGA])
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+    let compiled_new = compile_geom(geom_new).expect("new annotation syntax should compile");
+    read_pairs_to_file(
+        compiled_new,
+        &in1,
+        Some(in2.as_path()),
+        &out1_new,
+        &out2_new,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    // Both must produce reads
+    let n_old = seq_count(&out1_old);
+    let n_new = seq_count(&out1_new);
+    assert!(n_old > 0, "old syntax should produce output reads");
+    assert_eq!(
+        n_old, n_new,
+        "old and new syntax must produce the same number of reads: old={}, new={}",
+        n_old, n_new
+    );
+
+    // Output FASTQs must be byte-identical
+    let old_r1 = std::fs::read(&out1_old).unwrap();
+    let new_r1 = std::fs::read(&out1_new).unwrap();
+    assert_eq!(
+        old_r1, new_r1,
+        "R1 output must be byte-identical between old hamming() and new #[hamming()] syntax"
+    );
+    let old_r2 = std::fs::read(&out2_old).unwrap();
+    let new_r2 = std::fs::read(&out2_new).unwrap();
+    assert_eq!(
+        old_r2, new_r2,
+        "R2 output must be byte-identical between old hamming() and new #[hamming()] syntax"
+    );
+}
+
+#[test]
+fn lang_migrate_edit_annotation_vs_function_identical_output() {
+    // LANG-MIGRATE-EDIT: The new annotation syntax
+    //   #[edit(6)] l1 = anchor_relative(f[SEQ])
+    // must produce byte-identical output to the old function syntax
+    //   l1 = anchor_relative(edit(f[SEQ], 6))
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 50;
+    let (in1, in2) = write_splitseq_pe(&dir, n);
+
+    let out1_old = dir.join("old_out1.fastq");
+    let out2_old = dir.join("old_out2.fastq");
+    let geom_old = r#"
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+    let compiled_old = compile_geom(geom_old).expect("old edit syntax should compile");
+    read_pairs_to_file(
+        compiled_old,
+        &in1,
+        Some(in2.as_path()),
+        &out1_old,
+        &out2_old,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let out1_new = dir.join("new_out1.fastq");
+    let out2_new = dir.join("new_out2.fastq");
+    let geom_new = r#"
+#[edit(6)] l1 = anchor_relative(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT])
+#[edit(3)] l2 = anchor_relative(f[ATCCACGTGCTTGAGA])
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+    let compiled_new = compile_geom(geom_new).expect("new edit annotation syntax should compile");
+    read_pairs_to_file(
+        compiled_new,
+        &in1,
+        Some(in2.as_path()),
+        &out1_new,
+        &out2_new,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let n_old = seq_count(&out1_old);
+    let n_new = seq_count(&out1_new);
+    assert!(n_old > 0, "old syntax should produce output reads");
+    assert_eq!(n_old, n_new, "old={}, new={}", n_old, n_new);
+
+    assert_eq!(
+        std::fs::read(&out1_old).unwrap(),
+        std::fs::read(&out1_new).unwrap(),
+        "R1 must be byte-identical"
+    );
+    assert_eq!(
+        std::fs::read(&out2_old).unwrap(),
+        std::fs::read(&out2_new).unwrap(),
+        "R2 must be byte-identical"
+    );
+}
+
+#[test]
+fn lang_migrate_search_stacked_annotation_vs_function_identical_output() {
+    // LANG-MIGRATE-SEARCH: The fully-migrated stacked annotation syntax
+    //   #[search(relative)] #[edit(6)] l1 = f[SEQ]
+    // must produce byte-identical output to the old function syntax
+    //   l1 = anchor_relative(edit(f[SEQ], 6))
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let n = 50;
+    let (in1, in2) = write_splitseq_pe(&dir, n);
+
+    let out1_old = dir.join("old_out1.fastq");
+    let out2_old = dir.join("old_out2.fastq");
+    let geom_old = r#"
+l1 = anchor_relative(edit(f[GTGGCCGCTGTTTCGCATCGGCGTACGACT], 6))
+l2 = anchor_relative(edit(f[ATCCACGTGCTTGAGA], 3))
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+    let compiled_old = compile_geom(geom_old).expect("old syntax should compile");
+    read_pairs_to_file(
+        compiled_old,
+        &in1,
+        Some(in2.as_path()),
+        &out1_old,
+        &out2_old,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let out1_new = dir.join("new_out1.fastq");
+    let out2_new = dir.join("new_out2.fastq");
+    let geom_new = r#"
+#[search(relative)] #[edit(6)] l1 = f[GTGGCCGCTGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGA]
+1{r:}
+2{x[2]u[10]b[8]<l1>b[8]<l2>b[8]r:}
+"#
+    .to_string();
+    let compiled_new = compile_geom(geom_new).expect("stacked annotation syntax should compile");
+    read_pairs_to_file(
+        compiled_new,
+        &in1,
+        Some(in2.as_path()),
+        &out1_new,
+        &out2_new,
+        1,
+        vec![],
+    )
+    .unwrap();
+
+    let n_old = seq_count(&out1_old);
+    let n_new = seq_count(&out1_new);
+    assert!(n_old > 0, "old syntax should produce output reads");
+    assert_eq!(n_old, n_new, "old={}, new={}", n_old, n_new);
+
+    assert_eq!(
+        std::fs::read(&out1_old).unwrap(),
+        std::fs::read(&out1_new).unwrap(),
+        "R1 must be byte-identical"
+    );
+    assert_eq!(
+        std::fs::read(&out2_old).unwrap(),
+        std::fs::read(&out2_new).unwrap(),
+        "R2 must be byte-identical"
     );
 }

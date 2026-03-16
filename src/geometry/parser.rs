@@ -186,13 +186,15 @@ impl fmt::Display for Expr {
 }
 
 /// A variable definition in an EFGDL header: `foo = f[ABC]`.
+/// Optionally preceded by annotations: `#[edit(5)] foo = f[ABC]`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Definition {
+    pub annotations: Vec<S<Annotation>>,
     pub label: S<String>,
     pub expr: S<Expr>,
 }
 
-/// An annotation on a read declaration: `#[match_ori(either)]`.
+/// An annotation on a read or definition: `#[match_ori(either)]`, `#[edit(5)]`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Annotation {
     pub name: S<String>,
@@ -547,24 +549,45 @@ pub fn parser<'tokens>(
     })
     .map_with(|s, state| S(s, state.span()));
 
-    // define the basic peices of an EFGDL description
-    let definitions = label
-        .labelled("definition identifier")
-        .map_with(|l, state| S(l, state.span()))
-        .then_ignore(just(Token::Equals))
-        .then(transformed_pieces.clone())
-        .map_with(|(label, expr), span| S(Definition { label, expr }, span.span()))
-        .repeated()
-        .collect()
-        .map_with(|defs, span| S(defs, span.span()));
+    // Annotation name: accepts Label tokens and keyword tokens that may appear
+    // as annotation names (e.g., edit, hamming, match).
+    let annotation_name = choice((
+        label,
+        just(Token::Edit).to("edit".to_string()),
+        just(Token::Hamming).to("hamming".to_string()),
+        just(Token::Match).to("match".to_string()),
+        just(Token::Anchor).to("anchor_relative".to_string()),
+        just(Token::Filter).to("filter".to_string()),
+        just(Token::Normalize).to("norm".to_string()),
+        just(Token::Reverse).to("rev".to_string()),
+        just(Token::ReverseComp).to("revcomp".to_string()),
+    ));
+
+    // Annotation argument: accepts labels, keywords, and numbers.
+    // NOTE: Keep in sync with annotation_name above -- every keyword
+    // accepted as a name should also be accepted as an argument.
+    let annotation_arg = choice((
+        label,
+        num.map(|n: usize| n.to_string()),
+        just(Token::Edit).to("edit".to_string()),
+        just(Token::Hamming).to("hamming".to_string()),
+        just(Token::Match).to("match".to_string()),
+        just(Token::Anchor).to("anchor_relative".to_string()),
+        just(Token::Filter).to("filter".to_string()),
+        just(Token::Normalize).to("norm".to_string()),
+        just(Token::Reverse).to("rev".to_string()),
+        just(Token::ReverseComp).to("revcomp".to_string()),
+        just(Token::Fw).to("fw".to_string()),
+        just(Token::Rc).to("rc".to_string()),
+    ));
 
     // Parse annotation: #[name(arg1, arg2, ...)]
     let annotation = just(Token::HashBracket)
         .ignore_then(
-            label
+            annotation_name
                 .map_with(|name, state| S(name, state.span()))
                 .then(
-                    label
+                    annotation_arg
                         .map_with(|a, state| S(a, state.span()))
                         .separated_by(just(Token::Comma))
                         .collect::<Vec<_>>()
@@ -573,6 +596,33 @@ pub fn parser<'tokens>(
                 .then_ignore(just(Token::RBracket)),
         )
         .map_with(|(name, args), state| S(Annotation { name, args }, state.span()));
+
+    // define the basic peices of an EFGDL description
+    // Definitions may be preceded by annotations: #[edit(5)] foo = f[ABC]
+    let definitions = annotation
+        .clone()
+        .repeated()
+        .collect::<Vec<_>>()
+        .then(
+            label
+                .labelled("definition identifier")
+                .map_with(|l, state| S(l, state.span()))
+                .then_ignore(just(Token::Equals))
+                .then(transformed_pieces.clone()),
+        )
+        .map_with(|(annotations, (label, expr)), span| {
+            S(
+                Definition {
+                    annotations,
+                    label,
+                    expr,
+                },
+                span.span(),
+            )
+        })
+        .repeated()
+        .collect()
+        .map_with(|defs, span| S(defs, span.span()));
 
     let reads = annotation
         .clone()

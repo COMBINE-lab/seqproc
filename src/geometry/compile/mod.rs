@@ -22,13 +22,87 @@ use self::{
     utils::{GeometryMeta, Interval, Transformation},
 };
 
-/// Per-read annotation data extracted from the parsed AST.
+/// Identifies the element an annotation is attached to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ElementId {
+    /// A read declaration (1-based index, e.g., 1 for seq1).
+    Read(usize),
+    /// A named definition (e.g., "linker1").
+    Definition(String),
+}
+
+/// Per-element annotation data extracted from the parsed AST.
+/// Covers both read-level and definition-level annotations.
 #[derive(Debug, Clone)]
-pub struct ReadAnnotations {
-    /// Read index (1-based, e.g., 1 for seq1).
-    pub read_idx: usize,
-    /// Annotations attached to this read.
+pub struct ElementAnnotations {
+    /// Which element the annotations are attached to.
+    pub element_id: ElementId,
+    /// Annotations attached to this element.
     pub annotations: Vec<S<Annotation>>,
+}
+
+/// Backward-compatible alias.
+pub type ReadAnnotations = ElementAnnotations;
+
+/// Resolve the effective annotations for a definition used within a read.
+///
+/// Implements hierarchical scoping:
+/// - Child (definition-level) annotations override parent (read-level) annotations
+///   when they share the same annotation name.
+/// - Parent annotations that are not overridden by the child are inherited.
+/// - The returned list is ordered: inherited parent annotations first, then child annotations.
+///
+/// If neither parent nor child has annotations, returns an empty vec.
+pub fn resolve_annotations(
+    element_annotations: &[ElementAnnotations],
+    read_idx: usize,
+    def_label: &str,
+) -> Vec<S<Annotation>> {
+    // Collect parent (read-level) annotations.
+    let parent: Vec<&S<Annotation>> = element_annotations
+        .iter()
+        .filter(|ea| ea.element_id == ElementId::Read(read_idx))
+        .flat_map(|ea| ea.annotations.iter())
+        .collect();
+
+    // Collect child (definition-level) annotations.
+    let child: Vec<&S<Annotation>> = element_annotations
+        .iter()
+        .filter(|ea| matches!(&ea.element_id, ElementId::Definition(s) if s == def_label))
+        .flat_map(|ea| ea.annotations.iter())
+        .collect();
+
+    if parent.is_empty() && child.is_empty() {
+        return Vec::new();
+    }
+
+    // Child annotation names (used for override check).
+    let child_names: Vec<&str> = child.iter().map(|S(a, _)| a.name.0.as_str()).collect();
+
+    // Inherited: parent annotations whose name is NOT in child_names.
+    let mut resolved: Vec<S<Annotation>> = parent
+        .iter()
+        .filter(|S(a, _)| !child_names.contains(&a.name.0.as_str()))
+        .map(|a| (*a).clone())
+        .collect();
+
+    // Then append all child annotations.
+    resolved.extend(child.iter().map(|a| (*a).clone()));
+
+    // Deduplicate same-name annotations using last-wins semantics:
+    // iterate in reverse, keeping only the first (i.e., last-in-order)
+    // occurrence of each name.
+    let mut seen = Vec::<&str>::new();
+    let mut deduped = Vec::with_capacity(resolved.len());
+    for ann in resolved.iter().rev() {
+        let name = ann.0.name.0.as_str();
+        if !seen.contains(&name) {
+            seen.push(name);
+            deduped.push(ann.clone());
+        }
+    }
+    deduped.reverse();
+    deduped
 }
 
 /// Compiled conditional output (match block).
@@ -48,8 +122,8 @@ pub struct CompiledMatchBlock {
 pub struct CompiledData {
     pub geometry: Vec<Vec<GeometryMeta>>,
     pub transformation: Option<Transformation>,
-    /// Per-read annotations from the input geometry.
-    pub read_annotations: Vec<ReadAnnotations>,
+    /// Per-element annotations (reads and definitions) from the input geometry.
+    pub element_annotations: Vec<ElementAnnotations>,
     /// Conditional output match block, if present.
     pub match_block: Option<CompiledMatchBlock>,
 }
@@ -133,34 +207,48 @@ pub fn compile(
         transforms,
     }: Description,
 ) -> Result<CompiledData, Error> {
-    // Extract per-read annotations before compiling reads.
-    let read_annotations: Vec<ReadAnnotations> = reads
-        .0
-        .iter()
-        .map(|S(r, _)| ReadAnnotations {
-            read_idx: r.index.0,
-            annotations: r.annotations.clone(),
-        })
-        .filter(|ra| !ra.annotations.is_empty())
-        .collect();
+    // Extract per-element annotations (reads + definitions).
+    let mut element_annotations: Vec<ElementAnnotations> = Vec::new();
+
+    // Read-level annotations.
+    for S(r, _) in reads.0.iter() {
+        if !r.annotations.is_empty() {
+            element_annotations.push(ElementAnnotations {
+                element_id: ElementId::Read(r.index.0),
+                annotations: r.annotations.clone(),
+            });
+        }
+    }
+
+    // Definition-level annotations.
+    for S(def, _) in definitions.0.iter() {
+        if !def.annotations.is_empty() {
+            element_annotations.push(ElementAnnotations {
+                element_id: ElementId::Definition(def.label.0.clone()),
+                annotations: def.annotations.clone(),
+            });
+        }
+    }
 
     // Validate read indices fit in u8, required by TryOrientationOp.
-    for ra in &read_annotations {
-        if u8::try_from(ra.read_idx).is_err() {
-            let span = reads
-                .0
-                .iter()
-                .find(|S(r, _)| r.index.0 == ra.read_idx)
-                .map(|S(_, s)| *s)
-                .unwrap_or_default();
-            return Err(Error {
-                span,
-                msg: format!(
-                    "read index {} exceeds maximum (255); \
-                     annotated reads must have indices that fit in a u8",
-                    ra.read_idx
-                ),
-            });
+    for ea in &element_annotations {
+        if let ElementId::Read(idx) = &ea.element_id {
+            if u8::try_from(*idx).is_err() {
+                let span = reads
+                    .0
+                    .iter()
+                    .find(|S(r, _)| r.index.0 == *idx)
+                    .map(|S(_, s)| *s)
+                    .unwrap_or_default();
+                return Err(Error {
+                    span,
+                    msg: format!(
+                        "read index {} exceeds maximum (255); \
+                         annotated reads must have indices that fit in a u8",
+                        idx
+                    ),
+                });
+            }
         }
     }
 
@@ -199,7 +287,7 @@ pub fn compile(
             Ok(CompiledData {
                 geometry,
                 transformation: Some(transformation),
-                read_annotations,
+                element_annotations,
                 match_block: None,
             })
         }
@@ -243,7 +331,7 @@ pub fn compile(
             Ok(CompiledData {
                 geometry,
                 transformation: Some(fw_transformation.clone()),
-                read_annotations,
+                element_annotations,
                 match_block: Some(CompiledMatchBlock {
                     read_ref: read_ref.0,
                     attr: attr.0,
@@ -258,7 +346,7 @@ pub fn compile(
             Ok(CompiledData {
                 geometry,
                 transformation: None,
-                read_annotations,
+                element_annotations,
                 match_block: None,
             })
         }
@@ -336,5 +424,215 @@ mod tests {
                 e.msg
             );
         }
+    }
+
+    fn make_annotation(name: &str, args: &[&str]) -> S<Annotation> {
+        let span = (0..1).into();
+        S(
+            Annotation {
+                name: S(name.to_string(), span),
+                args: args.iter().map(|a| S(a.to_string(), span)).collect(),
+            },
+            span,
+        )
+    }
+
+    #[test]
+    fn resolve_annotations_empty() {
+        let eas: Vec<ElementAnnotations> = vec![];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        assert!(resolved.is_empty());
+    }
+
+    #[test]
+    fn resolve_annotations_parent_only() {
+        // Read has edit(3), definition has nothing -> inherits edit(3)
+        let eas = vec![ElementAnnotations {
+            element_id: ElementId::Read(1),
+            annotations: vec![make_annotation("edit", &["3"])],
+        }];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].0.name.0, "edit");
+        assert_eq!(resolved[0].0.args[0].0, "3");
+    }
+
+    #[test]
+    fn resolve_annotations_child_only() {
+        // Read has nothing, definition has edit(5) -> just edit(5)
+        let eas = vec![ElementAnnotations {
+            element_id: ElementId::Definition("linker1".to_string()),
+            annotations: vec![make_annotation("edit", &["5"])],
+        }];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].0.name.0, "edit");
+        assert_eq!(resolved[0].0.args[0].0, "5");
+    }
+
+    #[test]
+    fn resolve_annotations_child_overrides_parent() {
+        // Read has edit(3), definition has edit(5) -> child wins: edit(5)
+        let eas = vec![
+            ElementAnnotations {
+                element_id: ElementId::Read(1),
+                annotations: vec![make_annotation("edit", &["3"])],
+            },
+            ElementAnnotations {
+                element_id: ElementId::Definition("linker1".to_string()),
+                annotations: vec![make_annotation("edit", &["5"])],
+            },
+        ];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].0.name.0, "edit");
+        assert_eq!(resolved[0].0.args[0].0, "5");
+    }
+
+    #[test]
+    fn resolve_annotations_inheritance_different_names() {
+        // Read has match_ori(either), definition has edit(5) -> both present
+        let eas = vec![
+            ElementAnnotations {
+                element_id: ElementId::Read(1),
+                annotations: vec![make_annotation("match_ori", &["either"])],
+            },
+            ElementAnnotations {
+                element_id: ElementId::Definition("linker1".to_string()),
+                annotations: vec![make_annotation("edit", &["5"])],
+            },
+        ];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        assert_eq!(resolved.len(), 2);
+        // Inherited parent first, then child
+        assert_eq!(resolved[0].0.name.0, "match_ori");
+        assert_eq!(resolved[1].0.name.0, "edit");
+    }
+
+    #[test]
+    fn resolve_annotations_stacking() {
+        // Definition has two annotations stacked
+        let eas = vec![ElementAnnotations {
+            element_id: ElementId::Definition("linker1".to_string()),
+            annotations: vec![
+                make_annotation("search", &["relative"]),
+                make_annotation("edit", &["5"]),
+            ],
+        }];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0].0.name.0, "search");
+        assert_eq!(resolved[1].0.name.0, "edit");
+    }
+
+    #[test]
+    fn resolve_annotations_wrong_read_idx() {
+        // Read 2 has annotation, but we resolve for read 1 -> no parent inheritance
+        let eas = vec![
+            ElementAnnotations {
+                element_id: ElementId::Read(2),
+                annotations: vec![make_annotation("edit", &["3"])],
+            },
+            ElementAnnotations {
+                element_id: ElementId::Definition("linker1".to_string()),
+                annotations: vec![make_annotation("edit", &["5"])],
+            },
+        ];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].0.args[0].0, "5");
+    }
+
+    #[test]
+    fn resolve_annotations_dedup_parent_same_name() {
+        // BUG 6: If the parent read has duplicate annotations with the same
+        // name (e.g., #[edit(3)] #[edit(5)]), resolve_annotations should
+        // deduplicate using last-wins semantics, returning only edit(5).
+        // Currently it returns both, which violates the stacking rule.
+        let eas = vec![ElementAnnotations {
+            element_id: ElementId::Read(1),
+            annotations: vec![
+                make_annotation("edit", &["3"]),
+                make_annotation("edit", &["5"]),
+            ],
+        }];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        // Last-wins: only edit(5) should survive
+        assert_eq!(
+            resolved.len(),
+            1,
+            "duplicate parent annotations should be deduped"
+        );
+        assert_eq!(resolved[0].0.name.0, "edit");
+        assert_eq!(resolved[0].0.args[0].0, "5");
+    }
+
+    #[test]
+    fn resolve_annotations_dedup_child_same_name() {
+        // BUG 6: If the child definition has duplicate annotations with the
+        // same name, resolve_annotations should deduplicate using last-wins.
+        let eas = vec![ElementAnnotations {
+            element_id: ElementId::Definition("linker1".to_string()),
+            annotations: vec![
+                make_annotation("edit", &["3"]),
+                make_annotation("edit", &["7"]),
+            ],
+        }];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        assert_eq!(
+            resolved.len(),
+            1,
+            "duplicate child annotations should be deduped"
+        );
+        assert_eq!(resolved[0].0.name.0, "edit");
+        assert_eq!(resolved[0].0.args[0].0, "7");
+    }
+
+    #[test]
+    fn resolve_annotations_dedup_preserves_different_names() {
+        // BUG 6: Dedup should only collapse same-name annotations, not
+        // different-name ones. edit + search should both survive.
+        let eas = vec![ElementAnnotations {
+            element_id: ElementId::Read(1),
+            annotations: vec![
+                make_annotation("edit", &["3"]),
+                make_annotation("search", &["relative"]),
+                make_annotation("edit", &["5"]),
+            ],
+        }];
+        let resolved = resolve_annotations(&eas, 1, "linker1");
+        // edit(3) is overridden by edit(5); search(relative) is kept
+        assert_eq!(
+            resolved.len(),
+            2,
+            "different-name annotations should be preserved"
+        );
+        assert_eq!(resolved[0].0.name.0, "search");
+        assert_eq!(resolved[1].0.name.0, "edit");
+        assert_eq!(resolved[1].0.args[0].0, "5");
+    }
+
+    #[test]
+    fn compile_extracts_definition_annotations() {
+        // Compile a geometry with an annotated definition and verify
+        // element_annotations contains both read-level and definition-level entries.
+        use crate::execute::compile_geom;
+        let geom =
+            "#[edit(3)] linker1 = f[CAGAGC]\n#[match_ori(either)] 1{b[8]<linker1>r:}".to_string();
+        let data = compile_geom(geom).expect("should compile");
+        // Should have two element_annotations: one for read 1 and one for linker1
+        assert_eq!(data.element_annotations.len(), 2);
+        let read_ann = data
+            .element_annotations
+            .iter()
+            .find(|ea| ea.element_id == ElementId::Read(1))
+            .expect("should have read annotation");
+        assert_eq!(read_ann.annotations[0].0.name.0, "match_ori");
+        let def_ann = data
+            .element_annotations
+            .iter()
+            .find(|ea| ea.element_id == ElementId::Definition("linker1".to_string()))
+            .expect("should have definition annotation");
+        assert_eq!(def_ann.annotations[0].0.name.0, "edit");
     }
 }

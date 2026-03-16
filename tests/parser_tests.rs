@@ -25,6 +25,7 @@ fn definition() {
     let expected_res = S::new(
         vec![S::new(
             Definition {
+                annotations: vec![],
                 label: S::new("brc".to_string(), 0..3),
                 expr: S::new(
                     Expr::GeomPiece(
@@ -589,5 +590,133 @@ fn no_annotation_backward_compat() {
     match &res.transforms.unwrap().0 {
         TransformOutput::Direct(_) => {}
         _ => panic!("Expected TransformOutput::Direct"),
+    }
+}
+
+#[test]
+fn annotation_on_definition() {
+    // Single annotation before a definition.
+    let src = "#[edit(5)] linker1 = f[CAGAGC]\n1{<linker1>r:}";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty(), "lex errors: {:?}", lex_errs);
+    assert!(parse_errs.is_empty(), "parse errors: {:?}", parse_errs);
+
+    let res = parse_res.unwrap();
+    // Definition should have one annotation
+    assert_eq!(res.definitions.0.len(), 1);
+    assert_eq!(res.definitions.0[0].0.annotations.len(), 1);
+    assert_eq!(res.definitions.0[0].0.annotations[0].0.name.0, "edit");
+    assert_eq!(res.definitions.0[0].0.annotations[0].0.args.len(), 1);
+    assert_eq!(res.definitions.0[0].0.annotations[0].0.args[0].0, "5");
+    // Label should still be correct
+    assert_eq!(res.definitions.0[0].0.label.0, "linker1");
+}
+
+#[test]
+fn annotation_stacked_on_definition() {
+    // Multiple annotations stacked on a single definition.
+    let src = "#[search(relative)] #[edit(5)] linker1 = f[CAGAGC]\n1{<linker1>r:}";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty(), "lex errors: {:?}", lex_errs);
+    assert!(parse_errs.is_empty(), "parse errors: {:?}", parse_errs);
+
+    let res = parse_res.unwrap();
+    assert_eq!(res.definitions.0.len(), 1);
+    assert_eq!(res.definitions.0[0].0.annotations.len(), 2);
+    assert_eq!(res.definitions.0[0].0.annotations[0].0.name.0, "search");
+    assert_eq!(res.definitions.0[0].0.annotations[1].0.name.0, "edit");
+}
+
+#[test]
+fn annotation_on_definition_and_read() {
+    // Annotation on both a definition and a read.
+    let src = "#[edit(3)] linker1 = f[CAGAGC]\n#[match_ori(either)] 1{<linker1>r:}";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty(), "lex errors: {:?}", lex_errs);
+    assert!(parse_errs.is_empty(), "parse errors: {:?}", parse_errs);
+
+    let res = parse_res.unwrap();
+    // Definition has its annotation
+    assert_eq!(res.definitions.0[0].0.annotations.len(), 1);
+    assert_eq!(res.definitions.0[0].0.annotations[0].0.name.0, "edit");
+    // Read has its annotation
+    assert_eq!(res.reads.0[0].0.annotations.len(), 1);
+    assert_eq!(res.reads.0[0].0.annotations[0].0.name.0, "match_ori");
+}
+
+#[test]
+fn definition_without_annotation_backward_compat() {
+    // Definitions without annotations should still work (no annotations field populated).
+    let src = "brc = b[10]\n1{<brc>r:}";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
+
+    let res = parse_res.unwrap();
+    assert_eq!(res.definitions.0.len(), 1);
+    assert!(res.definitions.0[0].0.annotations.is_empty());
+}
+
+#[test]
+fn annotation_arg_accepts_keyword_tokens() {
+    // BUG 3: annotation_arg was missing keyword tokens that annotation_name
+    // accepts (rev, revcomp, norm, filter, anchor_relative). An annotation
+    // like #[something(rev)] should parse successfully because "rev" is a
+    // valid annotation argument, not just a valid annotation name.
+    let keywords_as_args = vec![
+        ("#[foo(rev)] 1{b[10]r:}", "rev"),
+        ("#[foo(revcomp)] 1{b[10]r:}", "revcomp"),
+        ("#[foo(norm)] 1{b[10]r:}", "norm"),
+        ("#[foo(filter)] 1{b[10]r:}", "filter"),
+        ("#[foo(anchor_relative)] 1{b[10]r:}", "anchor_relative"),
+    ];
+
+    for (src, expected_arg) in keywords_as_args {
+        let ParsedInput {
+            parse_res,
+            lex_errs,
+            parse_errs,
+        } = result_with_errs(src);
+
+        assert!(
+            lex_errs.is_empty(),
+            "lex errors for '{src}': {:?}",
+            lex_errs
+        );
+        assert!(
+            parse_errs.is_empty(),
+            "parse errors for '{src}': {:?}",
+            parse_errs
+        );
+
+        let res = parse_res.unwrap();
+        assert_eq!(
+            res.reads.0[0].0.annotations[0].0.args[0].0, expected_arg,
+            "annotation arg mismatch for '{src}'"
+        );
     }
 }

@@ -18,7 +18,7 @@ use crate::{
     compile::{
         functions::CompiledFunction,
         utils::{GeometryMeta, GeometryPiece},
-        CompiledData,
+        CompiledData, ElementAnnotations, ElementId,
     },
     parser::{IntervalKind, IntervalShape},
     processors::*,
@@ -58,7 +58,7 @@ impl<'a> CompiledData {
         let Self {
             geometry,
             transformation,
-            read_annotations,
+            element_annotations,
             ..
         } = self;
 
@@ -66,9 +66,9 @@ impl<'a> CompiledData {
             let read_idx = i + 1; // 1-based
 
             // Check if this read has a match_ori(either) annotation.
-            let has_match_ori = read_annotations.iter().any(|ra| {
-                ra.read_idx == read_idx
-                    && ra.annotations.iter().any(|S(ann, _)| {
+            let has_match_ori = element_annotations.iter().any(|ea| {
+                ea.element_id == ElementId::Read(read_idx)
+                    && ea.annotations.iter().any(|S(ann, _)| {
                         ann.name.0 == "match_ori"
                             && ann.args.first().map(|a| a.0.as_str()) == Some("either")
                     })
@@ -84,6 +84,8 @@ impl<'a> CompiledData {
                     read_geometry,
                     &format!("seq{}.", read_idx),
                     additional_args,
+                    element_annotations,
+                    read_idx,
                 );
                 let read_idx_u8 = u8::try_from(read_idx)
                     .expect("read index must fit in u8 (validated at compile time)");
@@ -94,6 +96,8 @@ impl<'a> CompiledData {
                     read_geometry,
                     &format!("seq{}.", read_idx),
                     additional_args,
+                    element_annotations,
+                    read_idx,
                 );
             }
         }
@@ -116,6 +120,8 @@ fn interpret_geometry(
     geometry: &[GeometryMeta],
     init_label: &str,
     additional_args: &[&str],
+    _element_annotations: &[ElementAnnotations],
+    _read_idx: usize,
 ) {
     let mut geometry_iter = geometry.iter();
 
