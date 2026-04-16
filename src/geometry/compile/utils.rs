@@ -368,6 +368,7 @@ impl GeometryPiece {
     pub fn get_simplified_description_string(&self, size: IntervalShape) -> String {
         let type_ = match self.type_ {
             IntervalKind::Barcode => "b",
+            IntervalKind::SampleBarcode => "s",
             IntervalKind::Umi => "u",
             IntervalKind::Discard => "x",
             IntervalKind::ReadSeq => "r",
@@ -913,5 +914,76 @@ mod tests {
             stack: vec![S(CompiledFunction::Remove, span())],
         };
         assert_eq!(gm.get_simplified_description_string(), "");
+    }
+
+    // ---------------------------------------------------------------
+    // SampleBarcode (`s`) tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_geometry_piece_simplified_description_sample_barcode() {
+        let sb = GeometryPiece {
+            type_: IntervalKind::SampleBarcode,
+            size: IntervalShape::FixedLen(S(8, span())),
+            label: None,
+        };
+        assert_eq!(
+            sb.get_simplified_description_string(IntervalShape::FixedLen(S(8, span()))),
+            "s[8]"
+        );
+    }
+
+    #[test]
+    fn test_geometry_meta_get_simplified_sample_barcode_with_trunc() {
+        // Mirror of `test_geometry_meta_get_simplified_with_stack`: starting
+        // from s[8] and truncating by 2 should yield s[6].
+        let gm = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::SampleBarcode,
+                    size: IntervalShape::FixedLen(S(8, span())),
+                    label: None,
+                },
+                span(),
+            ),
+            stack: vec![S(CompiledFunction::Truncate(2), span())],
+        };
+        let desc = gm.get_simplified_description_string();
+        assert_eq!(desc, "s[6]");
+    }
+
+    #[test]
+    fn test_validate_expr_sample_barcode_is_not_void() {
+        // SampleBarcode is a "real" extraction kind (like Barcode/Umi), NOT
+        // Void-like the way Discard is. validate_expr should succeed cleanly
+        // for a bare s[8] with no transformations.
+        let gm = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::SampleBarcode,
+                    size: IntervalShape::FixedLen(S(8, span())),
+                    label: None,
+                },
+                span(),
+            ),
+            stack: vec![],
+        };
+        assert!(gm.validate_expr().is_ok());
+
+        // And composing a Reverse on top should still be fine -- Reverse
+        // rejects Void but should accept FixedLen. This confirms that
+        // SampleBarcode is treated as a real (non-void) length-bearing kind.
+        let gm_rev = GeometryMeta {
+            expr: S(
+                GeometryPiece {
+                    type_: IntervalKind::SampleBarcode,
+                    size: IntervalShape::FixedLen(S(8, span())),
+                    label: None,
+                },
+                span(),
+            ),
+            stack: vec![S(CompiledFunction::Reverse, span())],
+        };
+        assert!(gm_rev.validate_expr().is_ok());
     }
 }

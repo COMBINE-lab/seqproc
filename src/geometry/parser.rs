@@ -126,6 +126,7 @@ impl Function {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IntervalKind {
     Barcode,
+    SampleBarcode,
     Umi,
     Discard,
     ReadSeq,
@@ -137,6 +138,7 @@ impl fmt::Display for IntervalKind {
         use IntervalKind::*;
         match self {
             Barcode => write!(f, "b"),
+            SampleBarcode => write!(f, "s"),
             Umi => write!(f, "u"),
             Discard => write!(f, "x"),
             ReadSeq => write!(f, "r"),
@@ -382,6 +384,7 @@ pub fn parser<'tokens>(
 
     let piece_type = select! {
         Token::Barcode => IntervalKind::Barcode,
+        Token::SampleBarcode => IntervalKind::SampleBarcode,
         Token::Umi => IntervalKind::Umi,
         Token::Discard => IntervalKind::Discard,
         Token::ReadSeq => IntervalKind::ReadSeq,
@@ -780,6 +783,7 @@ mod tests {
     #[test]
     fn test_interval_kind_display() {
         assert_eq!(format!("{}", IntervalKind::Barcode), "b");
+        assert_eq!(format!("{}", IntervalKind::SampleBarcode), "s");
         assert_eq!(format!("{}", IntervalKind::Umi), "u");
         assert_eq!(format!("{}", IntervalKind::Discard), "x");
         assert_eq!(format!("{}", IntervalKind::ReadSeq), "r");
@@ -1001,5 +1005,135 @@ mod tests {
             span(),
         );
         assert!(matches!(piece, Expr::LabeledGeomPiece(_, _)));
+    }
+
+    // ---------------------------------------------------------------
+    // SampleBarcode (`s`) tests
+    // ---------------------------------------------------------------
+
+    /// Helper: lex and parse a source string through the full pipeline.
+    fn parse_full(src: &str) -> Description {
+        use chumsky::input::Input;
+        use chumsky::Parser as _;
+
+        let tokens = crate::lexer::lexer()
+            .parse(src)
+            .into_result()
+            .expect("lex errors");
+        let spanned = tokens
+            .into_iter()
+            .map(|(tok, span)| chumsky::span::Spanned { inner: tok, span })
+            .collect::<Vec<_>>();
+        let input = spanned[..].split_spanned((0..src.len()).into());
+        let result = parser().parse(input).into_result().expect("parse errors");
+        result
+    }
+
+    #[test]
+    fn test_parse_sample_barcode_fixed_length() {
+        let desc = parse_full("1{s[8]r:}");
+        let reads = desc.reads.0;
+        assert_eq!(reads.len(), 1);
+        let first = &reads[0].0.exprs[0].0;
+        match first {
+            Expr::GeomPiece(IntervalKind::SampleBarcode, IntervalShape::FixedLen(S(n, _))) => {
+                assert_eq!(*n, 8);
+            }
+            other => panic!(
+                "expected GeomPiece(SampleBarcode, FixedLen(8)), got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_parse_sample_barcode_labeled() {
+        let desc = parse_full("1{s<sample>[8]r:}");
+        let reads = desc.reads.0;
+        assert_eq!(reads.len(), 1);
+        let first = &reads[0].0.exprs[0].0;
+        match first {
+            Expr::LabeledGeomPiece(S(label, _), S(inner, _)) => {
+                assert_eq!(label, "sample");
+                match inner.as_ref() {
+                    Expr::GeomPiece(
+                        IntervalKind::SampleBarcode,
+                        IntervalShape::FixedLen(S(n, _)),
+                    ) => {
+                        assert_eq!(*n, 8);
+                    }
+                    other => panic!(
+                        "inner expected GeomPiece(SampleBarcode, FixedLen(8)), got {:?}",
+                        other
+                    ),
+                }
+            }
+            other => panic!("expected LabeledGeomPiece, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_sample_barcode_ranged() {
+        let desc = parse_full("1{s[6-8]r:}");
+        let first = &desc.reads.0[0].0.exprs[0].0;
+        match first {
+            Expr::GeomPiece(
+                IntervalKind::SampleBarcode,
+                IntervalShape::RangedLen(S((a, b), _)),
+            ) => {
+                assert_eq!(*a, 6);
+                assert_eq!(*b, 8);
+            }
+            other => panic!(
+                "expected GeomPiece(SampleBarcode, RangedLen(6,8)), got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_parse_10x_flex_full_geometry() {
+        let desc = parse_full("1{b[16]u[12]}2{r:x[28]s[8]}");
+        let reads = desc.reads.0;
+        assert_eq!(reads.len(), 2);
+
+        // Read 1: b[16], u[12]
+        let r1 = &reads[0].0;
+        assert_eq!(r1.index.0, 1);
+        assert!(matches!(
+            r1.exprs[0].0,
+            Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen(_))
+        ));
+        assert!(matches!(
+            r1.exprs[1].0,
+            Expr::GeomPiece(IntervalKind::Umi, IntervalShape::FixedLen(_))
+        ));
+
+        // Read 2: r:, x[28], s[8]
+        let r2 = &reads[1].0;
+        assert_eq!(r2.index.0, 2);
+        assert!(matches!(
+            r2.exprs[0].0,
+            Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::UnboundedLen)
+        ));
+        assert!(matches!(
+            r2.exprs[1].0,
+            Expr::GeomPiece(IntervalKind::Discard, IntervalShape::FixedLen(_))
+        ));
+        match &r2.exprs[2].0 {
+            Expr::GeomPiece(IntervalKind::SampleBarcode, IntervalShape::FixedLen(S(n, _))) => {
+                assert_eq!(*n, 8);
+            }
+            other => panic!("expected last expr to be SampleBarcode[8], got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_expr_display_sample_barcode_roundtrip() {
+        let e = Expr::GeomPiece(
+            IntervalKind::SampleBarcode,
+            IntervalShape::FixedLen(S(8, span())),
+        );
+        assert_eq!(format!("{}", e), "s[8]");
     }
 }
