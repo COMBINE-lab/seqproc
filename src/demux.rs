@@ -79,9 +79,15 @@ impl DemuxConfig {
             }
 
             let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 2 {
-                map.insert(parts[0].as_bytes().to_vec(), parts[1].as_bytes().to_vec());
+            if parts.len() < 2 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "malformed sample-map line (expected TAB-separated `barcode<TAB>sample`): {line:?}"
+                    ),
+                ));
             }
+            map.insert(parts[0].as_bytes().to_vec(), parts[1].as_bytes().to_vec());
         }
 
         Ok(map)
@@ -172,6 +178,29 @@ mod tests {
         assert_eq!(
             config.output_path_expr(2),
             "my_output/{seq2.bc1.sample}_R2.fastq.gz"
+        );
+    }
+
+    #[test]
+    fn malformed_sample_map_line_is_not_silently_dropped() {
+        // A data line that is neither blank nor a comment, but is missing the
+        // TAB-separated sample column (here a common mistake: spaces, not a tab).
+        // Silently skipping it means every read carrying barcode TGGTGGTA is
+        // routed to "unassigned" with no error -- silent data loss. The loader
+        // must instead surface the malformed line.
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "AACGTGAT\tsample_A").unwrap(); // valid
+        writeln!(file, "TGGTGGTA sample_B").unwrap(); // MALFORMED: space, not tab
+        file.flush().unwrap();
+
+        let config = DemuxConfig::new(file.path(), "seq2.bc1");
+        let result = config.load_sample_map();
+
+        assert!(
+            result.is_err(),
+            "a malformed (non-comment) sample-map line was silently accepted/skipped \
+             instead of raising an error; got Ok({:?})",
+            result.ok().map(|m| m.len())
         );
     }
 }

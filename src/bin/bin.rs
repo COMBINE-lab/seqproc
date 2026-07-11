@@ -90,7 +90,22 @@ fn main() {
 
     let args: Args = <Args as clap::Parser>::parse();
 
-    let geom = std::fs::read_to_string(&args.geom).unwrap();
+    let geom = match std::fs::read_to_string(&args.geom) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: could not read geometry file {:?}: {e}", args.geom);
+            std::process::exit(1);
+        }
+    };
+
+    // Validate input FASTQ paths up front so a missing file surfaces as a clean
+    // error instead of a panic from deep inside the read-processing engine.
+    for f in std::iter::once(&args.file1).chain(args.file2.iter()) {
+        if !f.exists() {
+            eprintln!("error: input FASTQ not found: {:?}", f);
+            std::process::exit(1);
+        }
+    }
 
     let compiled_efgdl = compile_geom(geom.clone());
 
