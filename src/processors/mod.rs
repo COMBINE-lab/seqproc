@@ -1,269 +1,395 @@
-use std::ops::{Bound, RangeBounds};
-
-use antisequence::{
-    expr::{Label, SelectorExpr, TransformExpr},
-    *,
+use std::{
+    fs::File,
+    io::{BufRead, BufReader},
+    ops::{Not, RangeInclusive, Sub},
+    path::PathBuf,
 };
 
-use crate::{interpret::BoxedReads, Nucleotide};
+use crate::{
+    geometry::compile::functions::CompiledFunction,
+    interpret::{LabelOrAttr, AMBIG, FILTER, MAPPED, SUB},
+};
 
-fn get_selector(label: &str, attr: &str) -> SelectorExpr {
-    if attr.is_empty() {
-        return SelectorExpr::new(label.as_bytes()).unwrap();
-    }
-    SelectorExpr::new(format!("{label}.{attr}").as_bytes()).unwrap()
-}
+use antisequence::{
+    expr::{label, TransformExpr},
+    graph::*,
+    *,
+};
+use expr::Expr;
+use serde::Deserialize;
 
-pub fn set(read: BoxedReads, sel_expr: SelectorExpr, label: &str, transform: &str) -> BoxedReads {
-    let label = Label::new(label.as_bytes()).unwrap();
+use crate::Nucleotide;
 
-    read.set(sel_expr, label, transform).boxed()
-}
-
-fn cut(
-    read: BoxedReads,
-    sel_expr: SelectorExpr,
-    tr_expr: TransformExpr,
-    index: EndIdx,
-) -> BoxedReads {
-    read.cut(sel_expr, tr_expr, index).boxed()
-}
-
-pub fn remove(read: BoxedReads, label: &str, attr: &str) -> BoxedReads {
-    let sel_expr = get_selector(label, attr);
-    let label = Label::new(label.as_bytes()).unwrap();
-
-    read.trim(sel_expr, vec![label]).boxed()
-}
-
-pub fn pad_by(
-    read: BoxedReads,
-    label: &str,
-    attr: &str,
-    by: EndIdx,
-    nuc: Nucleotide,
-) -> BoxedReads {
-    let sel_expr = get_selector(label, attr);
-    let a_label = Label::new(label.as_bytes()).unwrap();
-
-    match by {
-        LeftEnd(n) => read
-            .set(sel_expr, a_label, format!("{{'{nuc}';{n}}}{{{label}}}"))
-            .boxed(),
-        RightEnd(n) => read
-            .set(sel_expr, a_label, format!("{{{label}}}{{'{nuc}';{n}}}"))
-            .boxed(),
-    }
-}
-
-pub fn pad_to(
-    read: BoxedReads,
-    label: &str,
-    attr: &str,
-    to: EndIdx,
-    nuc: Nucleotide,
-) -> BoxedReads {
-    let sel_expr = get_selector(label, attr);
-    let label = Label::new(label.as_bytes()).unwrap();
-
-    read.pad(sel_expr, vec![label], to, nuc as u8).boxed()
-}
-
-pub fn truncate_by(read: BoxedReads, label: &str, attr: &str, by: EndIdx) -> BoxedReads {
-    let sel_expr = get_selector(label, attr);
-    let label = Label::new(label.as_bytes()).unwrap();
-
-    read.trunc_by(sel_expr, vec![label], by).boxed()
-}
-
-pub fn truncate_to(read: BoxedReads, label: &str, attr: &str, to: EndIdx) -> BoxedReads {
-    let sel_expr = get_selector(label, attr);
-    let label = Label::new(label.as_bytes()).unwrap();
-
-    read.trunc_to(sel_expr, vec![label], to).boxed()
-}
-
-pub fn reverse(read: BoxedReads, label: &str, attr: &str) -> BoxedReads {
-    let sel_expr = get_selector(label, attr);
-    let label = Label::new(label.as_bytes()).unwrap();
-
-    read.reverse(sel_expr, vec![label]).boxed()
-}
-
-pub fn reverse_comp(read: BoxedReads, label: &str, attr: &str) -> BoxedReads {
-    let sel_expr = get_selector(label, attr);
-    let label = Label::new(label.as_bytes()).unwrap();
-
-    read.revcomp(sel_expr, vec![label]).boxed()
-}
-
-pub fn normalize<B>(read: BoxedReads, label: &str, attr: &str, range: B) -> BoxedReads
-where
-    B: RangeBounds<usize> + Send + Sync + 'static,
-{
-    let sel_expr = get_selector(label, attr);
-    let label = Label::new(label.as_bytes()).unwrap();
-
-    read.norm(sel_expr, label, range).boxed()
-}
-
-pub fn filter(
-    read: BoxedReads,
-    label: &str,
-    attr: &str,
-    filename: String,
-    mismatch: usize,
-) -> BoxedReads {
-    let sel_expr = get_selector(label, attr);
-    let sel_retain_expr = get_selector(label, "_f");
-
-    let tr_expr = TransformExpr::new(format!("{label} -> {label}._f").as_bytes()).unwrap();
-
-    read.filter(sel_expr, tr_expr, filename, mismatch)
-        .retain(sel_retain_expr)
-        .boxed()
-}
-
-pub fn map(read: BoxedReads, label: &str, attr: &str, file: String, mismatch: usize) -> BoxedReads {
-    let sel_expr = get_selector(label, attr);
-    let tr_expr = TransformExpr::new(format!("{label} -> {label}.not_mapped").as_bytes()).unwrap();
-
-    read.map(sel_expr, tr_expr, file, mismatch).boxed()
-}
-
-fn validate_length<B>(
-    read: BoxedReads,
-    sel_expr: SelectorExpr,
-    tr_expr: TransformExpr,
-    r_sel_expr: SelectorExpr,
-    bound: B,
-) -> BoxedReads
-where
-    B: RangeBounds<usize> + Send + Sync + 'static,
-{
-    read.length_in_bounds(sel_expr, tr_expr, bound)
-        .retain(r_sel_expr)
-        .boxed()
-}
-
-pub fn process_sequence(
-    pipeline: Box<dyn Reads>,
-    sequence: &[Nucleotide],
-    starting_label: &str,
-    this_label: &str,
-    prev_label: &str,
-    next_label: &str,
-    match_type: iter::MatchType,
-) -> Box<dyn Reads> {
-    let tr_expr = match match_type {
-        PrefixAln { .. } => {
-            TransformExpr::new(format!("{starting_label} -> {this_label}, {next_label}").as_bytes())
-                .unwrap()
+impl CompiledFunction {
+    pub fn to_expr(
+        self,
+        interval_name: &str,
+        meta_data: &Option<RangeInclusive<usize>>,
+    ) -> antisequence::expr::Expr {
+        use antisequence::expr::Expr;
+        match self {
+            CompiledFunction::Reverse => Expr::from(label(interval_name)).rev(),
+            CompiledFunction::ReverseComp => Expr::from(label(interval_name)).revcomp(),
+            // trunc by
+            CompiledFunction::Truncate(n) => {
+                Expr::from(label(interval_name)).slice(..=-(n as isize))
+            }
+            CompiledFunction::TruncateLeft(n) => {
+                Expr::from(label(interval_name)).slice(-(n as isize)..)
+            }
+            // trunc to
+            CompiledFunction::TruncateTo(n) => Expr::from(label(interval_name)).slice(..n),
+            CompiledFunction::TruncateToLeft(n) => Expr::from(label(interval_name))
+                .slice(Expr::from(label(interval_name)).len().sub(Expr::from(n))..),
+            CompiledFunction::Pad(n, nuc) => Expr::from(label(interval_name))
+                .concat(Expr::from(Nucleotide::as_string(nuc)).repeat(n)),
+            CompiledFunction::PadLeft(n, nuc) => Expr::from(Nucleotide::as_string(nuc))
+                .repeat(n)
+                .concat(Expr::from(label(interval_name))),
+            CompiledFunction::PadTo(n, nuc) => Expr::from(label(interval_name)).pad(
+                Expr::from(Nucleotide::as_string(nuc)),
+                Expr::from(n),
+                End::Right,
+            ),
+            CompiledFunction::PadToLeft(n, nuc) => Expr::from(label(interval_name)).pad(
+                Expr::from(Nucleotide::as_string(nuc)),
+                Expr::from(n),
+                End::Left,
+            ),
+            CompiledFunction::Normalize => {
+                let range = if let Some(r) = meta_data {
+                    r
+                } else {
+                    panic!("Expected a range")
+                };
+                Expr::from(label(interval_name)).normalize(range.clone())
+            }
+            // these cannot be exprs
+            CompiledFunction::Remove => unimplemented!(),
+            CompiledFunction::Map(_, _) => unimplemented!(),
+            CompiledFunction::MapWithMismatch(_, _, _) => unimplemented!(),
+            CompiledFunction::MapWithEdit(_, _, _) => unimplemented!(),
+            CompiledFunction::FilterWithinDist(_, _) => unimplemented!(),
+            CompiledFunction::Hamming(_) => unimplemented!(),
+            CompiledFunction::Edit(_) => unimplemented!(),
+            // Anchor is handled in the interpreter, not as an expr
+            CompiledFunction::Anchor => unimplemented!(),
         }
-        ExactSearch | HammingSearch(_) => TransformExpr::new(
-            format!("{starting_label} -> {prev_label}, {this_label}, {next_label}").as_bytes(),
+    }
+}
+
+pub fn into_transform_expr<'a>(
+    this_label: &str,
+    next_labels: impl IntoIterator<Item = &'a str>,
+) -> TransformExpr {
+    TransformExpr::new(
+        [label(this_label)],
+        next_labels.into_iter().map(|l| {
+            if l.eq("_") {
+                None
+            } else {
+                Some(expr::LabelOrAttr::Label(label(l)))
+            }
+        }),
+    )
+}
+
+pub fn cut_node(tr_expr: TransformExpr, index: antisequence::expr::Expr) -> CutOp {
+    CutOp::new(tr_expr, index)
+}
+
+pub fn set_node(
+    label_or_attr: crate::interpret::LabelOrAttr<'_>,
+    expr: antisequence::expr::Expr,
+) -> SetOp {
+    use crate::interpret::LabelOrAttr;
+
+    match label_or_attr {
+        LabelOrAttr::Attr(attr) => SetOp::new(expr::attr(attr), expr),
+        LabelOrAttr::Label(label) => SetOp::new(expr::label(label), expr),
+    }
+}
+
+pub fn retain_node(expr: antisequence::expr::Expr) -> RetainOp {
+    RetainOp::new(expr)
+}
+
+pub fn valid_label_length(this_label: &str, from: usize, to: Option<usize>) -> RetainOp {
+    if let Some(to) = to {
+        return retain_node(
+            antisequence::expr::Expr::from(label(this_label))
+                .len()
+                .in_bounds(from..=to),
+        );
+    }
+    retain_node(
+        antisequence::expr::Expr::from(label(this_label))
+            .len()
+            .eq(from),
+    )
+}
+
+pub fn trim_node(labels: impl IntoIterator<Item = antisequence::expr::Label>) -> TrimOp {
+    TrimOp::new(labels)
+}
+
+pub fn map(this_label: &str, patterns: Patterns, match_type: MatchType, graph: &mut Graph) {
+    let next_label: &str = &format!("{this_label}{MAPPED}");
+
+    graph.add(match_node(
+        patterns,
+        this_label,
+        vec![next_label],
+        match_type,
+    ));
+
+    graph.add(set_node(
+        LabelOrAttr::Attr(&format!("{this_label}.{MAPPED}")),
+        Expr::from(antisequence::expr::attr(format!("{this_label}.{AMBIG}"))).not(),
+    ));
+
+    let mut mapping_graph = Graph::new();
+    mapping_graph.add(set_node(
+        LabelOrAttr::Label(next_label),
+        Expr::from(expr::attr(format!("{this_label}.{SUB}"))),
+    ));
+    graph.add(SelectOp::new(
+        Expr::from(expr::attr(format!("{this_label}.{MAPPED}"))),
+        mapping_graph,
+    ));
+}
+
+pub fn match_node(
+    patterns: Patterns,
+    starting_label: &str,
+    next_labels: Vec<&str>,
+    match_type: MatchType,
+) -> MatchAnyOp {
+    let tr_expr = into_transform_expr(starting_label, next_labels);
+
+    MatchAnyOp::new(tr_expr, patterns, match_type)
+}
+
+pub fn parse_file_filter(path: PathBuf) -> Patterns {
+    let file = File::open(path.clone()).unwrap_or_else(|_| {
+        panic!(
+            "Expected file -- could not open {:?}",
+            path.file_name().unwrap()
         )
-        .unwrap(),
-        _ => unreachable!(),
-    };
-
-    let sel_expr = SelectorExpr::new(starting_label.as_bytes()).unwrap();
-    let r_sel_expr = SelectorExpr::new(this_label.as_bytes()).unwrap();
-
-    pipeline
-        .match_one(sel_expr, tr_expr, Nucleotide::as_str(sequence), match_type)
-        .retain(r_sel_expr)
-        .boxed()
+    });
+    let reader = BufReader::new(file);
+    let mut contents = vec![];
+    for (i, line) in reader.lines().enumerate() {
+        let line = line.unwrap_or_else(|_| {
+            panic!(
+                "Could not read line {i} in file {:?}.",
+                path.file_name().unwrap()
+            )
+        });
+        contents.push(line);
+    }
+    Patterns::from_strs(contents).with_pattern_name(FILTER)
 }
 
-fn process_sized<B>(
-    read: BoxedReads,
-    init_label: &str,
-    this_label: &str,
-    next_label: &str,
-    range: B,
-) -> BoxedReads
-where
-    B: RangeBounds<usize> + Send + Sync + 'static,
-{
-    let cut_sel_expr = SelectorExpr::new(init_label.as_bytes()).unwrap();
-    let cut_tr_expr =
-        TransformExpr::new(format!("{init_label} -> {this_label}, {next_label}").as_bytes())
-            .unwrap();
-
-    let end = match RangeBounds::<usize>::end_bound(&range) {
-        Bound::Included(end) => *end,
-        _ => unreachable!(),
-    };
-    let cut_read = cut(read, cut_sel_expr, cut_tr_expr, LeftEnd(end));
-
-    let len_sel_expr = SelectorExpr::new(this_label.as_bytes()).unwrap();
-    let len_tr_expr =
-        TransformExpr::new(format!("{this_label} -> {this_label}.v_len").as_bytes()).unwrap();
-    let r_sel_expr = SelectorExpr::new(format!("{this_label}.v_len").as_bytes()).unwrap();
-
-    validate_length(cut_read, len_sel_expr, len_tr_expr, r_sel_expr, range) as _
+#[derive(Debug, Deserialize)]
+struct SeqprocMap {
+    sub_patt: String,
+    match_patt: String,
 }
 
-pub fn process_fixed_len(
-    read: BoxedReads,
-    init_label: &str,
-    this_label: &str,
-    next_label: &str,
-    len: usize,
-) -> BoxedReads {
-    process_sized(read, init_label, this_label, next_label, len..=len)
+pub fn parse_file_match(path: PathBuf) -> Patterns {
+    let mut rdr = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .comment(Some(b'#'))
+        .has_headers(false)
+        .from_path(path)
+        .expect("cannot open mapping file");
+
+    let mut mappings = vec![];
+    for result in rdr.deserialize() {
+        let mapping: SeqprocMap = result.expect("Could not parse line in map file");
+
+        // Use Pattern::Literal for better performance (enables fast hash-based lookup)
+        mappings.push(Pattern::Literal {
+            bytes: mapping.match_patt.into(),
+            attrs: vec![Data::Bytes(mapping.sub_patt.into())],
+        });
+    }
+
+    Patterns::new(mappings, vec![SUB])
+        .with_multimatch_name(AMBIG)
+        .with_pattern_name(MAPPED)
 }
 
-pub fn process_ranged_len<B>(
-    read: BoxedReads,
-    init_label: &str,
-    this_label: &str,
-    next_label: &str,
-    range: B,
-) -> BoxedReads
-where
-    B: RangeBounds<usize> + Send + Sync + 'static,
-{
-    process_sized(read, init_label, this_label, next_label, range)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use antisequence::expr::label;
 
-pub fn process_unbounded(read: BoxedReads, init_label: &str, this_label: &str) -> BoxedReads {
-    // set init_label to this_label
-    // cut left end 0
-    let sel_expr = SelectorExpr::new(init_label.as_bytes()).unwrap();
-    let cut_tr_expr =
-        TransformExpr::new(format!("{init_label} -> _, {this_label}").as_bytes()).unwrap();
+    #[test]
+    fn test_into_transform_expr() {
+        let te = into_transform_expr("seq1.*", vec!["seq1.left", "seq1.right"]);
+        te.check_size(1, 2, "test");
+    }
 
-    let tr = format!("{{{this_label}}}");
+    #[test]
+    fn test_into_transform_expr_with_discard() {
+        let te = into_transform_expr("seq1.*", vec!["seq1.left", "_"]);
+        te.check_size(1, 2, "test");
+    }
 
-    let cut_read = cut(read, sel_expr.clone(), cut_tr_expr, LeftEnd(0));
+    #[test]
+    fn test_cut_node() {
+        let te = into_transform_expr("seq1.*", vec!["seq1.left", "seq1.right"]);
+        let _op = cut_node(te, Expr::from(4isize));
+    }
 
-    set(cut_read, sel_expr, init_label, &tr)
-}
+    #[test]
+    fn test_set_node_label() {
+        let _op = set_node(LabelOrAttr::Label("seq1.*"), Expr::from(b"ACGT".to_vec()));
+    }
 
-pub fn process_ranged_len_no_cut<B>(read: BoxedReads, this_label: &str, range: B) -> BoxedReads
-where
-    B: RangeBounds<usize> + Send + Sync + 'static,
-{
-    let len_sel_expr = SelectorExpr::new(this_label.as_bytes()).unwrap();
-    let len_tr_expr =
-        TransformExpr::new(format!("{this_label} -> {this_label}.v_len").as_bytes()).unwrap();
-    let r_sel_expr = SelectorExpr::new(format!("{this_label}.v_len").as_bytes()).unwrap();
+    #[test]
+    fn test_set_node_attr() {
+        let _op = set_node(LabelOrAttr::Attr("seq1.*.score"), Expr::from(42isize));
+    }
 
-    validate_length(read, len_sel_expr, len_tr_expr, r_sel_expr, range)
-}
+    #[test]
+    fn test_retain_node() {
+        let _op = retain_node(Expr::from(true));
+    }
 
-pub fn process_unbounded_no_cut(
-    read: BoxedReads,
-    init_label: &str,
-    this_label: &str,
-) -> BoxedReads {
-    // set init_label to this_label
-    // cut left end 0
-    let sel_expr = SelectorExpr::new(init_label.as_bytes()).unwrap();
+    #[test]
+    fn test_valid_label_length_exact() {
+        let _op = valid_label_length("seq1.*", 16, None);
+    }
 
-    let tr = format!("{{{this_label}}}");
+    #[test]
+    fn test_valid_label_length_range() {
+        let _op = valid_label_length("seq1.*", 8, Some(12));
+    }
 
-    set(read, sel_expr, init_label, &tr)
+    #[test]
+    fn test_trim_node() {
+        let _op = trim_node([label("seq1.left")]);
+    }
+
+    #[test]
+    fn test_match_node() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let _op = match_node(
+            patterns,
+            "seq1.*",
+            vec!["seq1.bc", "seq1.rest"],
+            ExactPrefix,
+        );
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_reverse() {
+        let expr = CompiledFunction::Reverse.to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_revcomp() {
+        let expr = CompiledFunction::ReverseComp.to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_truncate() {
+        let expr = CompiledFunction::Truncate(2).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_truncate_left() {
+        let expr = CompiledFunction::TruncateLeft(2).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_truncate_to() {
+        let expr = CompiledFunction::TruncateTo(10).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_truncate_to_left() {
+        let expr = CompiledFunction::TruncateToLeft(10).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_pad() {
+        let expr = CompiledFunction::Pad(4, Nucleotide::A).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_pad_left() {
+        let expr = CompiledFunction::PadLeft(4, Nucleotide::T).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_pad_to() {
+        let expr = CompiledFunction::PadTo(20, Nucleotide::G).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_pad_to_left() {
+        let expr = CompiledFunction::PadToLeft(20, Nucleotide::C).to_expr("seq1.*", &None);
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_compiled_function_to_expr_normalize() {
+        let range = 8..=12usize;
+        let expr = CompiledFunction::Normalize.to_expr("seq1.*", &Some(range));
+        let _ = expr;
+    }
+
+    #[test]
+    fn test_match_node_exact() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let _op = match_node(patterns, "seq1.*", vec!["seq1.*"], Exact);
+    }
+
+    #[test]
+    fn test_match_node_exact_prefix() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let _op = match_node(
+            patterns,
+            "seq1.*",
+            vec!["seq1.left", "seq1.right"],
+            ExactPrefix,
+        );
+    }
+
+    #[test]
+    fn test_match_node_hamming() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let _op = match_node(
+            patterns,
+            "seq1.*",
+            vec!["seq1.*"],
+            Hamming(Threshold::Count(3)),
+        );
+    }
+
+    #[test]
+    fn test_map_function_full() {
+        let patterns = Patterns::from_strs(["ACGT"]);
+        let mut g = Graph::new();
+        map("seq1.bc", patterns, Exact, &mut g);
+    }
+
+    #[test]
+    fn test_into_transform_expr_multiple() {
+        let te = into_transform_expr("seq1.*", vec!["seq1.a", "seq1.b", "seq1.c"]);
+        te.check_size(1, 3, "test");
+    }
 }

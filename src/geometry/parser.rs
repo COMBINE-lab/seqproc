@@ -2,9 +2,11 @@
 
 use std::fmt::{self, Write};
 
-use chumsky::prelude::*;
+use chumsky::{extra::Err as ExtraErr, input::MappedInput, prelude::*};
 
 use crate::{lexer::Token, Nucleotide, S};
+
+use super::Span;
 
 /// The length of a nucleotide interval,
 /// and whether it must match a specific sequence.
@@ -69,10 +71,18 @@ pub enum Function {
     Map(String, S<Box<Expr>>),
     /// `map_with_mismatch(I, A, F, n)`
     MapWithMismatch(String, S<Box<Expr>>, usize),
-    /// `map_with_mismatch(I, A, F, n)`
+    /// `filter(I, A)`
+    Filter(String),
+    /// `filter_within_dist(I, A, n)`
     FilterWithinDist(String, usize),
     /// `hamming(F, n)`
     Hamming(usize),
+    /// `edit(F, n)` - edit distance (Levenshtein) matching
+    Edit(usize),
+    /// `map_with_edit(I, A, F, n)` - map with edit distance tolerance
+    MapWithEdit(String, S<Box<Expr>>, usize),
+    /// `anchor_relative(F)` - search for anchor from position 0 and extract preceding elements with flexible length
+    Anchor,
 }
 
 impl Function {
@@ -99,8 +109,15 @@ impl Function {
                 let S(s, _) = b;
                 write!(f, "map_with_mismatch({first}, {p}, {s}, {n})")
             }
+            Filter(p) => write!(f, "filter({first}, {p})"),
             FilterWithinDist(p, n) => write!(f, "filter_within_dist({first}, {p}, {n})"),
             Hamming(n) => write!(f, "hamming({first}, {n})"),
+            Edit(n) => write!(f, "edit({first}, {n})"),
+            MapWithEdit(p, b, n) => {
+                let S(s, _) = b;
+                write!(f, "map_with_edit({first}, {p}, {s}, {n})")
+            }
+            Anchor => write!(f, "anchor_relative({first})"),
         }
     }
 }
@@ -109,6 +126,7 @@ impl Function {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IntervalKind {
     Barcode,
+    SampleBarcode,
     Umi,
     Discard,
     ReadSeq,
@@ -120,6 +138,7 @@ impl fmt::Display for IntervalKind {
         use IntervalKind::*;
         match self {
             Barcode => write!(f, "b"),
+            SampleBarcode => write!(f, "s"),
             Umi => write!(f, "u"),
             Discard => write!(f, "x"),
             ReadSeq => write!(f, "r"),
@@ -169,435 +188,952 @@ impl fmt::Display for Expr {
 }
 
 /// A variable definition in an EFGDL header: `foo = f[ABC]`.
+/// Optionally preceded by annotations: `#[edit(5)] foo = f[ABC]`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Definition {
+    pub annotations: Vec<S<Annotation>>,
     pub label: S<String>,
     pub expr: S<Expr>,
 }
 
+/// An annotation on a read or definition: `#[match_ori(either)]`, `#[edit(5)]`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// A read, with index and expression: `1{hamming(<brc>, 1)}`.
+pub struct Annotation {
+    pub name: S<String>,
+    pub args: Vec<S<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A read, with optional annotations, index, and expressions: `#[match_ori(either)] 1{...}`.
 pub struct Read {
+    pub annotations: Vec<S<Annotation>>,
     pub index: S<usize>,
     pub exprs: Vec<S<Expr>>,
 }
 
-/// A full EFGDL file: 0+ definitions, then input reads, then transformed reads.
+/// Output specification after `->`: either direct reads or a match block.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-
-pub struct Description {
-    /// The list of definitions at the top of an EFGDL file:
-    /// `brc = b[10] foo = f[CAGAGC]`.``
-    pub definitions: S<Vec<S<Definition>>>,
-    pub reads: S<Vec<S<Read>>>,
-    /// List of reads specifying the output of a transformation:
-    /// ` -> 1{<brc>pad(<anchor>, 3, A)<read>}`.
-    pub transforms: Option<S<Vec<S<Read>>>>,
+pub enum TransformOutput {
+    /// Direct output: `-> 1{<bc>} 2{<read>}`
+    Direct(Vec<S<Read>>),
+    /// Match block: `-> match 1.ori { fw => 1{...}, rc => 1{...} }`
+    Match {
+        read_ref: S<usize>,
+        attr: S<String>,
+        fw_arm: Vec<S<Read>>,
+        rc_arm: Vec<S<Read>>,
+    },
 }
 
-pub fn parser() -> impl Parser<Token, Description, Error = Simple<Token>> + Clone {
-    /*
-       Start with creating combinators and
-       a recursive definition of a geom_piece
+/// A full EFGDL file: 0+ definitions, then input reads, then transformed reads.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Description {
+    /// The list of definitions at the top of an EFGDL file:
+    /// `brc = b[10] foo = f[CAGAGC]`.
+    pub definitions: S<Vec<S<Definition>>>,
+    pub reads: S<Vec<S<Read>>>,
+    /// Output specification after `->`, if present.
+    pub transforms: Option<S<TransformOutput>>,
+}
 
-       At execution time we will check if it is a valid
-       geometry without any ambiguity. Here we will
-       restruct some invalid definitions
-    */
-
-    let ident = select! { Token::Label(ident) => ident }.labelled("Piece Label");
-
-    let num = select! { Token::Num(n) => n }.labelled("Size Label");
-
-    let file = select! { Token::File(f) => f }.labelled("File Path");
-
-    let argument = select! { Token::Arg(n) => n.to_string() }.labelled("Argument");
-
-    let piece_type = select! {
-        Token::Barcode => IntervalKind::Barcode,
-        Token::Umi => IntervalKind::Umi,
-        Token::Discard => IntervalKind::Discard,
-        Token::ReadSeq => IntervalKind::ReadSeq,
+fn make_geom_piece(
+    kind: IntervalKind,
+    shape: IntervalShape,
+    label: Option<Expr>,
+    span: Span,
+) -> Expr {
+    let expr = Expr::GeomPiece(kind, shape);
+    if let Some(Expr::Label(lbl)) = label {
+        Expr::LabeledGeomPiece(lbl, S(Box::new(expr), span))
+    } else {
+        expr
     }
-    .labelled("Piece Type");
+}
 
-    let nuc = select! {
-        Token::U => Nucleotide::U,
-        Token::A => Nucleotide::A,
-        Token::T => Nucleotide::T,
-        Token::G => Nucleotide::G,
-        Token::C => Nucleotide::C,
-    };
+type Input<'a> = MappedInput<'a, Token, Span, &'a [Spanned<Token>]>;
 
-    let label = ident
-        .map_with_span(|l, span| Expr::Label(S(l, span)))
-        .labelled("Label");
+macro_rules! function_arguments {
+    ($base:expr) => {{
+        $base
+            .map_with(|res, state| S(res, state.span()))
+            .delimited_by(
+                just(Token::LParen),
+                just(Token::RParen)
+            )
+    }};
 
-    let label_str = ident.map_with_span(S).labelled("Label");
-
-    let self_ = just(Token::Self_).to(Expr::Self_).labelled("Self");
-
-    let range = just(Token::LBracket)
-        .ignored()
-        .then(
-            num.then_ignore(just(Token::Dash))
-                .then(num)
-                .map_with_span(|(a, b), span| IntervalShape::RangedLen(S((a, b), span)))
-                .then_ignore(just(Token::RBracket)),
-        )
-        .labelled("Range");
-
-    let fixed_len = just(Token::LBracket)
-        .ignore_then(num.map_with_span(|n, span| IntervalShape::FixedLen(S(n, span))))
-        .then_ignore(just(Token::RBracket))
-        .labelled("Fixed Length");
-
-    let seq = nuc.repeated().collect::<Vec<_>>();
-
-    let nucstr = just(Token::LBracket)
-        .ignore_then(seq.map_with_span(|nucstr, span| IntervalShape::FixedSeq(S(nucstr, span))))
-        .then_ignore(just(Token::RBracket))
-        .labelled("Nucleotide String");
-
-    let unbounded = piece_type
-        .then(label_str.or_not())
-        .then_ignore(just(Token::Colon))
-        .map_with_span(|(type_, label), span| {
-            let expr = Expr::GeomPiece(type_, IntervalShape::UnboundedLen);
-            if let Some(label) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
-            } else {
-                expr
-            }
-        })
-        .labelled("Unbounded Segment");
-
-    let ranged = piece_type
-        .then(label_str.or_not())
-        .then(range)
-        .map_with_span(|((type_, label), ((), range)), span| {
-            let expr = Expr::GeomPiece(type_, range);
-            if let Some(label) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
-            } else {
-                expr
-            }
-        })
-        .labelled("Ranged Segment");
-
-    let fixed = piece_type
-        .then(label_str.or_not())
-        .then(fixed_len)
-        .map_with_span(|((type_, label), len), span| {
-            let expr = Expr::GeomPiece(type_, len);
-            if let Some(label) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
-            } else {
-                expr
-            }
-        })
-        .labelled("Fixed Length Segment");
-
-    let fixed_seq = just(Token::FixedSeq)
-        .to(IntervalKind::FixedSeq)
-        .then(label_str.or_not())
-        .then(nucstr)
-        .map_with_span(|((type_, label), nucs), span| {
-            let expr = Expr::GeomPiece(type_, nucs);
-            if let Some(label) = label {
-                Expr::LabeledGeomPiece(label, S(Box::new(expr), span))
-            } else {
-                expr
-            }
-        })
-        .labelled("Fixed Sequence Segment");
-
-    let geom_piece = choice((
-        unbounded.clone(),
-        ranged.clone(),
-        fixed.clone(),
-        fixed_seq.clone(),
-        label,
-        self_,
-    ));
-
-    let transformed_pieces = recursive(|transformed_pieces| {
-        let recursive_num_arg = transformed_pieces
-            .clone()
+    ($base:expr, $first:expr $(, $rest:expr)* $(,)?) => {{
+        $base
             .then_ignore(just(Token::Comma))
-            .then(num)
-            .map_with_span(S)
-            .delimited_by(just(Token::LParen), just(Token::RParen));
+            .then($first)
+            $(
+                .then_ignore(just(Token::Comma)).then($rest)
+            )*
+            .map_with(|res, state| S(res, state.span()))
+            .delimited_by(
+                just(Token::LParen),
+                just(Token::RParen)
+            )
+    }}
+}
 
-        let recursive_num_nuc_args = transformed_pieces
-            .clone()
-            .then_ignore(just(Token::Comma))
-            .then(num)
-            .then_ignore(just(Token::Comma))
-            .then(nuc)
-            .map_with_span(S)
-            .delimited_by(just(Token::LParen), just(Token::RParen));
-
-        let num_arg = geom_piece
-            .clone()
-            .then_ignore(just(Token::Comma))
-            .then(num)
-            .map_with_span(S)
-            .delimited_by(just(Token::LParen), just(Token::RParen));
-
-        let recursive_no_arg = transformed_pieces
-            .clone()
-            .map_with_span(S)
-            .delimited_by(just(Token::LParen), just(Token::RParen));
-
-        choice((
-            geom_piece.clone(),
-            just(Token::Remove)
-                .map_with_span(|_, span| S(Function::Remove, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("Remove function"),
-            just(Token::Normalize)
-                .map_with_span(|_, span| S(Function::Normalize, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("Normalize function"),
-            just(Token::Hamming)
-                .map_with_span(|_, span| span)
-                .then(num_arg)
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::Hamming(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Hamming function"),
-            just(Token::Truncate)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::Truncate(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Truncate function"),
-            just(Token::TruncateLeft)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::TruncateLeft(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Truncate Left function"),
-            just(Token::TruncateTo)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::TruncateTo(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Truncate To function"),
-            just(Token::TruncateToLeft)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_arg.clone())
-                .map(|(fn_span, S((geom_p, num), span))| {
-                    Expr::Function(
-                        S(Function::TruncateToLeft(num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Truncate To Left function"),
-            just(Token::Pad)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_nuc_args.clone())
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
-                    Expr::Function(
-                        S(Function::Pad(num, nuc), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Pad function"),
-            just(Token::PadLeft)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_nuc_args.clone())
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
-                    Expr::Function(
-                        S(Function::PadLeft(num, nuc), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Pad Left function"),
-            just(Token::PadTo)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_nuc_args.clone())
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
-                    Expr::Function(
-                        S(Function::PadTo(num, nuc), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Pad To function"),
-            just(Token::PadToLeft)
-                .map_with_span(|_, span| span)
-                .then(recursive_num_nuc_args)
-                .map(|(fn_span, S(((geom_p, num), nuc), span))| {
-                    Expr::Function(
-                        S(Function::PadToLeft(num, nuc), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Pad To Left function"),
-            just(Token::Reverse)
-                .map_with_span(|_, span| S(Function::Reverse, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("Reverse function"),
-            just(Token::ReverseComp)
-                .map_with_span(|_, span| S(Function::ReverseComp, span))
-                .then(recursive_no_arg.clone())
-                .map(|(fn_, tok)| Expr::Function(fn_, tok.boxed()))
-                .labelled("Reverse Complement function"),
-            just(Token::Map)
-                .map_with_span(|_, span| span)
-                .then(
-                    geom_piece
-                        .clone()
-                        .then_ignore(just(Token::Comma))
-                        .then(file.or(argument))
-                        .then_ignore(just(Token::Comma))
-                        .then(transformed_pieces.clone().map_with_span(S))
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen)),
+macro_rules! unary_function {
+    ($func:tt, $arg:expr) => {{
+        just(Token::$func)
+            .labelled(stringify!($func))
+            .map_with(|_, state| state.span())
+            .then($arg)
+            .map(move |(fn_span, S(geom_p, span))| {
+                Expr::Function(
+                    S(Function::$func.clone(), fn_span),
+                    S(Box::new(geom_p), span),
                 )
-                .map(|(fn_span, S(((geom_p, path), self_expr), span))| {
-                    Expr::Function(
-                        S(Function::Map(path, self_expr.boxed()), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Map function"),
-            just(Token::MapWithMismatch)
-                .map_with_span(|_, span| span)
-                .then(
-                    geom_piece
-                        .clone()
-                        .then_ignore(just(Token::Comma))
-                        .then(file.or(argument))
-                        .then_ignore(just(Token::Comma))
-                        .then(transformed_pieces.clone().map_with_span(S))
-                        .then_ignore(just(Token::Comma))
-                        .then(num)
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen)),
+            })
+            .labelled(concat!("Unary function ", stringify!($func)))
+            .as_context()
+    }};
+}
+
+macro_rules! binary_function {
+    ($func:tt, $arg:expr) => {{
+        just(Token::$func)
+            .labelled(stringify!($func))
+            .map_with(|_, state| state.span())
+            .then($arg)
+            .map(move |(fn_span, S((geom_p, arg), span))| {
+                Expr::Function(
+                    S(Function::$func.clone()(arg), fn_span),
+                    S(Box::new(geom_p), span),
                 )
-                .map(|(fn_span, S((((geom_p, path), self_expr), num), span))| {
+            })
+            .labelled(concat!("Binary function ", stringify!($func)))
+            .as_context()
+    }};
+}
+
+macro_rules! ternary_function {
+    ($func:tt, $arg:expr) => {{
+        just(Token::$func)
+            .labelled(stringify!($func))
+            .map_with(|_, state| state.span())
+            .then($arg)
+            .map(move |(fn_span, S(((geom_p, arg_one), arg_two), span))| {
+                Expr::Function(
+                    S(Function::$func.clone()(arg_one, arg_two), fn_span),
+                    S(Box::new(geom_p), span),
+                )
+            })
+            .labelled(concat!("Ternary function ", stringify!($func)))
+            .as_context()
+    }};
+}
+
+macro_rules! quaternary_function {
+    ($func:tt, $arg:expr $(,)?) => {{
+        just(Token::$func)
+            .labelled(stringify!($func))
+            .map_with(|_, state| state.span())
+            .then($arg)
+            .map(
+                move |(fn_span, S((((geom_p, arg_one), arg_two), arg_three), span))| {
                     Expr::Function(
                         S(
-                            Function::MapWithMismatch(path, self_expr.boxed(), num),
+                            Function::$func.clone()(arg_one, arg_two, arg_three),
                             fn_span,
                         ),
                         S(Box::new(geom_p), span),
                     )
-                })
-                .labelled("Map with mismatch function"),
-            just(Token::FilterWithinDist)
-                .map_with_span(|_, span| span)
-                .then(
-                    geom_piece
-                        .then_ignore(just(Token::Comma))
-                        .then(file.or(argument))
-                        .then_ignore(just(Token::Comma))
-                        .then(num)
-                        .map_with_span(S)
-                        .delimited_by(just(Token::LParen), just(Token::RParen)),
+                },
+            )
+            .labelled(concat!("Quaternary function ", stringify!($func)))
+            .as_context()
+    }};
+}
+
+macro_rules! nary_functions {
+    ($helper:ident, $arg:expr, $($func:tt),* $(,)?) => {{
+        choice((
+            $(
+                $helper!($func, $arg.clone()),
+            )*
+        ))
+    }}
+}
+
+macro_rules! parse_geometry_piece {
+    ($piece_type:expr, $inline_label:expr, $kind:expr) => {{
+        $piece_type
+            .then($inline_label.or_not())
+            .then($kind)
+            .map_with(|((kind, label), shape), state| {
+                make_geom_piece(kind, shape, label, state.span())
+            })
+    }};
+}
+
+// TODO: label everything to add better errors
+pub fn parser<'tokens>(
+) -> Box<dyn Parser<'tokens, Input<'tokens>, Description, ExtraErr<Rich<'tokens, Token>>> + 'tokens>
+{
+    // begin with defining basic token selectors
+    let label = select! { Token::Label(x) => x.clone() };
+    let num = select! {Token::Num(n) => n };
+    let file = select! {Token::File(f) => f.clone() };
+    let argument = select! {Token::Arg(n) => n.to_string() };
+    let self_ = select! { Token::Self_ => Expr::Self_ };
+
+    let piece_type = select! {
+        Token::Barcode => IntervalKind::Barcode,
+        Token::SampleBarcode => IntervalKind::SampleBarcode,
+        Token::Umi => IntervalKind::Umi,
+        Token::Discard => IntervalKind::Discard,
+        Token::ReadSeq => IntervalKind::ReadSeq,
+    };
+
+    let nuc = select! {
+        Token::A => Nucleotide::A,
+        Token::T => Nucleotide::T,
+        Token::G => Nucleotide::G,
+        Token::C => Nucleotide::C,
+        Token::U => Nucleotide::U,
+    };
+
+    let inline_label = label
+        .delimited_by(
+            just(Token::LAngle).labelled("opening '<'"),
+            just(Token::RAngle).labelled("closing '>'"),
+        )
+        .map_with(|l, span: &mut _| Expr::Label(S(l, span.span())))
+        .labelled("inline label");
+
+    // interval shape parsers
+    let range = num
+        .labelled("number")
+        .then_ignore(just(Token::Dash))
+        .then(num.labelled("number"))
+        .map_with(|(a, b), span| IntervalShape::RangedLen(S((a, b), span.span())))
+        .delimited_by(just(Token::LBracket), just(Token::RBracket))
+        .labelled("variable length geometry peice shape: [<num>-<num>]");
+
+    let fixed_len = num
+        .labelled("number")
+        .map_with(|n, state| IntervalShape::FixedLen(S(n, state.span())))
+        .delimited_by(just(Token::LBracket), just(Token::RBracket))
+        .labelled("fixed length geometry piece shape: [<num>]");
+
+    let nuc_seq = nuc
+        .labelled("nucleotide")
+        .repeated()
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .map_with(|seq, span| IntervalShape::FixedSeq(S(seq, span.span())))
+        .delimited_by(just(Token::LBracket), just(Token::RBracket))
+        .labelled("nucleotide sequence");
+
+    // geom piece parsers
+    let unbounded = piece_type
+        .then(inline_label.clone().or_not())
+        .then_ignore(just(Token::Colon))
+        .map_with(|(kind, label), span| {
+            make_geom_piece(kind, IntervalShape::UnboundedLen, label, span.span())
+        })
+        .labelled("Unbounded geometry peice: e.g. 'r:'")
+        .as_context();
+
+    let ranged = parse_geometry_piece!(piece_type, inline_label.clone(), range)
+        .labelled("Variable length geometry piece: e.g. 'b[9-10]'")
+        .as_context();
+    let fixed_seq = parse_geometry_piece!(
+        just(Token::FixedSeq).to(IntervalKind::FixedSeq),
+        inline_label.clone(),
+        nuc_seq
+    )
+    .labelled("Fixed sequence geometry piece: e.g. 'f[ATGC]'")
+    .as_context();
+    let fixed = parse_geometry_piece!(piece_type, inline_label.clone(), fixed_len)
+        .labelled("Fixed length geometry piece: e.g. 'b[10]'")
+        .as_context();
+
+    // what constitutes a valid geometry peice
+    let geom_piece = choice((unbounded, ranged, fixed, fixed_seq, inline_label, self_));
+
+    // transformed peices
+    let transformed_pieces = recursive(|tp| {
+        choice((
+            geom_piece.clone(),
+            nary_functions!(
+                unary_function,
+                function_arguments!(tp
+                    .clone()
+                    .labelled("geometry piece as sole argument to function")),
+                ReverseComp,
+                Reverse,
+                Remove,
+                Normalize
+            ),
+            nary_functions!(
+                binary_function,
+                function_arguments!(
+                    tp.clone()
+                        .labelled("geometry peice as argument to binary function"),
+                    num.labelled("numerical argument to binary function")
+                ),
+                Hamming,
+                Edit,
+                Truncate,
+                TruncateLeft,
+                TruncateTo,
+                TruncateToLeft
+            ),
+            binary_function!(
+                Filter,
+                function_arguments!(
+                    tp.clone()
+                        .labelled("geometry piece as argument to 'filter'"),
+                    file.labelled("file name")
+                        .or(argument.labelled("argument from commandline"))
                 )
-                .map(|(fn_span, S(((geom_p, path), num), span))| {
-                    Expr::Function(
-                        S(Function::FilterWithinDist(path, num), fn_span),
-                        S(Box::new(geom_p), span),
-                    )
-                })
-                .labelled("Filter within dist function"),
+            ),
+            nary_functions!(
+                ternary_function,
+                function_arguments!(
+                    tp.clone()
+                        .labelled("geometry piece as argument to 'pad'-like functions"),
+                    num.labelled("numerical argument to 'pad'-like functions"),
+                    nuc.labelled("nucleotide to pad with")
+                ),
+                Pad,
+                PadLeft,
+                PadTo,
+                PadToLeft
+            ),
+            nary_functions!(
+                ternary_function,
+                function_arguments!(
+                    tp.clone().labelled("geometry piece to 'map'"),
+                    file.labelled("file name")
+                        .or(argument.labelled("argument from commandline")),
+                    tp.clone()
+                        .labelled("geometry piece after mapping")
+                        .map_with(|transf_p, state| S(Box::new(transf_p), state.span()))
+                ),
+                Map,
+            ),
+            ternary_function!(
+                FilterWithinDist,
+                function_arguments!(
+                    tp.clone()
+                        .labelled("geometry piece to 'filter_within_dist'"),
+                    file.labelled("file name")
+                        .or(argument.labelled("argument from commandline")),
+                    num.labelled("numerical argument")
+                )
+            ),
+            nary_functions!(
+                quaternary_function,
+                function_arguments!(
+                    tp.clone().labelled("geometry piece to 'map_with_mismatch'"),
+                    file.labelled("file name")
+                        .or(argument.labelled("argument from commandline")),
+                    tp.clone()
+                        .labelled("geometry piece after mapping")
+                        .map_with(|transf_p, state| S(Box::new(transf_p), state.span())),
+                    num.labelled("numerical argument")
+                ),
+                MapWithMismatch,
+                MapWithEdit,
+            ),
+            // Anchor relative function - search for anchor and extract preceding elements
+            unary_function!(
+                Anchor,
+                function_arguments!(tp.clone().labelled("geometry piece for anchor_relative"))
+            ),
         ))
     })
-    .map_with_span(S);
+    .map_with(|s, state| S(s, state.span()));
 
-    let definitions = ident
-        .map_with_span(S)
-        .then_ignore(just(Token::Equals))
-        .then(transformed_pieces.clone())
-        .map_with_span(|(label, geom_p), span| {
+    // Annotation name: accepts Label tokens and keyword tokens that may appear
+    // as annotation names (e.g., edit, hamming, match).
+    let annotation_name = choice((
+        label,
+        just(Token::Edit).to("edit".to_string()),
+        just(Token::Hamming).to("hamming".to_string()),
+        just(Token::Match).to("match".to_string()),
+        just(Token::Anchor).to("anchor_relative".to_string()),
+        just(Token::Filter).to("filter".to_string()),
+        just(Token::Normalize).to("norm".to_string()),
+        just(Token::Reverse).to("rev".to_string()),
+        just(Token::ReverseComp).to("revcomp".to_string()),
+    ));
+
+    // Annotation argument: accepts labels, keywords, and numbers.
+    // NOTE: Keep in sync with annotation_name above -- every keyword
+    // accepted as a name should also be accepted as an argument.
+    let annotation_arg = choice((
+        label,
+        num.map(|n: usize| n.to_string()),
+        just(Token::Edit).to("edit".to_string()),
+        just(Token::Hamming).to("hamming".to_string()),
+        just(Token::Match).to("match".to_string()),
+        just(Token::Anchor).to("anchor_relative".to_string()),
+        just(Token::Filter).to("filter".to_string()),
+        just(Token::Normalize).to("norm".to_string()),
+        just(Token::Reverse).to("rev".to_string()),
+        just(Token::ReverseComp).to("revcomp".to_string()),
+        just(Token::Fw).to("fw".to_string()),
+        just(Token::Rc).to("rc".to_string()),
+    ));
+
+    // Parse annotation: #[name(arg1, arg2, ...)]
+    let annotation = just(Token::HashBracket)
+        .ignore_then(
+            annotation_name
+                .map_with(|name, state| S(name, state.span()))
+                .then(
+                    annotation_arg
+                        .map_with(|a, state| S(a, state.span()))
+                        .separated_by(just(Token::Comma))
+                        .collect::<Vec<_>>()
+                        .delimited_by(just(Token::LParen), just(Token::RParen)),
+                )
+                .then_ignore(just(Token::RBracket)),
+        )
+        .map_with(|(name, args), state| S(Annotation { name, args }, state.span()));
+
+    // define the basic peices of an EFGDL description
+    // Definitions may be preceded by annotations: #[edit(5)] foo = f[ABC]
+    let definitions = annotation
+        .clone()
+        .repeated()
+        .collect::<Vec<_>>()
+        .then(
+            label
+                .labelled("definition identifier")
+                .map_with(|l, state| S(l, state.span()))
+                .then_ignore(just(Token::Equals))
+                .then(transformed_pieces.clone()),
+        )
+        .map_with(|(annotations, (label, expr)), span| {
             S(
                 Definition {
+                    annotations,
                     label,
-                    expr: geom_p,
+                    expr,
                 },
-                span,
-            )
-        })
-        .repeated();
-
-    let reads = num
-        .map_with_span(S)
-        .then(
-            transformed_pieces
-                .clone()
-                .repeated()
-                .at_least(1)
-                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-        )
-        .map_with_span(|(n, read), span| {
-            S(
-                Read {
-                    index: n,
-                    exprs: read,
-                },
-                span,
+                span.span(),
             )
         })
         .repeated()
-        .exactly(2)
-        .collect::<Vec<_>>();
+        .collect()
+        .map_with(|defs, span| S(defs, span.span()));
 
-    let transform_read = num
-        .map_with_span(S)
+    let reads = annotation
+        .clone()
+        .repeated()
+        .collect::<Vec<_>>()
         .then(
-            transformed_pieces
-                .clone()
-                .repeated()
-                .at_least(1)
-                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            num.labelled("read number")
+                .map_with(|n, state| S(n, state.span()))
+                .then(
+                    transformed_pieces
+                        .clone()
+                        .repeated()
+                        .at_least(1)
+                        .collect()
+                        .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+                ),
         )
-        .map_with_span(|(n, read), span| {
+        .map_with(|(annotations, (index, exprs)), span| {
             S(
                 Read {
-                    index: n,
-                    exprs: read,
+                    annotations,
+                    index,
+                    exprs,
                 },
-                span,
+                span.span(),
+            )
+        })
+        .repeated()
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .map_with(|v, span| S(v, span.span()));
+
+    let transform_read = num
+        .labelled("read number")
+        .map_with(|n, state| S(n, state.span()))
+        .then(
+            transformed_pieces
+                .repeated()
+                .at_least(1)
+                .collect()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map_with(|(index, exprs), state| {
+            S(
+                Read {
+                    annotations: vec![],
+                    index,
+                    exprs,
+                },
+                state.span(),
             )
         });
 
-    let transformation = choice((
-        end().map(|()| None),
+    // Parse match block: match 1.ori { fw => 1{...} 2{...}, rc => 1{...} 2{...} }
+    let match_block = just(Token::Match)
+        .ignore_then(
+            num.labelled("read reference in match")
+                .map_with(|n, state| S(n, state.span())),
+        )
+        .then_ignore(just(Token::Dot))
+        .then(
+            label
+                .labelled("attribute name in match")
+                .map_with(|a, state| S(a, state.span())),
+        )
+        .then(
+            just(Token::Fw)
+                .ignore_then(just(Token::FatArrow))
+                .ignore_then(
+                    transform_read
+                        .clone()
+                        .repeated()
+                        .at_least(1)
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(just(Token::Comma))
+                .then(
+                    just(Token::Rc)
+                        .ignore_then(just(Token::FatArrow))
+                        .ignore_then(
+                            transform_read
+                                .clone()
+                                .repeated()
+                                .at_least(1)
+                                .collect::<Vec<_>>(),
+                        ),
+                )
+                .then_ignore(just(Token::Comma).or_not())
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map(
+            |((read_ref, attr), (fw_arm, rc_arm))| TransformOutput::Match {
+                read_ref,
+                attr,
+                fw_arm,
+                rc_arm,
+            },
+        );
+
+    let transformations = choice((
+        end().map(|_| None),
         just(Token::TransformTo)
-            .then(transform_read.repeated().at_least(1).at_most(2))
-            .map_with_span(|(_, val), span| Some(S(val, span))),
+            .ignore_then(choice((
+                match_block.then(end()).map(|(m, _)| m),
+                transform_read
+                    .repeated()
+                    .at_least(1)
+                    .at_most(2)
+                    .collect::<Vec<_>>()
+                    .then(end())
+                    .map(|(val, _)| TransformOutput::Direct(val)),
+            )))
+            .map_with(|output, state| Some(S(output, state.span()))),
     ));
 
-    definitions
-        .map_with_span(S)
-        .then(reads.map_with_span(S))
-        .then(transformation)
-        .map(|((d, r), t)| Description {
-            definitions: d,
-            reads: r,
-            transforms: t,
-        })
-        .recover_with(skip_then_retry_until([]))
+    Box::new(
+        definitions
+            .then(reads)
+            .then(transformations)
+            .map(|((defs, reads), transforms)| Description {
+                definitions: defs,
+                reads,
+                transforms,
+            }),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Nucleotide, S};
+
+    fn span() -> Span {
+        (0..1).into()
+    }
+
+    #[test]
+    fn test_interval_shape_display() {
+        let fixed = IntervalShape::FixedLen(S(16, span()));
+        assert_eq!(format!("{}", fixed), "[16]");
+
+        let seq = IntervalShape::FixedSeq(S(
+            vec![Nucleotide::A, Nucleotide::C, Nucleotide::G, Nucleotide::T],
+            span(),
+        ));
+        assert_eq!(format!("{}", seq), "[ACGT]");
+
+        let ranged = IntervalShape::RangedLen(S((8, 12), span()));
+        assert_eq!(format!("{}", ranged), "[8-12]");
+
+        let unbounded = IntervalShape::UnboundedLen;
+        assert_eq!(format!("{}", unbounded), ":");
+    }
+
+    #[test]
+    fn test_interval_kind_display() {
+        assert_eq!(format!("{}", IntervalKind::Barcode), "b");
+        assert_eq!(format!("{}", IntervalKind::SampleBarcode), "s");
+        assert_eq!(format!("{}", IntervalKind::Umi), "u");
+        assert_eq!(format!("{}", IntervalKind::Discard), "x");
+        assert_eq!(format!("{}", IntervalKind::ReadSeq), "r");
+        assert_eq!(format!("{}", IntervalKind::FixedSeq), "f");
+    }
+
+    #[test]
+    fn test_expr_display_self() {
+        assert_eq!(format!("{}", Expr::Self_), "self");
+    }
+
+    #[test]
+    fn test_expr_display_label() {
+        let e = Expr::Label(S("foo".to_string(), span()));
+        assert_eq!(format!("{}", e), "<foo>");
+    }
+
+    #[test]
+    fn test_expr_display_geom_piece() {
+        let e = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        assert_eq!(format!("{}", e), "b[16]");
+    }
+
+    #[test]
+    fn test_expr_display_labeled() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        let e = Expr::LabeledGeomPiece(S("bc1".to_string(), span()), S(Box::new(inner), span()));
+        assert_eq!(format!("{}", e), "bc1=b[16]");
+    }
+
+    #[test]
+    fn test_expr_display_function_reverse() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        let e = Expr::Function(S(Function::Reverse, span()), S(Box::new(inner), span()));
+        assert_eq!(format!("{}", e), "rev(b[16])");
+    }
+
+    #[test]
+    fn test_expr_display_function_revcomp() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        let e = Expr::Function(S(Function::ReverseComp, span()), S(Box::new(inner), span()));
+        assert_eq!(format!("{}", e), "revcomp(b[16])");
+    }
+
+    #[test]
+    fn test_function_fmt_variants() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+
+        let trunc = Expr::Function(
+            S(Function::Truncate(2), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", trunc), "trunc(b[16], 2)");
+
+        let trunc_left = Expr::Function(
+            S(Function::TruncateLeft(2), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", trunc_left), "trunc_left(b[16], 2)");
+
+        let trunc_to = Expr::Function(
+            S(Function::TruncateTo(10), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", trunc_to), "trunc_to(b[16], 10)");
+
+        let trunc_to_left = Expr::Function(
+            S(Function::TruncateToLeft(10), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", trunc_to_left), "trunc_to_left(b[16], 10)");
+
+        let remove = Expr::Function(
+            S(Function::Remove, span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", remove), "remove(b[16])");
+
+        let pad = Expr::Function(
+            S(Function::Pad(4, Nucleotide::A), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", pad), "pad(b[16], 4, A)");
+
+        let pad_left = Expr::Function(
+            S(Function::PadLeft(4, Nucleotide::T), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", pad_left), "pad_left(b[16], 4, T)");
+
+        let pad_to = Expr::Function(
+            S(Function::PadTo(20, Nucleotide::G), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", pad_to), "pad_to(b[16], 20, G)");
+
+        let pad_to_left = Expr::Function(
+            S(Function::PadToLeft(20, Nucleotide::C), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", pad_to_left), "pad_to_left(b[16], 20, C)");
+
+        let norm = Expr::Function(
+            S(Function::Normalize, span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", norm), "norm(b[16])");
+
+        let hamming = Expr::Function(
+            S(Function::Hamming(1), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", hamming), "hamming(b[16], 1)");
+
+        let edit = Expr::Function(
+            S(Function::Edit(1), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", edit), "edit(b[16], 1)");
+
+        let anchor = Expr::Function(
+            S(Function::Anchor, span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", anchor), "anchor_relative(b[16])");
+
+        let filter = Expr::Function(
+            S(Function::Filter("test".into()), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(format!("{}", filter), "filter(b[16], test)");
+
+        let filter_within = Expr::Function(
+            S(Function::FilterWithinDist("test".into(), 2), span()),
+            S(Box::new(inner.clone()), span()),
+        );
+        assert_eq!(
+            format!("{}", filter_within),
+            "filter_within_dist(b[16], test, 2)"
+        );
+    }
+
+    #[test]
+    fn test_function_fmt_map_variants() {
+        let inner = Expr::GeomPiece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+        );
+        let self_expr = Expr::Self_;
+
+        let map = Expr::Function(
+            S(
+                Function::Map("file.tsv".into(), S(Box::new(self_expr.clone()), span())),
+                span(),
+            ),
+            S(Box::new(inner.clone()), span()),
+        );
+        let s = format!("{}", map);
+        assert!(s.contains("map("));
+        assert!(s.contains("file.tsv"));
+
+        let map_mm = Expr::Function(
+            S(
+                Function::MapWithMismatch(
+                    "file.tsv".into(),
+                    S(Box::new(self_expr.clone()), span()),
+                    1,
+                ),
+                span(),
+            ),
+            S(Box::new(inner.clone()), span()),
+        );
+        let s = format!("{}", map_mm);
+        assert!(s.contains("map_with_mismatch("));
+
+        let map_edit = Expr::Function(
+            S(
+                Function::MapWithEdit("file.tsv".into(), S(Box::new(self_expr.clone()), span()), 1),
+                span(),
+            ),
+            S(Box::new(inner.clone()), span()),
+        );
+        let s = format!("{}", map_edit);
+        assert!(s.contains("map_with_edit("));
+    }
+
+    #[test]
+    fn test_make_geom_piece_no_label() {
+        let piece = make_geom_piece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+            None,
+            span(),
+        );
+        assert!(matches!(piece, Expr::GeomPiece(IntervalKind::Barcode, _)));
+    }
+
+    #[test]
+    fn test_make_geom_piece_with_label() {
+        let piece = make_geom_piece(
+            IntervalKind::Barcode,
+            IntervalShape::FixedLen(S(16, span())),
+            Some(Expr::Label(S("bc1".to_string(), span()))),
+            span(),
+        );
+        assert!(matches!(piece, Expr::LabeledGeomPiece(_, _)));
+    }
+
+    // ---------------------------------------------------------------
+    // SampleBarcode (`s`) tests
+    // ---------------------------------------------------------------
+
+    /// Helper: lex and parse a source string through the full pipeline.
+    fn parse_full(src: &str) -> Description {
+        use chumsky::input::Input;
+        use chumsky::Parser as _;
+
+        let tokens = crate::lexer::lexer()
+            .parse(src)
+            .into_result()
+            .expect("lex errors");
+        let spanned = tokens
+            .into_iter()
+            .map(|(tok, span)| chumsky::span::Spanned { inner: tok, span })
+            .collect::<Vec<_>>();
+        let input = spanned[..].split_spanned((0..src.len()).into());
+        let result = parser().parse(input).into_result().expect("parse errors");
+        result
+    }
+
+    #[test]
+    fn test_parse_sample_barcode_fixed_length() {
+        let desc = parse_full("1{s[8]r:}");
+        let reads = desc.reads.0;
+        assert_eq!(reads.len(), 1);
+        let first = &reads[0].0.exprs[0].0;
+        match first {
+            Expr::GeomPiece(IntervalKind::SampleBarcode, IntervalShape::FixedLen(S(n, _))) => {
+                assert_eq!(*n, 8);
+            }
+            other => panic!(
+                "expected GeomPiece(SampleBarcode, FixedLen(8)), got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_parse_sample_barcode_labeled() {
+        let desc = parse_full("1{s<sample>[8]r:}");
+        let reads = desc.reads.0;
+        assert_eq!(reads.len(), 1);
+        let first = &reads[0].0.exprs[0].0;
+        match first {
+            Expr::LabeledGeomPiece(S(label, _), S(inner, _)) => {
+                assert_eq!(label, "sample");
+                match inner.as_ref() {
+                    Expr::GeomPiece(
+                        IntervalKind::SampleBarcode,
+                        IntervalShape::FixedLen(S(n, _)),
+                    ) => {
+                        assert_eq!(*n, 8);
+                    }
+                    other => panic!(
+                        "inner expected GeomPiece(SampleBarcode, FixedLen(8)), got {:?}",
+                        other
+                    ),
+                }
+            }
+            other => panic!("expected LabeledGeomPiece, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_sample_barcode_ranged() {
+        let desc = parse_full("1{s[6-8]r:}");
+        let first = &desc.reads.0[0].0.exprs[0].0;
+        match first {
+            Expr::GeomPiece(
+                IntervalKind::SampleBarcode,
+                IntervalShape::RangedLen(S((a, b), _)),
+            ) => {
+                assert_eq!(*a, 6);
+                assert_eq!(*b, 8);
+            }
+            other => panic!(
+                "expected GeomPiece(SampleBarcode, RangedLen(6,8)), got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_parse_10x_flex_full_geometry() {
+        let desc = parse_full("1{b[16]u[12]}2{r:x[28]s[8]}");
+        let reads = desc.reads.0;
+        assert_eq!(reads.len(), 2);
+
+        // Read 1: b[16], u[12]
+        let r1 = &reads[0].0;
+        assert_eq!(r1.index.0, 1);
+        assert!(matches!(
+            r1.exprs[0].0,
+            Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen(_))
+        ));
+        assert!(matches!(
+            r1.exprs[1].0,
+            Expr::GeomPiece(IntervalKind::Umi, IntervalShape::FixedLen(_))
+        ));
+
+        // Read 2: r:, x[28], s[8]
+        let r2 = &reads[1].0;
+        assert_eq!(r2.index.0, 2);
+        assert!(matches!(
+            r2.exprs[0].0,
+            Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::UnboundedLen)
+        ));
+        assert!(matches!(
+            r2.exprs[1].0,
+            Expr::GeomPiece(IntervalKind::Discard, IntervalShape::FixedLen(_))
+        ));
+        match &r2.exprs[2].0 {
+            Expr::GeomPiece(IntervalKind::SampleBarcode, IntervalShape::FixedLen(S(n, _))) => {
+                assert_eq!(*n, 8);
+            }
+            other => panic!("expected last expr to be SampleBarcode[8], got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_expr_display_sample_barcode_roundtrip() {
+        let e = Expr::GeomPiece(
+            IntervalKind::SampleBarcode,
+            IntervalShape::FixedLen(S(8, span())),
+        );
+        assert_eq!(format!("{}", e), "s[8]");
+    }
 }

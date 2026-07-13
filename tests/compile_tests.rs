@@ -1,26 +1,25 @@
+#[macro_use]
+mod common;
+
 use std::collections::HashMap;
 
-use chumsky::{prelude::*, Stream};
 use seqproc::{
     compile::{compile, definitions::compile_definitions, reads::compile_reads, utils::Error},
-    lexer::lexer,
-    parser::parser,
+    execute::compile_geom,
 };
+
+use crate::common::utils::{result_with_errs, ParsedInput};
 
 #[test]
 fn no_err() -> Result<(), Error> {
     let src = "1{remove(hamming(f[CAG], 1))}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     compile_reads(res.reads, HashMap::new())?;
 
@@ -31,16 +30,12 @@ fn no_err() -> Result<(), Error> {
 fn fail_norm() {
     let src = "1{norm(r:)}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     let res = compile_reads(res.reads, HashMap::new());
 
@@ -51,16 +46,12 @@ fn fail_norm() {
 fn pass_composition() {
     let src = "1{trunc_to(rev(r:), 1)}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     let res = compile_reads(res.reads, HashMap::new());
 
@@ -71,16 +62,12 @@ fn pass_composition() {
 fn fail_remove() {
     let src = "1{rev(remove(r:))}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     let res = compile_reads(res.reads, HashMap::new());
 
@@ -91,16 +78,13 @@ fn fail_remove() {
 fn discard_as_void() {
     let src = "1{rev(x[10])}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+    println!("{:?} {:?}", lex_errs, parse_errs);
+    let res = parse_res.unwrap();
 
     let res = compile_reads(res.reads, HashMap::new());
 
@@ -114,18 +98,14 @@ brc = b[10]
 brc1 = b[1-4]
 1{<brc>}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
-    let def_map = compile_definitions(res.definitions)?;
+    let (def_map, _warnings) = compile_definitions(res.definitions)?;
 
     assert_eq!(2, def_map.len());
 
@@ -139,39 +119,30 @@ brc = b[10]
 brc = b[1-4]
 1{<brc>}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
+    let def_result = compile_definitions(res.definitions);
 
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
-    let def_map = compile_definitions(res.definitions);
-
-    assert!(def_map.is_err());
+    assert!(def_result.is_err());
 }
 
 #[test]
 fn label_replacement() {
-    let src = "test = r: 
+    let src = "test = r:
     1{pad_to(<test>, 5, A)}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
-    let def_map = compile_definitions(res.definitions).unwrap();
+    let (def_map, _) = compile_definitions(res.definitions).unwrap();
 
     let res = compile_reads(res.reads, def_map);
 
@@ -180,21 +151,17 @@ fn label_replacement() {
 
 #[test]
 fn no_variable() {
-    let src = "testing = r: 
+    let src = "testing = r:
     1{pad(<test>, 5, A)}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
-    let def_map = compile_definitions(res.definitions).unwrap();
+    let (def_map, _) = compile_definitions(res.definitions).unwrap();
 
     let res = compile_reads(res.reads, def_map);
 
@@ -205,16 +172,12 @@ fn no_variable() {
 fn expr_unwrap() -> Result<(), Error> {
     let src = "1{pad(norm(b[9-10]), 1, A)remove(f[CAGAGC])u[8]remove(b[10])}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     compile(res)?;
 
@@ -227,18 +190,14 @@ fn fail_reuse_label() {
 brc = b[10]
 1{<brc><brc>}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
-    let def_map = compile_definitions(res.definitions).unwrap();
+    let (def_map, _) = compile_definitions(res.definitions).unwrap();
 
     let res = compile_reads(res.reads, def_map);
 
@@ -252,20 +211,16 @@ brc = b[10]
 brc1 = pad(<brc>, 1, A)
 1{<brc>}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
-    let res = res.unwrap();
+    let def_result = compile_definitions(res.definitions);
 
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
-    let def_map = compile_definitions(res.definitions);
-
-    assert!(def_map.is_err());
+    assert!(def_result.is_err());
 }
 
 #[test]
@@ -275,16 +230,12 @@ brc = b[10]
 umi = pad(u[10], 1, A)
 1{<brc>}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     compile(res)?;
 
@@ -298,17 +249,12 @@ brc = b[10]
 umi = pad(u[10], 1, A)
 1{<brc><brc>}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
     let res = compile(res);
 
     assert!(res.is_err());
@@ -320,16 +266,12 @@ fn fail_label_composition() {
 brc = remove(trunc(b[10], 3))
 1{pad(<brc>, 1, A)}2{r:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     let res = compile(res);
 
@@ -340,17 +282,12 @@ brc = remove(trunc(b[10], 3))
 fn valid_geom() -> Result<(), Error> {
     let src = "1{b<brc1>[9-11]remove(f[CAGAGC])u<umi>[8]b<brc2>[10]}2{r<read>:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
     compile(res)?;
 
     Ok(())
@@ -360,16 +297,12 @@ fn valid_geom() -> Result<(), Error> {
 fn invalid_geom_one() {
     let src = "1{b[9-11]f[CAGAGC]r:u[8]b[10]}2{r<read>:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     let res = compile(res);
 
@@ -380,17 +313,12 @@ fn invalid_geom_one() {
 fn invalid_geom_two() {
     let src = "1{f[GAG]b[10-11]b[10]}2{r<read>:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
     let res = compile(res);
 
     assert!(res.is_err());
@@ -405,16 +333,12 @@ test = r:
 1{pad(<brc>, 1, A)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
  -> 1{<brc>remove(<read1>)remove(<umi>)<read>}
 ";
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     compile(res)?;
 
@@ -429,16 +353,12 @@ umi = norm(u[9-11])
 1{pad(<brc>, 1, A)f<read1>[CAGAGC]<umi>f<another>[CAGA]}2{r<read>:}
  -> 1{<brc>remove(<read1>)remove(pad(<umi>, 1, A))<read>}
 ";
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
 
     compile(res)?;
 
@@ -449,17 +369,12 @@ umi = norm(u[9-11])
 fn compile_map_arguments() -> Result<(), Error> {
     let src = "1{map(b[10-11], \"file\", norm(self))}2{r<read>:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
     compile(res)?;
 
     Ok(())
@@ -468,21 +383,212 @@ fn compile_map_arguments() -> Result<(), Error> {
 #[test]
 fn compile_map_arguments_with_label() -> Result<(), Error> {
     let src = "
-brc = b[10-11]    
-1{map(<brc>>, \"file\", norm(self))}2{r<read>:}";
+brc = b[10-11]
+1{map(<brc>, \"file\", norm(self))}2{r<read>:}";
 
-    let (res, _) = lexer().parse_recovery(src);
-
-    let res = res.unwrap();
-
-    let len = res.len();
-
-    let res = parser()
-        .parse_recovery(Stream::from_iter(len..len + 1, res.into_iter()))
-        .0
-        .unwrap();
-
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
     compile(res)?;
 
     Ok(())
+}
+
+#[test]
+fn test_simplified_geom() {
+    let geom = String::from("1{b[9-10]f[CAGAGC]u[8]b[10]}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]u[8]b[10]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_simplified_geom_with_transformation() {
+    let geom = String::from(
+        "1{b<brc>[9-10]f[CAGAGC]u<umi>[8]b<brc2>[10]}2{r<read>:} -> 1{<brc><brc2><umi>}2{<read>}",
+    );
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[10]u[8]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_desc_with_remove() {
+    let geom = String::from("1{b[9-10]f[CAGAGC]remove(u[8])b[10]}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[10]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_desc_with_pad() {
+    let geom = String::from("1{b[9-10]f[CAGAGC]remove(u[8])pad_to(b[10], 13, A)}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[13]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_desc_with_trunc() {
+    let geom = String::from("1{b[9-10]f[CAGAGC]remove(u[8])trunc(b[10], 3)}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[7]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_simplified_geom_from_def() {
+    let geom = String::from("brc = b[9-10] 1{<brc>f[CAGAGC]remove(u[8])b[10]}2{r:}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+    assert_eq!(
+        "1{b[11]b[10]}2{r:}",
+        res.ok().unwrap().get_simplified_description_string()
+    );
+}
+
+#[test]
+fn test_anchor_relative_basic() {
+    // Test that search(relative) + hamming annotation compiles successfully
+    let geom = String::from(
+        "#[search(relative)] #[hamming(3)] l1 = f[GTGGCCGATGTTTCGCATCGGCGTACGACT]\n1{r:}2{u[10]b[8]<l1>b[8]}",
+    );
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_anchor_relative_with_label() {
+    // Test anchor_relative with a labeled linker
+    let geom = String::from(
+        "
+#[search(relative)] #[hamming(3)] l1 = f[GTGGCCGATGTTTCGCATCGGCGTACGACT]
+1{r:}2{u[10]b[8]<l1>b[8]}
+",
+    );
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_dual_anchor_relative() {
+    // Test geometry with two anchor_relative calls (SPLiT-seq style)
+    let geom = String::from(
+        "
+#[search(relative)] #[hamming(3)] l1 = f[GTGGCCGATGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[hamming(3)] l2 = f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG]
+1{r:}2{u[10]b[8]<l1>b[8]<l2>b[8]}
+",
+    );
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_edit_distance_basic() {
+    // Test that #[edit(N)] annotation compiles successfully
+    let geom =
+        String::from("#[edit(2)] anchor = f[GTGGCCGATGTTTCGCATCGGCGTACGACT]\n1{r:}2{<anchor>b[8]}");
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_edit_distance_rejects_barcode() {
+    // edit() must only accept a fixed sequence (f[...]), not a barcode (b[...])
+    let src = "1{r:}2{edit(b[8], 2)r:}";
+
+    let ParsedInput {
+        parse_res,
+        lex_errs: _,
+        parse_errs: _,
+    } = result_with_errs(src);
+    let res = parse_res.unwrap();
+    let res = compile(res);
+
+    assert!(
+        res.is_err(),
+        "edit() should reject barcode (non-sequence) arguments"
+    );
+}
+
+#[test]
+fn test_edit_distance_anchor_relative() {
+    // Test search(relative) + edit annotation (indel-tolerant anchor search)
+    let geom = String::from(
+        "#[search(relative)] #[edit(3)] l1 = f[GTGGCCGATGTTTCGCATCGGCGTACGACT]\n1{r:}2{u[10]b[8]<l1>b[8]}",
+    );
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_edit_distance_with_label() {
+    // Test edit distance with a labeled linker
+    let geom = String::from(
+        "
+#[search(relative)] #[edit(2)] l1 = f[GTGGCCGATGTTTCGCATCGGCGTACGACT]
+1{r:}2{u[10]b[8]<l1>b[8]}
+",
+    );
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_dual_anchor_with_edit() {
+    // Test geometry with two anchor_relative calls using edit distance (for indel-tolerant long-read)
+    let geom = String::from(
+        "
+#[search(relative)] #[edit(3)] l1 = f[GTGGCCGATGTTTCGCATCGGCGTACGACT]
+#[search(relative)] #[edit(3)] l2 = f[ATCCACGTGCTTGAGAGGCCAGAGCATTCG]
+1{r:}2{u[10]b[8]<l1>b[8]<l2>b[8]}
+",
+    );
+
+    let res = compile_geom(geom);
+
+    assert!(res.is_ok());
 }

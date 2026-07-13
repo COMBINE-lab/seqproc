@@ -34,11 +34,15 @@ fn run_tests() -> Result<(), Box<dyn Error>> {
     for entry in in_dir_path.read_dir()? {
         let entry = entry?;
         let entry_name = &*entry.file_name().into_string().unwrap();
-        let fgdl = &*fgdl_dir_path.join(format!("{entry_name}.fgdl"));
+
+        let fgdl = &*fgdl_dir_path.join(format!("{entry_name}.geom"));
         let in_1 = &*entry.path().join(format!("{entry_name}_l.fastq"));
         let in_2 = &*entry.path().join(format!("{entry_name}_r.fastq"));
         let out = &*out_dir.path().join(format!("{entry_name}.fastq"));
         let expected_out = &*expected_out_dir_path.join(format!("{entry_name}.fastq"));
+
+        // create out file
+        fs::File::create(out)?;
 
         let in_dir_entries = entry.path().read_dir()?;
         let in_dir_entries: Vec<DirEntry> = in_dir_entries.collect::<Result<_, _>>()?;

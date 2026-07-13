@@ -16,8 +16,16 @@ use crate::{
 pub fn compile_transformation(
     S(reads, span): S<Vec<S<Read>>>,
     mut map: HashMap<String, GeometryMeta>,
+    read_intervals: &[(Interval, usize)],
 ) -> Result<(Transformation, HashMap<String, GeometryMeta>), Error> {
     let mut transformation: Transformation = Vec::new();
+    let read_labels = read_intervals
+        .iter()
+        .filter_map(|(i, _)| match i {
+            Interval::Named(n) => Some(n),
+            Interval::Temporary(_) => None,
+        })
+        .collect::<Vec<_>>();
 
     for S(Read { exprs, .. }, _) in reads {
         let mut inner_transformation: Vec<String> = Vec::new();
@@ -29,6 +37,8 @@ pub fn compile_transformation(
             let label: Option<S<String>>;
 
             'inner: loop {
+                let generic_transformation_msg =
+                    "Only labels and transformed labels can be referenced in transformations";
                 match expr.0 {
                     Expr::Function(fn_, gp) => {
                         expr = gp.unboxed();
@@ -38,7 +48,14 @@ pub fn compile_transformation(
                         label = Some(l.clone());
                         break 'inner;
                     }
-                    _ => unimplemented!(),
+                    Expr::LabeledGeomPiece(_, _) | Expr::GeomPiece(_, _) => return Err(Error {
+                        span: expr.1,
+                        msg: format!("{generic_transformation_msg} - Cannot construct intervals in a transformation")
+                    }),
+                    Expr::Self_ => return Err(Error {
+                        span: expr.1,
+                        msg: format!("{generic_transformation_msg} - Misplaced reference of 'self', this is a reserved token for the 'map' function."),
+                    })
                 }
             }
 
@@ -57,8 +74,33 @@ pub fn compile_transformation(
                 });
             };
 
+            if !read_labels.contains(&&label) {
+                return Err(Error {
+                    span: label_span,
+                    msg: format!("Cannot transform a non-matched label: variable with name \"{label}\" was defined but never matched in read.")
+                });
+            }
+
             for fn_ in stack {
                 compiled_stack.push(compile_fn(fn_, expr.clone())?);
+            }
+
+            for fn_ in &gp.stack {
+                if let S(CompiledFunction::Remove, span) = fn_ {
+                    return Err(Error {
+                        span: *span,
+                        msg: "Cannot reference a void interval after '->' - if you want to keep this interval then remove the 'remove' transformation.".to_string()
+                    });
+                }
+            }
+
+            // if label is removed just remove the label from the transformation
+            if let Some(S(fn_, _)) = compiled_stack.first() {
+                if &CompiledFunction::Remove != fn_ {
+                    inner_transformation.push(label.clone());
+                };
+            } else {
+                inner_transformation.push(label.clone());
             }
 
             let gp = GeometryMeta {
@@ -72,9 +114,7 @@ pub fn compile_transformation(
 
             gp.validate_expr()?;
 
-            map.insert(label.clone(), gp);
-
-            inner_transformation.push(label);
+            map.insert(label, gp);
         }
 
         transformation.push(inner_transformation);
@@ -114,4 +154,52 @@ pub fn label_transformation(
     }
 
     numbered_transformation
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::execute::compile_geom;
+
+    #[test]
+    fn test_compile_transformation_basic() {
+        let data = compile_geom(
+            "1{b<bc>[16]u<umi>[10]r<read>:}2{r<read2>:}->1{<bc><umi>}2{<read2>}".to_string(),
+        )
+        .unwrap();
+        assert!(data.transformation.is_some());
+        let tr = data.transformation.unwrap();
+        assert_eq!(tr.len(), 2);
+    }
+
+    #[test]
+    fn test_compile_transformation_with_function() {
+        let data = compile_geom(
+            "1{b<bc>[16]u<umi>[10]r<read>:}2{r<read2>:}->1{rev(<bc>)<umi>}2{<read2>}".to_string(),
+        )
+        .unwrap();
+        assert!(data.transformation.is_some());
+    }
+
+    #[test]
+    fn test_label_transformation() {
+        let labels = vec![
+            (Interval::Named("bc".to_string()), 1),
+            (Interval::Named("umi".to_string()), 1),
+        ];
+        let tr = vec![vec!["bc".to_string(), "umi".to_string()]];
+        let result = label_transformation(tr, &labels);
+        assert_eq!(result[0][0], "seq1.bc");
+        assert_eq!(result[0][1], "seq1.umi");
+    }
+
+    #[test]
+    fn test_find_num() {
+        let labels = vec![
+            (Interval::Named("bc".to_string()), 1),
+            (Interval::Named("umi".to_string()), 2),
+        ];
+        assert_eq!(find_num("bc", &labels), "1");
+        assert_eq!(find_num("umi", &labels), "2");
+    }
 }

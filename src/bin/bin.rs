@@ -1,72 +1,80 @@
-use antisequence::{iter_fastq2, Reads};
-use anyhow::Context;
-use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
-use chumsky::{prelude::*, Stream};
-use clap::arg;
+use std::process::exit;
+
+use std::fs::File;
 use std::io;
 use std::path::PathBuf;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use seqproc::{
-    compile::{compile, CompiledData},
-    lexer,
-    parser::parser,
+    demux::DemuxConfig,
+    execute::{compile_geom, interpret_with_unassigned, read_pairs_to_file},
 };
 
-/// seqproc, a general puprose sequence preprocessor
+/// General puprose sequence preprocessor
 #[derive(Debug, clap::Parser)]
-#[command(about, author, version)]
-#[command(arg_required_else_help = true)]
 pub struct Args {
-    /// Path to FGDL file
+    /// Path to a file containing the EFGDL specification
     #[arg(short, long)]
     geom: PathBuf,
 
     /// r1 fastq file
     #[arg(short = '1', long)]
-    file1: String,
+    file1: PathBuf,
 
     /// r2 fastq file
     #[arg(short = '2', long)]
-    file2: String,
+    file2: Option<PathBuf>,
 
     /// r1 out fastq file
-    #[arg(short = 'o', long, default_value = "")]
-    out1: String,
+    #[arg(short = 'o', long)]
+    out1: Option<PathBuf>,
 
     /// r2 out fastq file
-    #[arg(short = 'w', long, default_value = "")]
-    out2: String,
+    #[arg(short = 'w', long)]
+    out2: Option<PathBuf>,
 
     /// number of threads to use
-    #[arg(short, long, default_value = "1")]
+    #[arg(short, long, default_value_t = 1)]
     threads: usize,
+
+    /// Preserve input read order in the output. When set, output reads are
+    /// guaranteed to appear in the same order as the input FASTQ. This is
+    /// useful when downstream tools expect paired files to be in lock-step
+    /// without re-sorting. Internally this forces single-threaded execution.
+    #[arg(long)]
+    preserve_order: bool,
+
+    /// Optional path where JSON summary statistics will be written
+    #[arg(short = 's', long = "summary")]
+    summary: Option<PathBuf>,
 
     #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     additional: Vec<String>,
+
+    // Demultiplexing options
+    /// Path to TSV file mapping barcodes to sample names (enables demultiplexing)
+    #[arg(long = "demux-map")]
+    demux_map: Option<PathBuf>,
+
+    /// Barcode label to use for demultiplexing (e.g., "seq2.bc1")
+    #[arg(long = "demux-label", requires = "demux_map")]
+    demux_label: Option<String>,
+
+    /// Output directory for demultiplexed files
+    #[arg(long = "demux-out-dir", default_value = "demux_out")]
+    demux_out_dir: PathBuf,
+
+    // Unassigned reads output
+    /// R1 output file for reads that failed processing (unassigned)
+    #[arg(long = "unassigned1")]
+    unassigned1: Option<PathBuf>,
+
+    /// R2 output file for reads that failed processing (unassigned)
+    #[arg(long = "unassigned2")]
+    unassigned2: Option<PathBuf>,
 }
 
-pub fn interpret(args: Args, compiled_data: &CompiledData) {
-    let Args {
-        geom: _,
-        file1,
-        file2,
-        out1,
-        out2,
-        threads,
-        additional,
-    } = args;
-
-    let read = iter_fastq2(file1, file2, 256)
-        .unwrap_or_else(|e| panic!("{e}"))
-        .boxed();
-
-    let read = compiled_data.interpret(read, &out1, &out2, &additional);
-
-    read.run_with_threads(threads);
-}
-
-fn main() -> anyhow::Result<()> {
+fn main() {
     // set up the logging. Here we will take the
     // logging level from the environment variable if
     // it is set. Otherwise we will set the default
@@ -82,101 +90,136 @@ fn main() -> anyhow::Result<()> {
 
     let args: Args = <Args as clap::Parser>::parse();
 
-    let geom = std::fs::read_to_string(&args.geom)
-        .with_context(|| format!("failed to open EGDFL file {}", &args.geom.display()))?;
-
-    let (tokens, mut errs) = lexer::lexer().parse_recovery(&*geom);
-
-    let parse_errs = if let Some(tokens) = tokens {
-        let (ast, parse_errs) = parser().parse_recovery(Stream::from_iter(
-            tokens.len()..tokens.len() + 1,
-            tokens.into_iter(),
-        ));
-
-        if let Some(ast) = ast {
-            let res = compile(ast);
-
-            if let Err(e) = res {
-                errs.push(Simple::custom(e.span, e.msg));
-            } else {
-                interpret(args, &res.ok().unwrap());
-            }
-        };
-
-        parse_errs
-    } else {
-        Vec::new()
+    let geom = match std::fs::read_to_string(&args.geom) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: could not read geometry file {:?}: {e}", args.geom);
+            std::process::exit(1);
+        }
     };
 
-    // error recovery
-    errs.into_iter()
-        .map(|e| e.map(|c| c.to_string()))
-        .chain(parse_errs.into_iter().map(|e| e.map(|tok| tok.to_string())))
-        .for_each(|e| {
-            let report = Report::build(ReportKind::Error, (), e.span().start);
+    // Validate input FASTQ paths up front so a missing file surfaces as a clean
+    // error instead of a panic from deep inside the read-processing engine.
+    for f in std::iter::once(&args.file1).chain(args.file2.iter()) {
+        if !f.exists() {
+            eprintln!("error: input FASTQ not found: {:?}", f);
+            std::process::exit(1);
+        }
+    }
 
-            let report = match e.reason() {
-                chumsky::error::SimpleReason::Custom(msg) => report.with_message(msg).with_label(
-                    Label::new(e.span())
-                        .with_message(format!("{}", msg.fg(Color::Red)))
-                        .with_color(Color::Red),
-                ),
-                chumsky::error::SimpleReason::Unclosed { span, delimiter } => report
-                    .with_message(format!(
-                        "Unclosed delimiter {}",
-                        delimiter.fg(Color::Yellow)
-                    ))
-                    .with_label(
-                        Label::new(span.clone())
-                            .with_message(format!(
-                                "Unclosed delimiter {}",
-                                delimiter.fg(Color::Yellow)
-                            ))
-                            .with_color(Color::Yellow),
-                    )
-                    .with_label(
-                        Label::new(e.span())
-                            .with_message(format!(
-                                "Must be closed before this {}",
-                                e.found()
-                                    .unwrap_or(&"end of file".to_string())
-                                    .fg(Color::Red)
-                            ))
-                            .with_color(Color::Red),
-                    ),
-                chumsky::error::SimpleReason::Unexpected => report
-                    .with_message(format!(
-                        "{}, expected {}",
-                        if e.found().is_some() {
-                            "Unexpected token in input"
-                        } else {
-                            "Unexpected end of input"
-                        },
-                        if e.expected().len() == 0 {
-                            "something else".to_string()
-                        } else {
-                            e.expected()
-                                .map(|expected| match expected {
-                                    Some(expected) => expected.to_string(),
-                                    None => "end of input".to_string(),
-                                })
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
-                    ))
-                    .with_label(
-                        Label::new(e.span())
-                            .with_message(format!(
-                                "Unexpected token {}",
-                                e.found()
-                                    .unwrap_or(&"end of file".to_string())
-                                    .fg(Color::Red)
-                            ))
-                            .with_color(Color::Red),
-                    ),
+    let compiled_efgdl = compile_geom(geom.clone());
+
+    // When --preserve-order is set, force single-threaded execution to
+    // guarantee output reads appear in the same order as input reads.
+    let threads = if args.preserve_order {
+        if args.threads > 1 {
+            tracing::info!(
+                "--preserve-order is set: overriding --threads {} to 1 for ordered output",
+                args.threads
+            );
+        }
+        1
+    } else {
+        args.threads
+    };
+
+    let additional_args = args
+        .additional
+        .iter()
+        .map(|a| a.as_str())
+        .collect::<Vec<_>>();
+
+    // Build demux config if demux-map is provided
+    let demux_config = args.demux_map.as_ref().map(|map_path| {
+        let label = args.demux_label.as_deref().unwrap_or("seq2.bc1");
+        DemuxConfig::new(map_path.clone(), label).with_output_dir(args.demux_out_dir.clone())
+    });
+
+    let (out1, out2) = match (args.out1, args.out2) {
+        (Some(o1), Some(o2)) => (o1, o2),
+        (Some(o1), None) => (o1, PathBuf::new()),
+        (None, Some(o2)) => (PathBuf::new(), o2),
+        (_, _) => (PathBuf::new(), PathBuf::new()),
+    };
+
+    match compiled_efgdl {
+        Ok(geom) => {
+            // If no summary file is requested, preserve the existing behavior and
+            // just run the transformation without collecting stats.
+            if args.summary.is_none() {
+                return interpret_with_unassigned(
+                    &args.file1,
+                    args.file2.as_deref(),
+                    &out1,
+                    &out2,
+                    args.unassigned1.as_deref(),
+                    args.unassigned2.as_deref(),
+                    threads,
+                    additional_args,
+                    geom,
+                    demux_config,
+                );
+            }
+
+            // When a summary file is requested, run through read_pairs_to_file so
+            // that we obtain SeqprocStats, then write them as JSON.
+            let summary_path = args.summary.unwrap();
+
+            // For stats collection we need concrete output paths. If the user did
+            // not supply any, mirror the behavior of interpret() by discarding
+            // output to /dev/null.
+            let mut out1_stats = out1.clone();
+            let mut out2_stats = out2.clone();
+            if out1_stats.as_os_str().is_empty() {
+                out1_stats = PathBuf::from("/dev/null");
+            }
+            if out2_stats.as_os_str().is_empty() {
+                out2_stats = PathBuf::from("/dev/null");
+            }
+
+            let mut stats = match read_pairs_to_file(
+                geom,
+                &args.file1,
+                args.file2.as_deref(),
+                &out1_stats,
+                &out2_stats,
+                threads,
+                additional_args,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Error while running seqproc: {e}");
+                    return;
+                }
             };
 
-            report.finish().print(Source::from(&geom)).unwrap();
-        });
-    Ok(())
+            let call = std::env::args().collect::<Vec<_>>().join(" ");
+            stats.call = Some(call);
+
+            if let Ok(file) = File::create(&summary_path) {
+                if let Err(e) = serde_json::to_writer_pretty(file, &stats) {
+                    eprintln!("Failed to write summary JSON to {:?}: {}", summary_path, e);
+                }
+            } else {
+                eprintln!("Failed to create summary file at {:?}", summary_path);
+            }
+        }
+        Err(errs) => {
+            use ariadne::{Color, Label, Report, ReportKind, Source};
+            for err in &errs {
+                Report::build(ReportKind::Error, ((), err.span().into_range()))
+                    .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+                    .with_message(err.to_string())
+                    .with_label(
+                        Label::new(((), err.span().into_range()))
+                            .with_message(err.reason().to_string())
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .print(Source::from(&geom))
+                    .unwrap();
+            }
+            exit(1);
+        }
+    }
 }

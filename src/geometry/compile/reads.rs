@@ -20,6 +20,13 @@ pub fn validate_geometry(
         ReturnType::Ranged,
     ];
 
+    // Track whether we're in a "needs anchor" state: after Unbounded or Ranged
+    // followed by FixedLen, we must eventually see a FixedSeq before the geometry
+    // ends or another variable-length segment appears.
+    // Note: Unbounded/Ranged at the END of a read is valid (consumes the rest).
+    let mut needs_anchor = false;
+    let mut last_was_variable = false;
+
     for (interval, _) in geom {
         let gm = match interval {
             Interval::Named(l) => map.get(l).unwrap(),
@@ -37,13 +44,26 @@ pub fn validate_geometry(
 
         if !expect_next.contains(&type_) {
             return Err(Error {
-                span: span.clone(),
+                span: *span,
                 msg: format!("Ambiguous Geometry: expected {expect_next:?}, found: {type_}"),
             });
         }
 
+        // Check if we're in needs_anchor state and hit another variable-length segment
+        if needs_anchor && matches!(type_, ReturnType::Unbounded | ReturnType::Ranged) {
+            return Err(Error {
+                span: *span,
+                msg: "Ambiguous Geometry: variable-length segment after Unbounded/Ranged requires a FixedSeq anchor in between".to_string(),
+            });
+        }
+
         expect_next = match type_ {
-            ReturnType::FixedLen | ReturnType::FixedSeq => {
+            ReturnType::FixedLen => {
+                // FixedLen after a variable-length segment means we need an anchor
+                if last_was_variable {
+                    needs_anchor = true;
+                }
+                last_was_variable = false;
                 vec![
                     ReturnType::FixedLen,
                     ReturnType::FixedSeq,
@@ -51,11 +71,44 @@ pub fn validate_geometry(
                     ReturnType::Ranged,
                 ]
             }
-            ReturnType::Ranged | ReturnType::Unbounded => {
-                vec![ReturnType::FixedSeq]
+            ReturnType::FixedSeq => {
+                // FixedSeq resolves any pending anchor requirement
+                needs_anchor = false;
+                last_was_variable = false;
+                vec![
+                    ReturnType::FixedLen,
+                    ReturnType::FixedSeq,
+                    ReturnType::Unbounded,
+                    ReturnType::Ranged,
+                ]
+            }
+            ReturnType::Ranged => {
+                last_was_variable = true;
+                vec![ReturnType::FixedSeq, ReturnType::FixedLen]
+            }
+            ReturnType::Unbounded => {
+                last_was_variable = true;
+                vec![ReturnType::FixedLen, ReturnType::FixedSeq]
             }
             ReturnType::Void => unreachable!(),
         };
+    }
+
+    // At the end of the geometry, if we still need an anchor, it's invalid
+    // (This happens when we have Unbounded/Ranged followed by FixedLen but no FixedSeq)
+    if needs_anchor {
+        // Get the span of the last interval for the error message
+        if let Some((interval, _)) = geom.last() {
+            let gm = match interval {
+                Interval::Named(l) => map.get(l).unwrap(),
+                Interval::Temporary(gp_) => gp_,
+            };
+            let S(_, span) = &gm.expr;
+            return Err(Error {
+                span: *span,
+                msg: "Ambiguous Geometry: variable-length segment followed by fixed-length segments requires a FixedSeq anchor".to_string(),
+            });
+        }
     }
 
     Ok(())
@@ -98,6 +151,7 @@ pub fn compile_reads(
         Read {
             index: S(num, _),
             exprs: read_exprs,
+            ..
         },
         _,
     ) in reads
@@ -140,7 +194,7 @@ pub fn compile_reads(
                     Expr::Label(S(ref l, ref span)) => {
                         if labels.contains(l) {
                             err = Some(Error {
-                                span: span.clone(),
+                                span: *span,
                                 msg: format!(
                                     "`{l}` has already been used. Cannot use same variable more than once."
                                 ),
@@ -160,7 +214,7 @@ pub fn compile_reads(
                                             inner_expr.expr.0.type_,
                                             inner_expr.expr.0.size.clone(),
                                         ),
-                                        inner_expr.expr.1.clone(),
+                                        inner_expr.expr.1,
                                     ),
                                 )?);
                             }
@@ -174,7 +228,7 @@ pub fn compile_reads(
                             break 'inner;
                         } else {
                             err = Some(Error {
-                                span: span.clone(),
+                                span: *span,
                                 msg: format!("No variable declared with label: {l}"),
                             });
 
