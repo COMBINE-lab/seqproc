@@ -5,10 +5,26 @@ use std::io;
 use std::path::PathBuf;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
+use antisequence::graph::StatisticsLevel;
 use seqproc::{
     demux::DemuxConfig,
     execute::{compile_geom, run, RunConfig},
 };
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum StatisticsLevelArg {
+    Basic,
+    Detailed,
+}
+
+impl From<StatisticsLevelArg> for StatisticsLevel {
+    fn from(value: StatisticsLevelArg) -> Self {
+        match value {
+            StatisticsLevelArg::Basic => Self::Basic,
+            StatisticsLevelArg::Detailed => Self::Detailed,
+        }
+    }
+}
 
 /// General puprose sequence preprocessor
 #[derive(Debug, clap::Parser)]
@@ -133,6 +149,12 @@ pub struct RunArgs {
     /// Optional path where JSON summary statistics will be written
     #[arg(short = 's', long = "summary")]
     summary: Option<PathBuf>,
+
+    /// Statistics detail written by --summary. Basic records run totals with
+    /// minimal instrumentation; detailed also records per-stage match-distance
+    /// and ambiguity distributions.
+    #[arg(long, value_enum, requires = "summary")]
+    statistics_level: Option<StatisticsLevelArg>,
 
     #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     additional: Vec<String>,
@@ -276,7 +298,13 @@ fn main() {
             config.gzip_input_chunk_size = args.gzip_input_chunk_size;
             config.additional_args = additional_args.into_iter().map(str::to_owned).collect();
             config.demux = demux_config;
-            config.collect_statistics = args.summary.is_some();
+            config.statistics_level = if args.summary.is_some() {
+                args.statistics_level
+                    .unwrap_or(StatisticsLevelArg::Detailed)
+                    .into()
+            } else {
+                StatisticsLevel::Off
+            };
             config.call = Some(std::env::args().collect::<Vec<_>>().join(" "));
             config.geometry_digest = Some(geometry_digest);
 

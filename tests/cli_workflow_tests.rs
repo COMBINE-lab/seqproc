@@ -86,6 +86,9 @@ fn summary_mode_uses_the_same_processing_pipeline() {
     let summary1 = directory.path().join("summary-r1.fastq");
     let summary2 = directory.path().join("summary-r2.fastq");
     let summary = directory.path().join("summary.json");
+    let basic1 = directory.path().join("basic-r1.fastq");
+    let basic2 = directory.path().join("basic-r2.fastq");
+    let basic_summary = directory.path().join("basic-summary.json");
 
     Command::cargo_bin("seqproc")
         .unwrap()
@@ -139,11 +142,12 @@ fn summary_mode_uses_the_same_processing_pipeline() {
         .assert()
         .success();
 
-    assert_eq!(fs::read(normal1).unwrap(), fs::read(summary1).unwrap());
-    assert_eq!(fs::read(normal2).unwrap(), fs::read(summary2).unwrap());
+    assert_eq!(fs::read(&normal1).unwrap(), fs::read(summary1).unwrap());
+    assert_eq!(fs::read(&normal2).unwrap(), fs::read(summary2).unwrap());
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.2.0");
+    assert_eq!(report["schema_version"], "1.3.0");
+    assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], false);
@@ -156,6 +160,86 @@ fn summary_mode_uses_the_same_processing_pipeline() {
     assert_eq!(report["ordering_mode"], "input-order");
     assert_eq!(report["n_processed"], 3);
     assert_eq!(report["failed_parsing"], 0);
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            &geometry,
+            "--file1",
+            &input1,
+            "--file2",
+            &input2,
+            "--out1",
+            basic1.to_str().unwrap(),
+            "--out2",
+            basic2.to_str().unwrap(),
+            "--threads",
+            "2",
+            "--statistics-level",
+            "basic",
+            "--summary",
+            basic_summary.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read(normal1).unwrap(), fs::read(basic1).unwrap());
+    assert_eq!(fs::read(normal2).unwrap(), fs::read(basic2).unwrap());
+    let basic: Value = serde_json::from_slice(&fs::read(basic_summary).unwrap()).unwrap();
+    assert_eq!(basic["statistics_level"], "basic");
+    assert_eq!(basic["n_processed"], 3);
+    assert_eq!(basic["match_distance_stats"], serde_json::json!([]));
+    assert_eq!(basic["read_length_mean"], serde_json::json!([]));
+    assert_eq!(basic["read_length_min"], serde_json::json!([]));
+    assert_eq!(basic["read_length_max"], serde_json::json!([]));
+}
+
+#[test]
+fn detailed_summary_reports_ambiguity_outcomes() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("ambiguity.geom");
+    let whitelist = directory.path().join("whitelist.txt");
+    let input = directory.path().join("ambiguous.fastq");
+    let output = directory.path().join("output.fastq");
+    let summary = directory.path().join("summary.json");
+
+    fs::write(&whitelist, "CAAA\nCAAA\nAAAC\n").unwrap();
+    fs::write(&input, "@ambiguous\nAAAA\n+\nIIII\n").unwrap();
+    fs::write(
+        &geometry,
+        format!(
+            "#[ambig_policy = no_match] bc = filter_within_dist(b[4], \"{}\", 1)\n1{{<bc>}}\n-> 1{{<bc>}}\n",
+            whitelist.display()
+        ),
+    )
+    .unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--file1",
+            input.to_str().unwrap(),
+            "--out1",
+            output.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
+    let stage = &report["match_distance_stats"][0];
+    assert_eq!(stage["stage_index"], 0);
+    assert_eq!(stage["attempted"], 1);
+    assert_eq!(stage["matched"], 0);
+    assert_eq!(stage["unmatched"], 1);
+    assert_eq!(stage["ambiguity"]["total"], 1);
+    assert_eq!(stage["ambiguity"]["dropped"], 1);
 }
 
 #[test]
@@ -356,7 +440,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.2.0");
+    assert_eq!(report["schema_version"], "1.3.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);

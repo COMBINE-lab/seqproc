@@ -79,6 +79,12 @@ pub struct RunConfig {
     pub gzip_input_chunk_size: usize,
     pub additional_args: Vec<String>,
     pub demux: Option<DemuxConfig>,
+    /// Runtime instrumentation level. `Off` leaves data-dependent statistics
+    /// collection disabled; `Basic` collects run totals; `Detailed` also
+    /// collects per-match distance and ambiguity distributions.
+    pub statistics_level: StatisticsLevel,
+    /// Backward-compatible switch. When true and `statistics_level` is `Off`,
+    /// detailed statistics are collected.
     pub collect_statistics: bool,
     pub call: Option<String>,
     pub geometry_digest: Option<String>,
@@ -111,9 +117,20 @@ impl RunConfig {
             gzip_input_chunk_size: 256 * 1024,
             additional_args: Vec::new(),
             demux: None,
+            statistics_level: StatisticsLevel::Off,
             collect_statistics: false,
             call: None,
             geometry_digest: None,
+        }
+    }
+
+    fn effective_statistics_level(&self) -> StatisticsLevel {
+        if self.statistics_level.is_enabled() {
+            self.statistics_level
+        } else if self.collect_statistics {
+            StatisticsLevel::Detailed
+        } else {
+            StatisticsLevel::Off
         }
     }
 }
@@ -122,6 +139,7 @@ impl RunConfig {
 pub struct RunReport {
     pub effective_threads: usize,
     pub ordered_output: bool,
+    pub statistics_level: StatisticsLevel,
     pub gzip_compression_level: u32,
     pub parallel_gzip_members: bool,
     pub parallel_gzip_stream: bool,
@@ -140,6 +158,7 @@ pub struct RunReport {
 pub struct SeqprocStats {
     pub schema_version: String,
     pub seqproc_version: String,
+    pub statistics_level: StatisticsLevel,
     pub call: Option<String>,
     pub geometry_digest: Option<String>,
     pub ordering_mode: String,
@@ -170,9 +189,23 @@ pub struct SeqprocStats {
 
 #[derive(Debug, Serialize)]
 pub struct MatchDistanceStats {
+    pub stage_index: usize,
     pub label: String,
+    pub attempted: u64,
+    pub matched: u64,
     pub unmatched: u64,
     pub distance_histogram: Vec<DistanceBin>,
+    pub ambiguity: AmbiguityStats,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AmbiguityStats {
+    pub total: u64,
+    pub accepted: u64,
+    pub dropped: u64,
+    pub resolved_first: u64,
+    pub resolved_random: u64,
+    pub resolved_quality: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -345,7 +378,8 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         }
     }
 
-    graph.set_collect_statistics(config.collect_statistics);
+    let statistics_level = config.effective_statistics_level();
+    graph.set_statistics_level(statistics_level);
     let use_pipeline = config.preserve_order || config.staged_pipeline;
     let pipeline = if use_pipeline {
         let mut pipeline_config = PipelineConfig::new(config.threads);
@@ -371,9 +405,10 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         None
     };
 
-    let statistics = config.collect_statistics.then(|| {
+    let statistics = statistics_level.is_enabled().then(|| {
         statistics_from_graph(
             &graph,
+            statistics_level,
             config.call,
             config.geometry_digest,
             config.threads,
@@ -391,6 +426,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
     Ok(RunReport {
         effective_threads: config.threads,
         ordered_output: config.preserve_order || config.threads == 1,
+        statistics_level,
         gzip_compression_level: config.gzip_level,
         parallel_gzip_members: config.parallel_gzip,
         parallel_gzip_stream: config.parallel_gzip_stream,
@@ -418,6 +454,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
 
 fn statistics_from_graph(
     graph: &Graph,
+    statistics_level: StatisticsLevel,
     call: Option<String>,
     geometry_digest: Option<String>,
     effective_threads: usize,
@@ -442,16 +479,18 @@ fn statistics_from_graph(
             for index in 0..stats.n_fastqs {
                 let count = *stats.read_counts.get(index).unwrap_or(&0);
                 max_count = max_count.max(count);
-                let min = *stats.read_length_min.get(index).unwrap_or(&0);
-                let max = *stats.read_length_max.get(index).unwrap_or(&0);
-                let sum = *stats.read_length_sum.get(index).unwrap_or(&0);
-                read_length_min.push(min as u64);
-                read_length_max.push(max as u64);
-                read_length_mean.push(if count == 0 {
-                    0.0
-                } else {
-                    sum as f64 / count as f64
-                });
+                if stats.lengths_collected {
+                    let min = *stats.read_length_min.get(index).unwrap_or(&0);
+                    let max = *stats.read_length_max.get(index).unwrap_or(&0);
+                    let sum = *stats.read_length_sum.get(index).unwrap_or(&0);
+                    read_length_min.push(min as u64);
+                    read_length_max.push(max as u64);
+                    read_length_mean.push(if count == 0 {
+                        0.0
+                    } else {
+                        sum as f64 / count as f64
+                    });
+                }
             }
 
             (
@@ -469,7 +508,8 @@ fn statistics_from_graph(
     let match_distance_stats = graph
         .match_distance_counts()
         .into_iter()
-        .map(|counts| {
+        .enumerate()
+        .map(|(stage_index, counts)| {
             let matched_total = counts.counts.iter().map(|&count| count as u64).sum::<u64>();
             let distance_histogram = counts
                 .counts
@@ -482,9 +522,20 @@ fn statistics_from_graph(
                 })
                 .collect();
             MatchDistanceStats {
+                stage_index,
                 label: counts.label,
+                attempted: counts.total as u64,
+                matched: matched_total,
                 unmatched: (counts.total as u64).saturating_sub(matched_total),
                 distance_histogram,
+                ambiguity: AmbiguityStats {
+                    total: counts.ambiguity.total as u64,
+                    accepted: counts.ambiguity.accepted as u64,
+                    dropped: counts.ambiguity.dropped as u64,
+                    resolved_first: counts.ambiguity.resolved_first as u64,
+                    resolved_random: counts.ambiguity.resolved_random as u64,
+                    resolved_quality: counts.ambiguity.resolved_quality as u64,
+                },
             }
         })
         .collect();
@@ -510,8 +561,9 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.2.0".to_owned(),
+        schema_version: "1.3.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
+        statistics_level,
         call,
         geometry_digest,
         ordering_mode: if preserve_order || effective_threads == 1 {
@@ -869,7 +921,7 @@ fn interpret_to_pipes(
 
     // This is the reporting path. Normal execution leaves statistics disabled
     // in antisequence so it avoids per-read counters and histogram locks.
-    graph.set_collect_statistics(true);
+    graph.set_statistics_level(StatisticsLevel::Detailed);
     graph.run_with_threads(threads);
 
     let input_stats = graph.input_stats();
@@ -923,7 +975,8 @@ fn interpret_to_pipes(
     let match_distance_stats = graph
         .match_distance_counts()
         .into_iter()
-        .map(|c| {
+        .enumerate()
+        .map(|(stage_index, c)| {
             let matched_total: u64 = c.counts.iter().map(|&x| x as u64).sum();
             let unmatched = (c.total as u64).saturating_sub(matched_total);
 
@@ -944,9 +997,20 @@ fn interpret_to_pipes(
                 .collect();
 
             MatchDistanceStats {
+                stage_index,
                 label: c.label,
+                attempted: c.total as u64,
+                matched: matched_total,
                 unmatched,
                 distance_histogram,
+                ambiguity: AmbiguityStats {
+                    total: c.ambiguity.total as u64,
+                    accepted: c.ambiguity.accepted as u64,
+                    dropped: c.ambiguity.dropped as u64,
+                    resolved_first: c.ambiguity.resolved_first as u64,
+                    resolved_random: c.ambiguity.resolved_random as u64,
+                    resolved_quality: c.ambiguity.resolved_quality as u64,
+                },
             }
         })
         .collect();
@@ -973,8 +1037,9 @@ fn interpret_to_pipes(
     }
 
     SeqprocStats {
-        schema_version: "1.2.0".to_string(),
+        schema_version: "1.3.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
+        statistics_level: StatisticsLevel::Detailed,
         call: None,
         geometry_digest: None,
         ordering_mode: if threads == 1 {
@@ -1344,8 +1409,9 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.2.0".to_string(),
+            schema_version: "1.3.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
+            statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
             geometry_digest: None,
             ordering_mode: "input-order".to_string(),
@@ -1382,7 +1448,10 @@ mod tests {
     #[test]
     fn test_match_distance_stats_serialization() {
         let stats = MatchDistanceStats {
+            stage_index: 0,
             label: "test".to_string(),
+            attempted: 105,
+            matched: 95,
             unmatched: 10,
             distance_histogram: vec![
                 DistanceBin {
@@ -1394,6 +1463,14 @@ mod tests {
                     count: 5,
                 },
             ],
+            ambiguity: AmbiguityStats {
+                total: 2,
+                accepted: 1,
+                dropped: 1,
+                resolved_first: 1,
+                resolved_random: 0,
+                resolved_quality: 0,
+            },
         };
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("\"label\":\"test\""));

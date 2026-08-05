@@ -19,7 +19,13 @@ seqproc run --geom protocol.geom --file1 reads_R1.fastq.gz \
 
 `--summary report.json` runs the same processing pipeline and emits the
 versioned schema documented in [`schemas/`](schemas/). Statistics are disabled
-unless a summary is requested.
+unless a summary is requested. Summaries default to detailed statistics;
+`--statistics-level basic` records input, output, and rejection totals without
+read-length or per-match distributions, while `--statistics-level detailed`
+also records read lengths, ordered match-stage attrition, edit-distance
+distributions, and ambiguity-policy outcomes. Performance results should use
+statistics-disabled runs as the headline measurement and report a separate
+paired on/off overhead experiment.
 
 ### Compressed I/O
 

@@ -1,6 +1,6 @@
 # seqproc report schemas
 
-`seqproc-summary-1.2.0.schema.json` is the current versioned schema emitted by
+`seqproc-summary-1.3.0.schema.json` is the current versioned schema emitted by
 `seqproc run --summary`; the 1.0.0 and 1.1.0 files remain immutable for existing
 consumers. Schema versions are independent of the seqproc binary version so
 consumers can negotiate report compatibility explicitly.
@@ -26,6 +26,13 @@ that actually perform compression: one for serial gzip, the transform-thread
 count for multi-member gzip, or the configured deflate-pool size for
 single-stream gzip. The input chunk size is zero when the default needletail
 auto-decoder is selected.
+
+Schema 1.3.0 adds the required `statistics_level` field and makes match-stage
+attrition explicit with `stage_index`, `attempted`, `matched`, and `unmatched`.
+Detailed reports also include counts of ambiguous equal-best matches and the
+outcome of the configured ambiguity policy. Basic reports retain run-level
+input, output, and rejection totals while leaving `match_distance_stats` and
+the three read-length vectors empty.
 
 Additive fields require a schema minor version. Removing fields, changing their
 meaning, or changing types requires a schema major version and a new file.
