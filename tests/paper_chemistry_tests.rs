@@ -278,6 +278,56 @@ fn splitseq_barcodes(n: usize) -> (BarcodeSet, BarcodeSet, BarcodeSet) {
     (bc3s, bc2s, bc1s)
 }
 
+fn assert_filter_within_dist_keeps_hits(pattern: &str) {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let input = dir.join("filter_input.fastq");
+    let whitelist = dir.join("filter_whitelist.txt");
+    let output1 = dir.join("filter_output.fastq");
+    let output2 = dir.join("unused.fastq");
+
+    let mut mismatch = pattern.as_bytes().to_vec();
+    let last = mismatch.last_mut().unwrap();
+    *last = if *last == b'A' { b'C' } else { b'A' };
+    let miss = vec![b'T'; pattern.len()];
+
+    let mut fastq = File::create(&input).unwrap();
+    for (name, sequence) in [
+        ("exact", pattern.as_bytes()),
+        ("mismatch", mismatch.as_slice()),
+        ("miss", miss.as_slice()),
+    ] {
+        writeln!(fastq, "@{name}").unwrap();
+        fastq.write_all(sequence).unwrap();
+        writeln!(fastq, "\n+\n{}", "I".repeat(sequence.len())).unwrap();
+    }
+    writeln!(File::create(&whitelist).unwrap(), "{pattern}").unwrap();
+
+    let geometry = format!(
+        "barcode = filter_within_dist(b[{}], \"{}\", 1)\n\
+         1{{<barcode>}}\n\
+         -> 1{{<barcode>}}",
+        pattern.len(),
+        whitelist.display(),
+    );
+    let compiled = compile_geom(geometry).expect("compile filter geometry");
+    read_pairs_to_file(compiled, &input, None, &output1, &output2, 1, vec![])
+        .expect("run filter geometry");
+
+    assert_eq!(
+        parse_fastq_sequences(&output1),
+        vec![pattern.to_owned(), String::from_utf8(mismatch).unwrap()],
+    );
+}
+
+#[test]
+fn filter_within_dist_fast_and_general_hamming_paths_agree() {
+    // Eight bases takes the optimized lookup; nine bases takes the general
+    // matcher. This catches the preprint-era fast-path attribute bypass.
+    assert_filter_within_dist_keeps_hits("ACGTACGT");
+    assert_filter_within_dist_keeps_hits("ACGTACGTA");
+}
+
 // ===========================================================================
 // 1. 10x Chromium v2
 // ===========================================================================

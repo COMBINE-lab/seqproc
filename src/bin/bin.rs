@@ -7,19 +7,44 @@ use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use seqproc::{
     demux::DemuxConfig,
-    execute::{compile_geom, interpret_with_unassigned, read_pairs_to_file},
+    execute::{compile_geom, run, RunConfig},
 };
 
 /// General puprose sequence preprocessor
 #[derive(Debug, clap::Parser)]
-pub struct Args {
+#[command(
+    name = "seqproc",
+    about = "Geometry-driven FASTQ preprocessing",
+    args_conflicts_with_subcommands = true
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    /// Legacy flag-only invocation; supported for one compatibility cycle.
+    #[command(flatten)]
+    legacy: RunArgs,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum Command {
+    /// Process FASTQ input with an EFGDL geometry.
+    Run(RunArgs),
+    /// Parse, compile, and semantically validate a geometry without processing reads.
+    Validate { geometry: PathBuf },
+    /// Print normalized EFGDL and the compiled geometry representation.
+    Explain { geometry: PathBuf },
+}
+
+#[derive(Debug, Default, clap::Args)]
+pub struct RunArgs {
     /// Path to a file containing the EFGDL specification
     #[arg(short, long)]
-    geom: PathBuf,
+    geom: Option<PathBuf>,
 
     /// r1 fastq file
     #[arg(short = '1', long)]
-    file1: PathBuf,
+    file1: Option<PathBuf>,
 
     /// r2 fastq file
     #[arg(short = '2', long)]
@@ -40,9 +65,70 @@ pub struct Args {
     /// Preserve input read order in the output. When set, output reads are
     /// guaranteed to appear in the same order as the input FASTQ. This is
     /// useful when downstream tools expect paired files to be in lock-step
-    /// without re-sorting. Internally this forces single-threaded execution.
+    /// without re-sorting. Transformations remain parallel; a bounded reorder
+    /// buffer restores batch order before output.
     #[arg(long)]
     preserve_order: bool,
+
+    /// Use the bounded staged pipeline for unordered output as well. Ordered
+    /// output enables it automatically. This can help expensive geometries,
+    /// but the legacy worker path is faster for very cheap transformations.
+    #[arg(long)]
+    staged_pipeline: bool,
+
+    /// Capacity of each pipeline hand-off queue, in batches. By default this
+    /// is tuned from the worker count.
+    #[arg(long)]
+    queue_capacity: Option<usize>,
+
+    /// Maximum batches admitted but not fully written. This is also the hard
+    /// memory bound for ordered reassembly.
+    #[arg(long)]
+    max_in_flight_batches: Option<usize>,
+
+    /// Reads per batch in staged execution.
+    #[arg(long)]
+    batch_size: Option<usize>,
+
+    /// Gzip compression level for output paths ending in `.gz`. Level 3 is a
+    /// fast default; use 6 for the previous size/speed tradeoff.
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(0..=9))]
+    gzip_level: u32,
+
+    /// Compress batches concurrently as concatenated gzip members. This is
+    /// faster with multiple workers, but readers must support multi-member gzip.
+    #[arg(long)]
+    parallel_gzip: bool,
+
+    /// Compress one logical gzip stream using background deflate-block
+    /// workers. This preserves dictionary continuity across transform batches.
+    #[arg(long, conflicts_with = "parallel_gzip")]
+    parallel_gzip_stream: bool,
+
+    /// Compression workers for --parallel-gzip-stream. The measured default is
+    /// min(--threads, 4) and is reported separately because it adds workers.
+    #[arg(long, requires = "parallel_gzip_stream")]
+    gzip_threads: Option<usize>,
+
+    /// Uncompressed bytes per deflate block for --parallel-gzip-stream.
+    #[arg(long, default_value_t = 128 * 1024, requires = "parallel_gzip_stream")]
+    gzip_block_size: usize,
+
+    /// Decode .gz inputs with rapidgzip-core's adaptive speculative decoder.
+    #[arg(long)]
+    accelerated_gzip_input: bool,
+
+    /// Adaptive decoder-worker ceiling per gzip input.
+    #[arg(long, default_value_t = 1, requires = "accelerated_gzip_input")]
+    gzip_input_threads: usize,
+
+    /// Decoded bytes per accelerated input handoff chunk.
+    #[arg(
+        long,
+        default_value_t = 256 * 1024,
+        requires = "accelerated_gzip_input"
+    )]
+    gzip_input_chunk_size: usize,
 
     /// Optional path where JSON summary statistics will be written
     #[arg(short = 's', long = "summary")]
@@ -88,19 +174,62 @@ fn main() {
         )
         .init();
 
-    let args: Args = <Args as clap::Parser>::parse();
-
-    let geom = match std::fs::read_to_string(&args.geom) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error: could not read geometry file {:?}: {e}", args.geom);
-            std::process::exit(1);
+    let cli = <Cli as clap::Parser>::parse();
+    let args = match cli.command {
+        Some(Command::Validate { geometry }) => {
+            let source = read_geometry(&geometry);
+            match compile_geom(source.clone()) {
+                Ok(_) => {
+                    println!("valid: {}", geometry.display());
+                    return;
+                }
+                Err(errors) => {
+                    report_geometry_errors(&source, &errors);
+                    exit(1);
+                }
+            }
+        }
+        Some(Command::Explain { geometry }) => {
+            let source = read_geometry(&geometry);
+            match compile_geom(source.clone()) {
+                Ok(compiled) => {
+                    let representation = format!("{compiled:#?}");
+                    let normalized = compiled.get_simplified_description_string();
+                    println!(
+                        "Normalized EFGDL:\n{normalized}\n\nCompiled geometry:\n{representation}"
+                    );
+                    return;
+                }
+                Err(errors) => {
+                    report_geometry_errors(&source, &errors);
+                    exit(1);
+                }
+            }
+        }
+        Some(Command::Run(args)) => args,
+        None => {
+            eprintln!(
+                "warning: the flag-only invocation is deprecated; use `seqproc run ...` instead"
+            );
+            cli.legacy
         }
     };
 
+    let geom_path = args.geom.unwrap_or_else(|| {
+        eprintln!("error: --geom is required for a run");
+        exit(2);
+    });
+    let file1 = args.file1.unwrap_or_else(|| {
+        eprintln!("error: --file1 is required for a run");
+        exit(2);
+    });
+
+    let geom = read_geometry(&geom_path);
+    let geometry_digest = format!("md5:{:x}", md5::compute(geom.as_bytes()));
+
     // Validate input FASTQ paths up front so a missing file surfaces as a clean
     // error instead of a panic from deep inside the read-processing engine.
-    for f in std::iter::once(&args.file1).chain(args.file2.iter()) {
+    for f in std::iter::once(&file1).chain(args.file2.iter()) {
         if !f.exists() {
             eprintln!("error: input FASTQ not found: {:?}", f);
             std::process::exit(1);
@@ -109,19 +238,7 @@ fn main() {
 
     let compiled_efgdl = compile_geom(geom.clone());
 
-    // When --preserve-order is set, force single-threaded execution to
-    // guarantee output reads appear in the same order as input reads.
-    let threads = if args.preserve_order {
-        if args.threads > 1 {
-            tracing::info!(
-                "--preserve-order is set: overriding --threads {} to 1 for ordered output",
-                args.threads
-            );
-        }
-        1
-    } else {
-        args.threads
-    };
+    let threads = args.threads;
 
     let additional_args = args
         .additional
@@ -135,91 +252,87 @@ fn main() {
         DemuxConfig::new(map_path.clone(), label).with_output_dir(args.demux_out_dir.clone())
     });
 
-    let (out1, out2) = match (args.out1, args.out2) {
-        (Some(o1), Some(o2)) => (o1, o2),
-        (Some(o1), None) => (o1, PathBuf::new()),
-        (None, Some(o2)) => (PathBuf::new(), o2),
-        (_, _) => (PathBuf::new(), PathBuf::new()),
-    };
-
     match compiled_efgdl {
         Ok(geom) => {
-            // If no summary file is requested, preserve the existing behavior and
-            // just run the transformation without collecting stats.
-            if args.summary.is_none() {
-                return interpret_with_unassigned(
-                    &args.file1,
-                    args.file2.as_deref(),
-                    &out1,
-                    &out2,
-                    args.unassigned1.as_deref(),
-                    args.unassigned2.as_deref(),
-                    threads,
-                    additional_args,
-                    geom,
-                    demux_config,
-                );
-            }
+            let mut config = RunConfig::new(file1.clone());
+            config.input2 = args.file2.clone();
+            config.output1 = args.out1.clone();
+            config.output2 = args.out2.clone();
+            config.unassigned1 = args.unassigned1.clone();
+            config.unassigned2 = args.unassigned2.clone();
+            config.threads = threads;
+            config.preserve_order = args.preserve_order;
+            config.staged_pipeline = args.staged_pipeline;
+            config.queue_capacity = args.queue_capacity;
+            config.max_in_flight_batches = args.max_in_flight_batches;
+            config.batch_size = args.batch_size;
+            config.gzip_level = args.gzip_level;
+            config.parallel_gzip = args.parallel_gzip;
+            config.parallel_gzip_stream = args.parallel_gzip_stream;
+            config.gzip_threads = args.gzip_threads;
+            config.gzip_block_size = args.gzip_block_size;
+            config.accelerated_gzip_input = args.accelerated_gzip_input;
+            config.gzip_input_threads = args.gzip_input_threads;
+            config.gzip_input_chunk_size = args.gzip_input_chunk_size;
+            config.additional_args = additional_args.into_iter().map(str::to_owned).collect();
+            config.demux = demux_config;
+            config.collect_statistics = args.summary.is_some();
+            config.call = Some(std::env::args().collect::<Vec<_>>().join(" "));
+            config.geometry_digest = Some(geometry_digest);
 
-            // When a summary file is requested, run through read_pairs_to_file so
-            // that we obtain SeqprocStats, then write them as JSON.
-            let summary_path = args.summary.unwrap();
-
-            // For stats collection we need concrete output paths. If the user did
-            // not supply any, mirror the behavior of interpret() by discarding
-            // output to /dev/null.
-            let mut out1_stats = out1.clone();
-            let mut out2_stats = out2.clone();
-            if out1_stats.as_os_str().is_empty() {
-                out1_stats = PathBuf::from("/dev/null");
-            }
-            if out2_stats.as_os_str().is_empty() {
-                out2_stats = PathBuf::from("/dev/null");
-            }
-
-            let mut stats = match read_pairs_to_file(
-                geom,
-                &args.file1,
-                args.file2.as_deref(),
-                &out1_stats,
-                &out2_stats,
-                threads,
-                additional_args,
-            ) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Error while running seqproc: {e}");
-                    return;
+            let report = match run(config, geom) {
+                Ok(report) => report,
+                Err(error) => {
+                    eprintln!("error: seqproc execution failed: {error}");
+                    exit(1);
                 }
             };
 
-            let call = std::env::args().collect::<Vec<_>>().join(" ");
-            stats.call = Some(call);
-
-            if let Ok(file) = File::create(&summary_path) {
-                if let Err(e) = serde_json::to_writer_pretty(file, &stats) {
-                    eprintln!("Failed to write summary JSON to {:?}: {}", summary_path, e);
+            if let Some(summary_path) = args.summary {
+                let Some(statistics) = report.statistics else {
+                    eprintln!("error: summary statistics were not collected");
+                    exit(1);
+                };
+                let file = File::create(&summary_path).unwrap_or_else(|error| {
+                    eprintln!(
+                        "error: failed to create summary {:?}: {error}",
+                        summary_path
+                    );
+                    exit(1);
+                });
+                if let Err(error) = serde_json::to_writer_pretty(file, &statistics) {
+                    eprintln!("error: failed to write summary {:?}: {error}", summary_path);
+                    exit(1);
                 }
-            } else {
-                eprintln!("Failed to create summary file at {:?}", summary_path);
             }
         }
         Err(errs) => {
-            use ariadne::{Color, Label, Report, ReportKind, Source};
-            for err in &errs {
-                Report::build(ReportKind::Error, ((), err.span().into_range()))
-                    .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
-                    .with_message(err.to_string())
-                    .with_label(
-                        Label::new(((), err.span().into_range()))
-                            .with_message(err.reason().to_string())
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .print(Source::from(&geom))
-                    .unwrap();
-            }
+            report_geometry_errors(&geom, &errs);
             exit(1);
         }
+    }
+}
+
+fn read_geometry(path: &PathBuf) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|error| {
+        eprintln!("error: could not read geometry file {:?}: {error}", path);
+        exit(1);
+    })
+}
+
+fn report_geometry_errors(source: &str, errors: &[chumsky::error::Rich<'static, String>]) {
+    use ariadne::{Color, Label, Report, ReportKind, Source};
+    for error in errors {
+        Report::build(ReportKind::Error, ((), error.span().into_range()))
+            .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+            .with_message(error.to_string())
+            .with_label(
+                Label::new(((), error.span().into_range()))
+                    .with_message(error.reason().to_string())
+                    .with_color(Color::Red),
+            )
+            .finish()
+            .print(Source::from(source))
+            .unwrap();
     }
 }

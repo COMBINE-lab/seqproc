@@ -9,7 +9,7 @@ use std::{
 use antisequence::expr::fmt_expr;
 use antisequence::graph::TryOp;
 use antisequence::graph::*;
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use chumsky::{error::Rich, input::Input, Parser};
 use nix::sys::stat;
 use nix::unistd;
@@ -20,10 +20,24 @@ use tracing::info;
 use crate::{
     compile::{compile, CompiledData},
     demux::DemuxConfig,
-    error::parse_failure,
     lexer,
     parser::parser,
 };
+
+const MIN_PARALLEL_GZIP_BLOCK_SIZE: usize = 32 * 1024;
+
+fn configure_fastq_output(
+    output: OutputFastqFileOp,
+    config: &RunConfig,
+    gzip_threads: usize,
+) -> Result<OutputFastqFileOp> {
+    let output = output.try_with_gzip_level(config.gzip_level)?;
+    if config.parallel_gzip_stream {
+        Ok(output.try_with_parallel_gzip_stream(gzip_threads, config.gzip_block_size)?)
+    } else {
+        Ok(output.with_parallel_gzip_members(config.parallel_gzip))
+    }
+}
 
 #[derive(Debug)]
 pub struct FifoSeqprocData {
@@ -32,17 +46,122 @@ pub struct FifoSeqprocData {
     pub join_handle: thread::JoinHandle<Result<SeqprocStats>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RunConfig {
+    pub input1: PathBuf,
+    pub input2: Option<PathBuf>,
+    pub output1: Option<PathBuf>,
+    pub output2: Option<PathBuf>,
+    pub unassigned1: Option<PathBuf>,
+    pub unassigned2: Option<PathBuf>,
+    pub threads: usize,
+    pub preserve_order: bool,
+    pub staged_pipeline: bool,
+    pub queue_capacity: Option<usize>,
+    pub max_in_flight_batches: Option<usize>,
+    pub batch_size: Option<usize>,
+    /// Gzip compression level for output paths ending in `.gz`.
+    pub gzip_level: u32,
+    /// Compress independent batches into concatenated gzip members.
+    pub parallel_gzip: bool,
+    /// Compress one logical gzip stream with a bounded deflate-block pool.
+    pub parallel_gzip_stream: bool,
+    /// Compression workers for the single-stream backend. `None` uses the
+    /// measured `min(transform threads, 4)` default.
+    pub gzip_threads: Option<usize>,
+    /// Uncompressed bytes accumulated into each parallel deflate block.
+    pub gzip_block_size: usize,
+    /// Decode `.gz` inputs through rapidgzip-core's adaptive parallel reader.
+    pub accelerated_gzip_input: bool,
+    /// Adaptive decoder-worker ceiling per gzip input.
+    pub gzip_input_threads: usize,
+    /// Decoded bytes assigned to each accelerated input handoff chunk.
+    pub gzip_input_chunk_size: usize,
+    pub additional_args: Vec<String>,
+    pub demux: Option<DemuxConfig>,
+    pub collect_statistics: bool,
+    pub call: Option<String>,
+    pub geometry_digest: Option<String>,
+}
+
+impl RunConfig {
+    pub fn new(input1: impl Into<PathBuf>) -> Self {
+        Self {
+            input1: input1.into(),
+            input2: None,
+            output1: None,
+            output2: None,
+            unassigned1: None,
+            unassigned2: None,
+            threads: 1,
+            preserve_order: false,
+            staged_pipeline: false,
+            queue_capacity: None,
+            max_in_flight_batches: None,
+            batch_size: None,
+            // Development profiling selected level 3 as the speed/size
+            // default; users can request the traditional level 6 explicitly.
+            gzip_level: 3,
+            parallel_gzip: false,
+            parallel_gzip_stream: false,
+            gzip_threads: None,
+            gzip_block_size: 128 * 1024,
+            accelerated_gzip_input: false,
+            gzip_input_threads: 1,
+            gzip_input_chunk_size: 256 * 1024,
+            additional_args: Vec::new(),
+            demux: None,
+            collect_statistics: false,
+            call: None,
+            geometry_digest: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunReport {
+    pub effective_threads: usize,
+    pub ordered_output: bool,
+    pub gzip_compression_level: u32,
+    pub parallel_gzip_members: bool,
+    pub parallel_gzip_stream: bool,
+    pub gzip_compression_threads: usize,
+    pub gzip_block_size: usize,
+    pub gzip_input_backend: String,
+    pub gzip_input_threads: usize,
+    pub gzip_input_chunk_size: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<PipelineReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub statistics: Option<SeqprocStats>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SeqprocStats {
+    pub schema_version: String,
     pub seqproc_version: String,
     pub call: Option<String>,
+    pub geometry_digest: Option<String>,
+    pub ordering_mode: String,
+    pub effective_threads: usize,
+    pub gzip_compression_level: u32,
+    pub parallel_gzip_members: bool,
+    pub parallel_gzip_stream: bool,
+    pub gzip_compression_threads: usize,
+    pub gzip_block_size: usize,
+    pub gzip_input_backend: String,
+    pub gzip_input_threads: usize,
+    pub gzip_input_chunk_size: usize,
 
     pub n_fastqs: u32,
     pub n_processed: u64,
     pub n_reads_max: u64,
 
     pub total_fragments: u64,
+    pub accepted_fragments: u64,
+    pub rejected_fragments: u64,
     pub failed_parsing: u64,
+    pub rejection_reasons: Vec<RejectionReasonCount>,
     pub read_length_mean: Vec<f64>,
     pub read_length_min: Vec<u64>,
     pub read_length_max: Vec<u64>,
@@ -60,6 +179,380 @@ pub struct MatchDistanceStats {
 pub struct DistanceBin {
     pub distance: usize,
     pub count: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RejectionReasonCount {
+    pub reason: String,
+    pub count: u64,
+}
+
+/// Execute a compiled geometry through one pipeline for normal, summary,
+/// demultiplexed, and unassigned-read runs.
+pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> {
+    if config.threads == 0 {
+        bail!("number of threads must be greater than zero");
+    }
+    if config.gzip_level > 9 {
+        bail!(
+            "gzip compression level must be between 0 and 9, got {}",
+            config.gzip_level
+        );
+    }
+    if config.parallel_gzip && config.parallel_gzip_stream {
+        bail!("--parallel-gzip and --parallel-gzip-stream are mutually exclusive");
+    }
+    // The real-data crossover sweep found that letting the compression pool
+    // grow to every transform worker oversubscribed short-read workloads.
+    // Four is the best balanced default; explicit settings remain available.
+    let gzip_threads = config.gzip_threads.unwrap_or(config.threads.min(4));
+    if config.parallel_gzip_stream && gzip_threads == 0 {
+        bail!("number of gzip compression threads must be greater than zero");
+    }
+    if config.accelerated_gzip_input && config.gzip_input_threads == 0 {
+        bail!("number of gzip input threads must be greater than zero");
+    }
+    if config.accelerated_gzip_input && config.gzip_input_chunk_size == 0 {
+        bail!("gzip input chunk size must be greater than zero");
+    }
+    if config.parallel_gzip_stream && config.gzip_block_size < MIN_PARALLEL_GZIP_BLOCK_SIZE {
+        bail!(
+            "parallel gzip block size must be at least {}, got {}",
+            MIN_PARALLEL_GZIP_BLOCK_SIZE,
+            config.gzip_block_size
+        );
+    }
+    if config.parallel_gzip_stream
+        && (config.demux.is_some() || config.unassigned1.is_some() || config.unassigned2.is_some())
+    {
+        bail!(
+            "parallel single-stream gzip currently supports fixed primary outputs only; demultiplexed and unassigned outputs would create an unbounded number of compression pools"
+        );
+    }
+    let effective_gzip_threads = if config.parallel_gzip_stream {
+        gzip_threads
+    } else if config.parallel_gzip {
+        config.threads
+    } else {
+        1
+    };
+
+    if config.demux.is_none() {
+        if let Some(transformations) = &compiled_data.transformation {
+            if transformations.len() == 2 && (config.output1.is_none() || config.output2.is_none())
+            {
+                bail!("geometry transforms into two reads; both output1 and output2 are required");
+            }
+        }
+    }
+
+    let additional_args = config
+        .additional_args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut graph = Graph::new();
+    let mut input_files = vec![config.input1.to_string_lossy().into_owned()];
+    if let Some(input2) = &config.input2 {
+        input_files.push(input2.to_string_lossy().into_owned());
+    }
+    let input = if config.accelerated_gzip_input {
+        InputFastqOp::from_files_accelerated_gzip(
+            input_files,
+            config.gzip_input_threads,
+            config.gzip_input_chunk_size,
+        )
+    } else {
+        InputFastqOp::from_files(input_files)
+    };
+    graph.add(input.map_err(|error| anyhow!("failed to open input FASTQ: {error}"))?);
+
+    let has_unassigned = config.unassigned1.is_some() || config.unassigned2.is_some();
+    if has_unassigned {
+        let mut try_graph = Graph::new();
+        compiled_data.interpret(&mut try_graph, &additional_args);
+
+        let mut catch_graph = Graph::new();
+        let mut unassigned_files = Vec::new();
+        if let Some(path) = &config.unassigned1 {
+            unassigned_files.push(path.to_string_lossy().into_owned());
+        }
+        if config.input2.is_some() {
+            if let Some(path) = &config.unassigned2 {
+                unassigned_files.push(path.to_string_lossy().into_owned());
+            }
+        }
+        if !unassigned_files.is_empty() {
+            catch_graph.add(configure_fastq_output(
+                OutputFastqFileOp::from_files(unassigned_files),
+                &config,
+                gzip_threads,
+            )?);
+        }
+        graph.add(TryOp::new(try_graph, catch_graph));
+    } else {
+        compiled_data.interpret(&mut graph, &additional_args);
+    }
+
+    if let Some(demux) = &config.demux {
+        demux
+            .add_lookup_op(&mut graph)
+            .map_err(|error| anyhow!(error))?;
+        std::fs::create_dir_all(&demux.output_dir)?;
+
+        let out_dir = demux.output_dir.to_string_lossy();
+        let sample_attr_path = format!("{}.{}", demux.barcode_label, demux.sample_attr);
+        let mut expressions = vec![fmt_expr(format!(
+            "{}/{{{}}}_R1.fastq",
+            out_dir, sample_attr_path
+        ))];
+        if config.input2.is_some() {
+            expressions.push(fmt_expr(format!(
+                "{}/{{{}}}_R2.fastq",
+                out_dir, sample_attr_path
+            )));
+        }
+        graph.add(configure_fastq_output(
+            OutputFastqFileOp::from_files(expressions),
+            &config,
+            effective_gzip_threads,
+        )?);
+    } else {
+        let output1 = config
+            .output1
+            .as_deref()
+            .unwrap_or_else(|| Path::new("/dev/null"))
+            .to_string_lossy()
+            .into_owned();
+        match (&config.input2, &config.output2) {
+            (Some(_), Some(output2)) => {
+                graph.add(configure_fastq_output(
+                    OutputFastqFileOp::from_files([
+                        output1,
+                        output2.to_string_lossy().into_owned(),
+                    ]),
+                    &config,
+                    gzip_threads,
+                )?);
+            }
+            _ => {
+                graph.add(configure_fastq_output(
+                    OutputFastqFileOp::from_file(output1),
+                    &config,
+                    gzip_threads,
+                )?);
+            }
+        }
+    }
+
+    graph.set_collect_statistics(config.collect_statistics);
+    let use_pipeline = config.preserve_order || config.staged_pipeline;
+    let pipeline = if use_pipeline {
+        let mut pipeline_config = PipelineConfig::new(config.threads);
+        pipeline_config.preserve_order = config.preserve_order;
+        if let Some(queue_capacity) = config.queue_capacity {
+            pipeline_config.queue_capacity = queue_capacity;
+        }
+        if let Some(max_in_flight_batches) = config.max_in_flight_batches {
+            pipeline_config.max_in_flight_batches = max_in_flight_batches;
+        }
+        if let Some(batch_size) = config.batch_size {
+            pipeline_config.batch_size = batch_size;
+        }
+        Some(
+            graph
+                .try_run_pipeline(pipeline_config)
+                .map_err(|error| anyhow!(error.to_string()))?,
+        )
+    } else {
+        graph
+            .try_run_with_threads(config.threads)
+            .map_err(|error| anyhow!(error.to_string()))?;
+        None
+    };
+
+    let statistics = config.collect_statistics.then(|| {
+        statistics_from_graph(
+            &graph,
+            config.call,
+            config.geometry_digest,
+            config.threads,
+            config.preserve_order,
+            config.gzip_level,
+            config.parallel_gzip,
+            config.parallel_gzip_stream,
+            effective_gzip_threads,
+            config.gzip_block_size,
+            config.accelerated_gzip_input,
+            config.gzip_input_threads,
+            config.gzip_input_chunk_size,
+        )
+    });
+    Ok(RunReport {
+        effective_threads: config.threads,
+        ordered_output: config.preserve_order || config.threads == 1,
+        gzip_compression_level: config.gzip_level,
+        parallel_gzip_members: config.parallel_gzip,
+        parallel_gzip_stream: config.parallel_gzip_stream,
+        gzip_compression_threads: effective_gzip_threads,
+        gzip_block_size: config.gzip_block_size,
+        gzip_input_backend: if config.accelerated_gzip_input {
+            "rapidgzip-core".to_owned()
+        } else {
+            "needletail-auto".to_owned()
+        },
+        gzip_input_threads: if config.accelerated_gzip_input {
+            config.gzip_input_threads
+        } else {
+            1
+        },
+        gzip_input_chunk_size: if config.accelerated_gzip_input {
+            config.gzip_input_chunk_size
+        } else {
+            0
+        },
+        pipeline,
+        statistics,
+    })
+}
+
+fn statistics_from_graph(
+    graph: &Graph,
+    call: Option<String>,
+    geometry_digest: Option<String>,
+    effective_threads: usize,
+    preserve_order: bool,
+    gzip_compression_level: u32,
+    parallel_gzip_members: bool,
+    parallel_gzip_stream: bool,
+    gzip_compression_threads: usize,
+    gzip_block_size: usize,
+    accelerated_gzip_input: bool,
+    gzip_input_threads: usize,
+    gzip_input_chunk_size: usize,
+) -> SeqprocStats {
+    let input_stats = graph.input_stats();
+    let (n_fastqs, n_processed, n_reads_max, read_length_min, read_length_max, read_length_mean) =
+        if let Some(stats) = input_stats {
+            let mut read_length_min = Vec::with_capacity(stats.n_fastqs);
+            let mut read_length_max = Vec::with_capacity(stats.n_fastqs);
+            let mut read_length_mean = Vec::with_capacity(stats.n_fastqs);
+            let mut max_count = 0usize;
+
+            for index in 0..stats.n_fastqs {
+                let count = *stats.read_counts.get(index).unwrap_or(&0);
+                max_count = max_count.max(count);
+                let min = *stats.read_length_min.get(index).unwrap_or(&0);
+                let max = *stats.read_length_max.get(index).unwrap_or(&0);
+                let sum = *stats.read_length_sum.get(index).unwrap_or(&0);
+                read_length_min.push(min as u64);
+                read_length_max.push(max as u64);
+                read_length_mean.push(if count == 0 {
+                    0.0
+                } else {
+                    sum as f64 / count as f64
+                });
+            }
+
+            (
+                stats.n_fastqs as u32,
+                max_count as u64,
+                max_count as u64,
+                read_length_min,
+                read_length_max,
+                read_length_mean,
+            )
+        } else {
+            (0, 0, 0, Vec::new(), Vec::new(), Vec::new())
+        };
+
+    let match_distance_stats = graph
+        .match_distance_counts()
+        .into_iter()
+        .map(|counts| {
+            let matched_total = counts.counts.iter().map(|&count| count as u64).sum::<u64>();
+            let distance_histogram = counts
+                .counts
+                .into_iter()
+                .enumerate()
+                .filter(|(_, count)| *count > 0)
+                .map(|(distance, count)| DistanceBin {
+                    distance,
+                    count: count as u64,
+                })
+                .collect();
+            MatchDistanceStats {
+                label: counts.label,
+                unmatched: (counts.total as u64).saturating_sub(matched_total),
+                distance_histogram,
+            }
+        })
+        .collect();
+    let failed_parsing = graph.failed_reads() as u64;
+    let accepted_fragments = graph
+        .final_output_reads()
+        .map(|count| count as u64)
+        .unwrap_or_else(|| n_processed.saturating_sub(failed_parsing));
+    let rejected_fragments = n_processed.saturating_sub(accepted_fragments);
+    let mut rejection_reasons = Vec::new();
+    if failed_parsing > 0 {
+        rejection_reasons.push(RejectionReasonCount {
+            reason: "missing_required_label_or_attribute".to_owned(),
+            count: failed_parsing,
+        });
+    }
+    let other_rejected = rejected_fragments.saturating_sub(failed_parsing);
+    if other_rejected > 0 {
+        rejection_reasons.push(RejectionReasonCount {
+            reason: "not_emitted_by_primary_output".to_owned(),
+            count: other_rejected,
+        });
+    }
+
+    SeqprocStats {
+        schema_version: "1.2.0".to_owned(),
+        seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
+        call,
+        geometry_digest,
+        ordering_mode: if preserve_order || effective_threads == 1 {
+            "input-order".to_owned()
+        } else {
+            "unordered".to_owned()
+        },
+        effective_threads,
+        gzip_compression_level,
+        parallel_gzip_members,
+        parallel_gzip_stream,
+        gzip_compression_threads,
+        gzip_block_size,
+        gzip_input_backend: if accelerated_gzip_input {
+            "rapidgzip-core".to_owned()
+        } else {
+            "needletail-auto".to_owned()
+        },
+        gzip_input_threads: if accelerated_gzip_input {
+            gzip_input_threads
+        } else {
+            1
+        },
+        gzip_input_chunk_size: if accelerated_gzip_input {
+            gzip_input_chunk_size
+        } else {
+            0
+        },
+        n_fastqs,
+        n_processed,
+        n_reads_max,
+        total_fragments: n_processed,
+        accepted_fragments,
+        rejected_fragments,
+        failed_parsing,
+        rejection_reasons,
+        read_length_mean,
+        read_length_min,
+        read_length_max,
+        match_distance_stats,
+    }
 }
 
 pub fn interpret(
@@ -374,6 +867,9 @@ fn interpret_to_pipes(
         graph.add(OutputFastqOp::from_writer(stream1));
     }
 
+    // This is the reporting path. Normal execution leaves statistics disabled
+    // in antisequence so it avoids per-read counters and histogram locks.
+    graph.set_collect_statistics(true);
     graph.run_with_threads(threads);
 
     let input_stats = graph.input_stats();
@@ -455,16 +951,56 @@ fn interpret_to_pipes(
         })
         .collect();
 
+    let failed_parsing = graph.failed_reads() as u64;
+    let accepted_fragments = graph
+        .final_output_reads()
+        .map(|count| count as u64)
+        .unwrap_or_else(|| n_processed.saturating_sub(failed_parsing));
+    let rejected_fragments = n_processed.saturating_sub(accepted_fragments);
+    let mut rejection_reasons = Vec::new();
+    if failed_parsing > 0 {
+        rejection_reasons.push(RejectionReasonCount {
+            reason: "missing_required_label_or_attribute".to_owned(),
+            count: failed_parsing,
+        });
+    }
+    let other_rejected = rejected_fragments.saturating_sub(failed_parsing);
+    if other_rejected > 0 {
+        rejection_reasons.push(RejectionReasonCount {
+            reason: "not_emitted_by_primary_output".to_owned(),
+            count: other_rejected,
+        });
+    }
+
     SeqprocStats {
+        schema_version: "1.2.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         call: None,
+        geometry_digest: None,
+        ordering_mode: if threads == 1 {
+            "input-order".to_string()
+        } else {
+            "unordered".to_string()
+        },
+        effective_threads: threads,
+        gzip_compression_level: OutputFastqFileOp::DEFAULT_GZIP_LEVEL,
+        parallel_gzip_members: false,
+        parallel_gzip_stream: false,
+        gzip_compression_threads: 1,
+        gzip_block_size: 128 * 1024,
+        gzip_input_backend: "needletail-auto".to_owned(),
+        gzip_input_threads: 1,
+        gzip_input_chunk_size: 0,
 
         n_fastqs,
         n_processed,
         n_reads_max,
 
         total_fragments: n_processed,
-        failed_parsing: 0,
+        accepted_fragments,
+        rejected_fragments,
+        failed_parsing,
+        rejection_reasons,
         read_length_mean,
         read_length_min,
         read_length_max,
@@ -477,7 +1013,12 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, Stri
     let tokens = lexer::lexer()
         .parse(&geom)
         .into_result()
-        .unwrap_or_else(|errs| parse_failure(&errs[0], geom.clone()));
+        .map_err(|errors| {
+            errors
+                .into_iter()
+                .map(|error| Rich::<String>::custom(*error.span(), error.to_string()).into_owned())
+                .collect::<Vec<_>>()
+        })?;
 
     let tokens = tokens
         .into_iter()
@@ -486,10 +1027,12 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, Stri
     let input = tokens[..].split_spanned((0..geom.len()).into());
 
     // parse token
-    let description = parser()
-        .parse(input)
-        .into_result()
-        .unwrap_or_else(|errs| parse_failure(&errs[0], geom.clone()));
+    let description = parser().parse(input).into_result().map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|error| Rich::<String>::custom(*error.span(), error.to_string()).into_owned())
+            .collect::<Vec<_>>()
+    })?;
 
     // compile ast
     let compiled = compile(description).map_err(|e| {
@@ -621,6 +1164,12 @@ mod tests {
         assert_eq!(data.geometry.len(), 1);
         assert_eq!(data.geometry[0].len(), 3);
         assert!(data.transformation.is_none());
+    }
+
+    #[test]
+    fn test_compile_geom_returns_lex_and_parse_errors() {
+        assert!(compile_geom("1{b[16]r:@}".to_string()).is_err());
+        assert!(compile_geom("1{b[16]".to_string()).is_err());
     }
 
     #[test]
@@ -795,13 +1344,31 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
+            schema_version: "1.2.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             call: Some("test".to_string()),
+            geometry_digest: None,
+            ordering_mode: "input-order".to_string(),
+            effective_threads: 1,
+            gzip_compression_level: 3,
+            parallel_gzip_members: false,
+            parallel_gzip_stream: false,
+            gzip_compression_threads: 1,
+            gzip_block_size: 128 * 1024,
+            gzip_input_backend: "needletail-auto".to_owned(),
+            gzip_input_threads: 1,
+            gzip_input_chunk_size: 0,
             n_fastqs: 2,
             n_processed: 100,
             n_reads_max: 1000,
             total_fragments: 100,
+            accepted_fragments: 95,
+            rejected_fragments: 5,
             failed_parsing: 5,
+            rejection_reasons: vec![RejectionReasonCount {
+                reason: "test".to_string(),
+                count: 5,
+            }],
             read_length_mean: vec![150.0, 150.0],
             read_length_min: vec![100, 100],
             read_length_max: vec![200, 200],

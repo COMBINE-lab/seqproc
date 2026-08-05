@@ -195,6 +195,50 @@ brc1  = b[9-10]
     group.finish();
 }
 
+fn bench_statistics_overhead(c: &mut Criterion) {
+    let geom = r#"
+anchor = f[CAGAGC]
+brc1  = norm(b[9-10])
+1{<brc1> hamming(<anchor>, 1) u[8] b[10]}2{r:}
+"#
+    .to_string();
+    let compiled = compile_geom(geom).expect("compile geom");
+    let n = std::env::var("ANTISEQ_STATS_BENCH_READS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(100_000);
+
+    let mut group = c.benchmark_group("antisequence_statistics_overhead");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(10));
+    for &collect_statistics in &[false, true] {
+        let name = if collect_statistics {
+            "statistics_on"
+        } else {
+            "statistics_off"
+        };
+        group.bench_function(format!("{name}_N={n}"), |b| {
+            b.iter_batched(
+                || {
+                    let (r1, r2) = make_fastq_pair_sci3(n);
+                    vec![Cursor::new(r1), Cursor::new(r2)]
+                },
+                |readers| {
+                    let mut graph = Graph::new();
+                    graph.add(InputFastqOp::from_readers(readers).unwrap());
+                    compiled.interpret(&mut graph, &Vec::<&str>::new());
+                    graph.set_collect_statistics(collect_statistics);
+                    graph.add(NullOutputOp::new());
+                    graph.run_with_threads(threads());
+                },
+                BatchSize::LargeInput,
+            )
+        });
+    }
+    group.finish();
+}
+
 fn bench_sci3_10m(c: &mut Criterion) {
     let geom = r#"
 anchor = f[CAGAGC]
@@ -633,6 +677,7 @@ criterion_group!(
     // bench_10x_large_null,
     bench_sci3_large,
     bench_sci3_10m,
+    bench_statistics_overhead,
     // bench_sci3_large_null,
     // bench_sci3_tolerant_large,
     // bench_sci3_disk_1m

@@ -6,21 +6,41 @@ Thus the important information regarding `seqproc` actually pertains to the EFGD
 
 ### Using `seqproc`
 
-The `seqproc` program is an executable that exposes a single command that takes 
-several command line arguments.  You can pass the `-h` or `--help` flag to `seqproc`
-to see the various command line arguments and their descriptions.
+The CLI provides `validate`, `explain`, and `run` subcommands. The legacy
+flag-only invocation remains available during the compatibility window.
 
-    $ ./target/release/seqproc -h
-    General puprose sequence preprocessor
+```console
+seqproc validate protocol.geom
+seqproc explain protocol.geom
+seqproc run --geom protocol.geom --file1 reads_R1.fastq.gz \
+  --file2 reads_R2.fastq.gz --out1 clean_R1.fastq.gz \
+  --out2 clean_R2.fastq.gz --threads 8 --preserve-order
+```
 
-    Usage: seqproc [OPTIONS] --geom <GEOM> --file1 <FILE1> --file2 <FILE2>
+`--summary report.json` runs the same processing pipeline and emits the
+versioned schema documented in [`schemas/`](schemas/). Statistics are disabled
+unless a summary is requested.
 
-    Options:
-      -g, --geom <GEOM>                 EFGDL string
-      -1, --file1 <FILE1>               r1 fastq file
-      -2, --file2 <FILE2>               r2 fastq file
-      -o, --out1 <OUT1>                 r1 out fastq file [default: ]
-      -w, --out2 <OUT2>                 r2 out fastq file [default: ]
-      -t, --threads <THREADS>           number of threads to use [default: 1]
-      -a, --additional <ADDITIONAL>...
-      -h, --help                        Print help
+### Compressed I/O
+
+Gzip level 3 is the measured speed/size default. Two opt-in parallel output
+backends cover different interoperability and performance requirements:
+
+- `--parallel-gzip` compresses read batches on transform workers and emits a
+  concatenated multi-member gzip file. This is typically the fastest choice,
+  but consumers must support concatenated members.
+- `--parallel-gzip-stream` emits one logical gzip member with dictionary
+  continuity across read batches. Its compression pool defaults to
+  `min(--threads, 4)`; use `--gzip-threads` and `--gzip-block-size` to tune it.
+
+FASTQ input is parsed by `needletail`, which also provides transparent
+decompression by default. `--accelerated-gzip-input` instead feeds `needletail`
+from `rapidgzip-core`'s speculative decoder for regular `.gz` files while
+retaining the same transformation graph. Decoder workers are created adaptively
+up to the `--gzip-input-threads` ceiling; real-data profiling currently favors the
+default ceiling of one worker per input when transform workers share a fixed
+CPU allocation. `--gzip-input-chunk-size` controls decoded handoff chunks, with
+a measured 256-KiB default. Plain input files are unchanged by the option.
+
+Run `seqproc run --help` for the complete set of pipeline, ordering,
+demultiplexing, and compressed-I/O options.
