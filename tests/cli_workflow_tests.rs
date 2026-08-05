@@ -39,6 +39,27 @@ fn validate_and_explain_commands_report_compiled_geometry() {
 }
 
 #[test]
+fn explain_handles_parameterized_ambiguity_policy() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("ambiguity.geom");
+    fs::write(
+        &geometry,
+        "#[ambig_policy = random(seed = 42)] bc = map_with_mismatch(b[4], \"mapping.tsv\", self, 1)\n1{<bc>r:}\n",
+    )
+    .unwrap();
+
+    let explain = Command::cargo_bin("seqproc")
+        .unwrap()
+        .args(["explain", geometry.to_str().unwrap()])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&explain.get_output().stdout);
+    assert!(stdout.contains("Normalized EFGDL:"));
+    assert!(stdout.contains("Random"));
+    assert!(stdout.contains("seed: 42"));
+}
+
+#[test]
 fn validate_returns_nonzero_for_invalid_geometry() {
     let directory = tempdir().unwrap();
     let geometry = directory.path().join("invalid.geom");
