@@ -44,3 +44,25 @@ a measured 256-KiB default. Plain input files are unchanged by the option.
 
 Run `seqproc run --help` for the complete set of pipeline, ordering,
 demultiplexing, and compressed-I/O options.
+
+### Ambiguous barcode matches
+
+Equal-best matches against distinct whitelist or mapping entries use an
+operation-specific default: filters accept set membership, while mapping
+operations conservatively follow their no-match fallback. Override this with a
+typed property annotation on the definition:
+
+```text
+#[ambig_policy = accept]
+bc3 = filter_within_dist(b[8], "barcodes.txt", 1)
+
+#[ambig_policy = quality(min_delta = 2)]
+bc = map_with_mismatch(b[8], "barcode-map.tsv", self, 1)
+```
+
+Supported values are `accept`, `no_match`, `first`, `random`, `quality`, and
+`error`. `random(seed = N)` is deterministic across thread schedules;
+`quality(min_delta = N)` selects the candidate whose mismatching positions
+have the lowest summed Phred score and requires the specified advantage over
+the runner-up. Exact duplicate input rows are removed before matching;
+conflicting duplicate mapping rows are configuration errors.

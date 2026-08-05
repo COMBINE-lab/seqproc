@@ -39,6 +39,15 @@ fn seq_count(path: &Path) -> usize {
     }
 }
 
+fn compile_error_text(geometry: &str) -> String {
+    compile_geom(geometry.to_string())
+        .unwrap_err()
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn nuc(i: usize) -> u8 {
     const N: [u8; 4] = [b'A', b'C', b'G', b'T'];
     N[i & 3]
@@ -487,6 +496,53 @@ fn e2e_error_malformed_edit_annotation() {
 fn e2e_error_bad_search_annotation() {
     let result = compile_geom("#[search(absolute)] a = f[CAGAGC]\n1{x:<a>x:}2{r:}".to_string());
     assert!(result.is_err(), "#[search(absolute)] should be rejected");
+}
+
+#[test]
+fn e2e_ambiguity_policy_assignment_variants_compile() {
+    for policy in [
+        "accept",
+        "no_match",
+        "first",
+        "error",
+        "random",
+        "random(seed = 42)",
+        "quality",
+        "quality(min_delta = 3)",
+    ] {
+        let geometry = format!(
+            "#[ambig_policy = {policy}] bc = filter_within_dist(b[4], \"wl.txt\", 1)\n1{{<bc>r:}}"
+        );
+        compile_geom(geometry)
+            .unwrap_or_else(|error| panic!("policy {policy} should compile, got {error:?}"));
+    }
+}
+
+#[test]
+fn e2e_ambiguity_policy_requires_canonical_assignment_syntax() {
+    let error = compile_error_text(
+        "#[ambig_policy(first)] bc = filter_within_dist(b[4], \"wl.txt\", 1)\n1{<bc>r:}",
+    );
+    assert!(error.contains("uses assignment syntax"));
+}
+
+#[test]
+fn e2e_ambiguity_policy_rejects_bad_variants_arguments_and_targets() {
+    let unknown = compile_error_text(
+        "#[ambig_policy = nearestish] bc = filter_within_dist(b[4], \"wl.txt\", 1)\n1{<bc>r:}",
+    );
+    assert!(unknown.contains("unknown ambiguity policy"));
+
+    let bad_argument = compile_error_text(
+        "#[ambig_policy = random(min_delta = 2)] bc = filter_within_dist(b[4], \"wl.txt\", 1)\n1{<bc>r:}"
+    );
+    assert!(bad_argument.contains("expected `seed`"));
+
+    let no_target = compile_error_text("#[ambig_policy = first] bc = b[4]\n1{<bc>r:}");
+    assert!(no_target.contains("requires a map or filter operation"));
+
+    let read_level = compile_error_text("#[ambig_policy = first] 1{b[4]r:}");
+    assert!(read_level.contains("must be attached to the definition"));
 }
 
 #[test]

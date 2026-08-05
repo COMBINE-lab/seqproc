@@ -250,6 +250,7 @@ pub fn validate_composition(
                 ),
             }),
         },
+        CompiledFunction::AmbiguityPolicy(_) => Ok(S(return_type, fn_span)),
         CompiledFunction::Hamming(_) => match return_type {
             ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {

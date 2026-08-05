@@ -9,6 +9,7 @@ use crate::{
     parser::{Expr, Function},
     Nucleotide, S,
 };
+use antisequence::AmbiguityPolicy;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CompiledFunction {
@@ -28,6 +29,9 @@ pub enum CompiledFunction {
     MapWithMismatch(String, Vec<S<CompiledFunction>>, usize),
     MapWithEdit(String, Vec<S<CompiledFunction>>, usize),
     FilterWithinDist(String, usize),
+    /// Property-style ambiguity resolution modifier applied to the next
+    /// map/filter operation in this definition's stack.
+    AmbiguityPolicy(AmbiguityPolicy),
     Hamming(usize),
     Edit(usize),
     /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length

@@ -328,6 +328,68 @@ fn filter_within_dist_fast_and_general_hamming_paths_agree() {
     assert_filter_within_dist_keeps_hits("ACGTACGTA");
 }
 
+fn run_ambiguity_filter(policy: &str) -> Vec<String> {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let input = dir.join("ambiguous.fastq");
+    let whitelist = dir.join("whitelist.txt");
+    let output = dir.join("output.fastq");
+    let unused = dir.join("unused.fastq");
+    writeln!(File::create(&input).unwrap(), "@ambiguous\nAAAA\n+\nIIII").unwrap();
+    // The repeated CAAA row is input duplication; the tie between the two
+    // distinct normalized barcodes is genuine match ambiguity.
+    writeln!(File::create(&whitelist).unwrap(), "CAAA\nCAAA\nAAAC").unwrap();
+    let geometry = format!(
+        "#[ambig_policy = {policy}] bc = filter_within_dist(b[4], \"{}\", 1)\n1{{<bc>}}\n-> 1{{<bc>}}",
+        whitelist.display()
+    );
+    let compiled = compile_geom(geometry).unwrap();
+    read_pairs_to_file(compiled, &input, None, &output, &unused, 1, vec![]).unwrap();
+    parse_fastq_sequences(&output)
+}
+
+#[test]
+fn ambiguity_filter_accept_and_no_match_policies_differ_after_deduplication() {
+    assert_eq!(run_ambiguity_filter("accept"), vec!["AAAA"]);
+    assert!(run_ambiguity_filter("no_match").is_empty());
+}
+
+fn run_ambiguity_map(policy: &str, quality: &str) -> Vec<String> {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let input = dir.join("ambiguous.fastq");
+    let map = dir.join("map.tsv");
+    let output = dir.join("output.fastq");
+    let unused = dir.join("unused.fastq");
+    writeln!(
+        File::create(&input).unwrap(),
+        "@ambiguous\nAAAA\n+\n{quality}"
+    )
+    .unwrap();
+    writeln!(
+        File::create(&map).unwrap(),
+        "CCCC\tCAAA\nCCCC\tCAAA\nGGGG\tAAAC"
+    )
+    .unwrap();
+    let geometry = format!(
+        "#[ambig_policy = {policy}] bc = map_with_mismatch(b[4], \"{}\", self, 1)\n1{{<bc>}}\n-> 1{{<bc>}}",
+        map.display()
+    );
+    let compiled = compile_geom(geometry).unwrap();
+    read_pairs_to_file(compiled, &input, None, &output, &unused, 1, vec![]).unwrap();
+    parse_fastq_sequences(&output)
+}
+
+#[test]
+fn ambiguity_map_first_quality_and_no_match_policies_are_observable() {
+    assert_eq!(run_ambiguity_map("first", "IIII"), vec!["CCCC"]);
+    assert_eq!(
+        run_ambiguity_map("quality(min_delta = 1)", "III!"),
+        vec!["GGGG"]
+    );
+    assert_eq!(run_ambiguity_map("no_match", "IIII"), vec!["AAAA"]);
+}
+
 // ===========================================================================
 // 1. 10x Chromium v2
 // ===========================================================================

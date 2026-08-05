@@ -16,6 +16,7 @@ use antisequence::{
     *,
 };
 use expr::Expr;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
 
 use crate::Nucleotide;
@@ -70,6 +71,7 @@ impl CompiledFunction {
             CompiledFunction::MapWithMismatch(_, _, _) => unimplemented!(),
             CompiledFunction::MapWithEdit(_, _, _) => unimplemented!(),
             CompiledFunction::FilterWithinDist(_, _) => unimplemented!(),
+            CompiledFunction::AmbiguityPolicy(_) => unimplemented!(),
             CompiledFunction::Hamming(_) => unimplemented!(),
             CompiledFunction::Edit(_) => unimplemented!(),
             // Anchor is handled in the interpreter, not as an expr
@@ -170,7 +172,7 @@ pub fn match_node(
     MatchAnyOp::new(tr_expr, patterns, match_type)
 }
 
-pub fn parse_file_filter(path: PathBuf) -> Patterns {
+pub fn parse_file_filter(path: PathBuf, ambiguity_policy: AmbiguityPolicy) -> Patterns {
     let file = File::open(path.clone()).unwrap_or_else(|_| {
         panic!(
             "Expected file -- could not open {:?}",
@@ -179,6 +181,8 @@ pub fn parse_file_filter(path: PathBuf) -> Patterns {
     });
     let reader = BufReader::new(file);
     let mut contents = vec![];
+    let mut seen = FxHashSet::default();
+    let mut duplicate_count = 0usize;
     for (i, line) in reader.lines().enumerate() {
         let line = line.unwrap_or_else(|_| {
             panic!(
@@ -186,9 +190,23 @@ pub fn parse_file_filter(path: PathBuf) -> Patterns {
                 path.file_name().unwrap()
             )
         });
-        contents.push(line);
+        if seen.insert(line.clone()) {
+            contents.push(line);
+        } else {
+            duplicate_count += 1;
+        }
     }
-    Patterns::from_strs(contents).with_pattern_name(FILTER)
+    if duplicate_count > 0 {
+        tracing::warn!(
+            file = %path.display(),
+            duplicates = duplicate_count,
+            unique = contents.len(),
+            "removed duplicate whitelist entries"
+        );
+    }
+    Patterns::from_strs(contents)
+        .with_pattern_name(FILTER)
+        .with_ambiguity_policy(ambiguity_policy)
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,17 +215,39 @@ struct SeqprocMap {
     match_patt: String,
 }
 
-pub fn parse_file_match(path: PathBuf) -> Patterns {
+pub fn parse_file_match(path: PathBuf, ambiguity_policy: AmbiguityPolicy) -> Patterns {
     let mut rdr = csv::ReaderBuilder::new()
         .delimiter(b'\t')
         .comment(Some(b'#'))
         .has_headers(false)
-        .from_path(path)
+        .from_path(&path)
         .expect("cannot open mapping file");
 
     let mut mappings = vec![];
-    for result in rdr.deserialize() {
+    let mut seen: FxHashMap<String, (String, usize)> = FxHashMap::default();
+    let mut duplicate_count = 0usize;
+    for (row_idx, result) in rdr.deserialize().enumerate() {
         let mapping: SeqprocMap = result.expect("Could not parse line in map file");
+
+        if let Some((existing_sub, existing_row)) = seen.get(&mapping.match_patt) {
+            if existing_sub == &mapping.sub_patt {
+                duplicate_count += 1;
+                continue;
+            }
+            panic!(
+                "Conflicting mapping for barcode {:?} in {}: row {} maps to {:?}, but row {} maps to {:?}",
+                mapping.match_patt,
+                path.display(),
+                existing_row + 1,
+                existing_sub,
+                row_idx + 1,
+                mapping.sub_patt
+            );
+        }
+        seen.insert(
+            mapping.match_patt.clone(),
+            (mapping.sub_patt.clone(), row_idx),
+        );
 
         // Use Pattern::Literal for better performance (enables fast hash-based lookup)
         mappings.push(Pattern::Literal {
@@ -216,15 +256,26 @@ pub fn parse_file_match(path: PathBuf) -> Patterns {
         });
     }
 
+    if duplicate_count > 0 {
+        tracing::warn!(
+            file = %path.display(),
+            duplicates = duplicate_count,
+            unique = mappings.len(),
+            "removed duplicate mapping entries"
+        );
+    }
+
     Patterns::new(mappings, vec![SUB])
         .with_multimatch_name(AMBIG)
         .with_pattern_name(MAPPED)
+        .with_ambiguity_policy(ambiguity_policy)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use antisequence::expr::label;
+    use std::io::Write;
 
     #[test]
     fn test_into_transform_expr() {
@@ -391,5 +442,42 @@ mod tests {
     fn test_into_transform_expr_multiple() {
         let te = into_transform_expr("seq1.*", vec!["seq1.a", "seq1.b", "seq1.c"]);
         te.check_size(1, 3, "test");
+    }
+
+    #[test]
+    fn pattern_file_loaders_remove_identical_duplicates() {
+        let temp = tempfile::tempdir().unwrap();
+        let whitelist = temp.path().join("whitelist.txt");
+        writeln!(File::create(&whitelist).unwrap(), "CAAA\nCAAA\nAAAC").unwrap();
+        let patterns = parse_file_filter(whitelist, AmbiguityPolicy::Accept);
+        assert_eq!(patterns.patterns().len(), 2);
+
+        let mapping = temp.path().join("mapping.tsv");
+        writeln!(
+            File::create(&mapping).unwrap(),
+            "CCCC\tCAAA\nCCCC\tCAAA\nGGGG\tAAAC"
+        )
+        .unwrap();
+        let patterns = parse_file_match(mapping, AmbiguityPolicy::First);
+        assert_eq!(patterns.patterns().len(), 2);
+    }
+
+    #[test]
+    fn mapping_loader_rejects_conflicting_duplicate_keys() {
+        let temp = tempfile::tempdir().unwrap();
+        let mapping = temp.path().join("mapping.tsv");
+        writeln!(File::create(&mapping).unwrap(), "CCCC\tCAAA\nGGGG\tCAAA").unwrap();
+        let panic = std::panic::catch_unwind(|| {
+            parse_file_match(mapping, AmbiguityPolicy::NoMatch);
+        })
+        .unwrap_err();
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap();
+        assert!(message.contains("Conflicting mapping"));
+        assert!(message.contains("row 1"));
+        assert!(message.contains("row 2"));
     }
 }

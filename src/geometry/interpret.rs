@@ -579,6 +579,7 @@ fn execute_stack(
     additional_args: &[&str],
     graph: &mut Graph,
 ) {
+    let mut ambiguity_policy = None;
     let range = if let IntervalShape::RangedLen(S((a, b), _)) = size {
         Some(*a..=*b)
     } else {
@@ -596,6 +597,10 @@ fn execute_stack(
         match fn_ {
             // Anchor is a modifier handled in interpret(), skip here
             CompiledFunction::Anchor => continue,
+            CompiledFunction::AmbiguityPolicy(policy) => {
+                ambiguity_policy = Some(policy);
+                continue;
+            }
             CompiledFunction::Remove => {
                 graph.add(trim_node([antisequence::expr::label(label)]));
             }
@@ -607,7 +612,10 @@ fn execute_stack(
             }
             CompiledFunction::Map(file, fns) => {
                 let file_path = parse_additional_args(file, additional_args);
-                let patterns = parse_file_match(file_path);
+                let patterns = parse_file_match(
+                    file_path,
+                    ambiguity_policy.take().unwrap_or(AmbiguityPolicy::NoMatch),
+                );
 
                 map(label, patterns, Exact, graph);
 
@@ -621,7 +629,10 @@ fn execute_stack(
             }
             CompiledFunction::MapWithMismatch(file, fns, mismatch) => {
                 let file_path = parse_additional_args(file, additional_args);
-                let patterns = parse_file_match(file_path);
+                let patterns = parse_file_match(
+                    file_path,
+                    ambiguity_policy.take().unwrap_or(AmbiguityPolicy::NoMatch),
+                );
 
                 map(
                     label,
@@ -640,7 +651,10 @@ fn execute_stack(
             }
             CompiledFunction::MapWithEdit(file, fns, edit_dist) => {
                 let file_path = parse_additional_args(file, additional_args);
-                let patterns = parse_file_match(file_path);
+                let patterns = parse_file_match(
+                    file_path,
+                    ambiguity_policy.take().unwrap_or(AmbiguityPolicy::NoMatch),
+                );
 
                 map(label, patterns, Edit(Threshold::Count(edit_dist)), graph);
 
@@ -654,7 +668,10 @@ fn execute_stack(
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
                 let file_path = parse_additional_args(file, additional_args);
-                let patterns = parse_file_filter(file_path);
+                let patterns = parse_file_filter(
+                    file_path,
+                    ambiguity_policy.take().unwrap_or(AmbiguityPolicy::Accept),
+                );
 
                 graph.add(match_node(
                     patterns,

@@ -200,7 +200,23 @@ pub struct Definition {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Annotation {
     pub name: S<String>,
+    /// Arguments for operation-style annotations such as `#[hamming(1)]`.
     pub args: Vec<S<String>>,
+    /// Value for property-style annotations such as
+    /// `#[ambig_policy = quality(min_delta = 2)]`.
+    pub value: Option<S<AnnotationValue>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AnnotationValue {
+    pub variant: S<String>,
+    pub args: Vec<S<AnnotationValueArg>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AnnotationValueArg {
+    pub name: Option<S<String>>,
+    pub value: S<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -584,21 +600,68 @@ pub fn parser<'tokens>(
         just(Token::Rc).to("rc".to_string()),
     ));
 
-    // Parse annotation: #[name(arg1, arg2, ...)]
+    let spanned_annotation_arg = annotation_arg
+        .clone()
+        .map_with(|arg, state| S(arg, state.span()));
+
+    // Property values use an enum-like variant with optional positional or
+    // named scalar arguments: `quality(min_delta = 2)` or `random(42)`.
+    let assignment_value_arg = spanned_annotation_arg
+        .clone()
+        .then(
+            just(Token::Equals)
+                .ignore_then(spanned_annotation_arg.clone())
+                .or_not(),
+        )
+        .map_with(|(first, assigned), state| {
+            let (name, value) = match assigned {
+                Some(value) => (Some(first), value),
+                None => (None, first),
+            };
+            S(AnnotationValueArg { name, value }, state.span())
+        });
+
+    let assignment_value = spanned_annotation_arg
+        .clone()
+        .then(
+            assignment_value_arg
+                .separated_by(just(Token::Comma))
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::LParen), just(Token::RParen))
+                .or_not(),
+        )
+        .map_with(|(variant, args), state| {
+            S(
+                AnnotationValue {
+                    variant,
+                    args: args.unwrap_or_default(),
+                },
+                state.span(),
+            )
+        });
+
+    // Parse either an operation annotation (`#[name(args)]`) or a property
+    // assignment (`#[name = variant(args)]`). Each annotation name can choose
+    // one canonical form during semantic validation.
     let annotation = just(Token::HashBracket)
         .ignore_then(
             annotation_name
                 .map_with(|name, state| S(name, state.span()))
-                .then(
+                .then(choice((
+                    just(Token::Equals)
+                        .ignore_then(assignment_value)
+                        .map(|value| (Vec::new(), Some(value))),
                     annotation_arg
+                        .clone()
                         .map_with(|a, state| S(a, state.span()))
                         .separated_by(just(Token::Comma))
                         .collect::<Vec<_>>()
-                        .delimited_by(just(Token::LParen), just(Token::RParen)),
-                )
+                        .delimited_by(just(Token::LParen), just(Token::RParen))
+                        .map(|args| (args, None)),
+                )))
                 .then_ignore(just(Token::RBracket)),
         )
-        .map_with(|(name, args), state| S(Annotation { name, args }, state.span()));
+        .map_with(|(name, (args, value)), state| S(Annotation { name, args, value }, state.span()));
 
     // define the basic peices of an EFGDL description
     // Definitions may be preceded by annotations: #[edit(5)] foo = f[ABC]
