@@ -11,7 +11,7 @@ use expr::Expr;
 use graph::{
     Graph,
     MatchType::{Edit, EditPrefix, Exact, ExactPrefix, Hamming, HammingPrefix},
-    SelectOp, Threshold, TryOrientationOp,
+    ProjectOp, SelectOp, Threshold, TryOrientationOp,
 };
 
 use crate::{
@@ -181,11 +181,31 @@ impl<'a> CompiledData {
         } else if let Some(transformation) = transformation {
             for (i, tr) in transformation.iter().enumerate() {
                 let seq_name = format!("seq{}.*", i + 1);
-                let tr = format!("{{{}}}", tr.join("}{"));
-                graph.add(set_node(
-                    LabelOrAttr::Label(&seq_name),
-                    antisequence::expr::fmt_expr(tr),
-                ));
+                let projection_labels = tr
+                    .iter()
+                    .map(|name| {
+                        antisequence::expr::Label::new(name.as_bytes())
+                            .expect("compiled transformation labels must be valid")
+                    })
+                    .collect::<Vec<_>>();
+                let target_str_type = StrType::Seq((i + 1) as u8);
+
+                if !projection_labels.is_empty()
+                    && projection_labels
+                        .iter()
+                        .all(|label| label.str_type == target_str_type)
+                {
+                    // This is the final operation before output. Compact
+                    // same-lane projections in place instead of allocating a
+                    // concatenation and copying it back into the read buffer.
+                    graph.add(ProjectOp::new(projection_labels));
+                } else {
+                    let tr = format!("{{{}}}", tr.join("}{"));
+                    graph.add(set_node(
+                        LabelOrAttr::Label(&seq_name),
+                        antisequence::expr::fmt_expr(tr),
+                    ));
+                }
             }
         };
     }
@@ -297,13 +317,15 @@ fn interpret_geometry(
                         // Search for anchor with 3-way split
                         // For anchor(), search_label is the original read (position 0)
                         // For anchor_relative(), search_label is the current position
-                        graph.add(match_node(
-                            Patterns::from_strs([Nucleotide::as_str(&seq)]),
-                            &search_label,
-                            vec![&prev_label, &anchor_this_label, &next_label_str],
-                            match_type,
-                        ));
-                        graph.add(retain_node(expr::label_exists(anchor_this_label.clone())));
+                        graph.add(
+                            match_node(
+                                Patterns::from_strs([Nucleotide::as_str(&seq)]),
+                                &search_label,
+                                vec![&prev_label, &anchor_this_label, &next_label_str],
+                                match_type,
+                            )
+                            .retain_label_present(&anchor_this_label),
+                        );
 
                         // Execute any remaining stack functions on anchor
                         execute_stack(
@@ -673,16 +695,15 @@ fn execute_stack(
                     ambiguity_policy.take().unwrap_or(AmbiguityPolicy::Accept),
                 );
 
-                graph.add(match_node(
-                    patterns,
-                    label,
-                    vec![label],
-                    Hamming(Threshold::Count(interval_length - mismatch)),
-                ));
-
-                graph.add(retain_node(
-                    expr::attr_exists([label, ".", FILTER].concat()).not(),
-                ));
+                graph.add(
+                    match_node(
+                        patterns,
+                        label,
+                        vec![label],
+                        Hamming(Threshold::Count(interval_length - mismatch)),
+                    )
+                    .retain_attribute_absent([label, ".", FILTER].concat()),
+                );
             }
             // for the rest of the compliled functions which translate exactly to a single node
             _ => {
@@ -798,13 +819,15 @@ impl<'a> GeometryMeta {
                         ExactSearch
                     };
 
-                    graph.add(match_node(
-                        Patterns::from_strs([Nucleotide::as_str(&seq)]),
-                        &init_label,
-                        labels,
-                        match_type,
-                    ));
-                    graph.add(retain_node(expr::label_exists(this_label.clone())));
+                    graph.add(
+                        match_node(
+                            Patterns::from_strs([Nucleotide::as_str(&seq)]),
+                            &init_label,
+                            labels,
+                            match_type,
+                        )
+                        .retain_label_present(&this_label),
+                    );
                 } else {
                     // Original prefix matching behavior
                     let labels = vec![this_label.as_str(), &next_label];
@@ -828,13 +851,15 @@ impl<'a> GeometryMeta {
                         ExactPrefix
                     };
 
-                    graph.add(match_node(
-                        Patterns::from_strs([Nucleotide::as_str(&seq)]),
-                        &init_label,
-                        labels,
-                        match_type,
-                    ));
-                    graph.add(retain_node(expr::label_exists(this_label.clone())));
+                    graph.add(
+                        match_node(
+                            Patterns::from_strs([Nucleotide::as_str(&seq)]),
+                            &init_label,
+                            labels,
+                            match_type,
+                        )
+                        .retain_label_present(&this_label),
+                    );
                 }
             }
             IntervalShape::FixedLen(S(len, _)) => {
@@ -912,13 +937,15 @@ impl<'a> GeometryMeta {
                 // else do an exact match
                 let match_type = get_match_type(prev_len_offset, &mut stack, seq_len, range_start);
 
-                graph.add(match_node(
-                    Patterns::from_strs([Nucleotide::as_str(&seq)]),
-                    &init_label,
-                    vec![&prev_label, &this_label, &next_label],
-                    match_type,
-                ));
-                graph.add(retain_node(expr::label_exists(this_label.clone())));
+                graph.add(
+                    match_node(
+                        Patterns::from_strs([Nucleotide::as_str(&seq)]),
+                        &init_label,
+                        vec![&prev_label, &this_label, &next_label],
+                        match_type,
+                    )
+                    .retain_label_present(&this_label),
+                );
 
                 execute_stack(stack, &this_label, &size, additional_args, graph);
 
