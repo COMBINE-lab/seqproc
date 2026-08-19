@@ -1,0 +1,22 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="680"
+  height="170"
+  viewBox="0 0 680 170"
+  role="img"
+>
+  <title>seqproc logo with oblique wordmark</title>
+  <desc>
+    A braced pair of sequencing reads with colored, chevron-edged intervals,
+    followed by the seqproc wordmark in oblique monospace type.
+  </desc>
+  <path d="M117 64q-9 0-9 11v20q0 11-9 11 9 0 9 11v20q0 11 9 11" fill="none" stroke="#F8FBFA" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M129 74h27l7 13-7 13h-27z" fill="#1D9E75"/>
+  <path d="M167 74h87l7 13-7 13h-87l7-13z" fill="#D3D1C7"/>
+  <path d="M265 74h27l7 13-7 13h-27l7-13z" fill="#1D9E75"/>
+  <path d="M303 74h19l7 13-7 13h-19l7-13z" fill="#7F77DD"/>
+  <path d="M129 112h17l7 13-7 13h-17z" fill="#EF9F27"/>
+  <path d="M157 112h185l7 13-7 13H157l7-13z" fill="#D85A30"/>
+  <path d="M361 64q9 0 9 11v20q0 11 9 11-9 0-9 11v20q0 11-9 11" fill="none" stroke="#F8FBFA" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="414" y="106" dominant-baseline="central" transform="skewX(-8)" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="44" font-weight="500" letter-spacing="-0.5" fill="#F8FBFA">seqproc</text>
+</svg>

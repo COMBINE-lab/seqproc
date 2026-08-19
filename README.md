@@ -1,9 +1,17 @@
-# seqproc
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="website/src/assets/seqproc_logo_oblique_wordmark_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="website/src/assets/seqproc_logo_oblique_wordmark.svg">
+    <img alt="seqproc: geometry-driven FASTQ preprocessing" src="website/src/assets/seqproc_logo_oblique_wordmark.svg" width="680">
+  </picture>
+</p>
 
-[![Fast CI](https://github.com/COMBINE-lab/seqproc/actions/workflows/actions.yml/badge.svg)](https://github.com/COMBINE-lab/seqproc/actions/workflows/actions.yml)
-[![Comprehensive CI](https://github.com/COMBINE-lab/seqproc/actions/workflows/comprehensive.yml/badge.svg)](https://github.com/COMBINE-lab/seqproc/actions/workflows/comprehensive.yml)
-[![Documentation](https://github.com/COMBINE-lab/seqproc/actions/workflows/docs.yml/badge.svg)](https://combine-lab.github.io/seqproc/)
-[![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/COMBINE-lab/seqproc/actions/workflows/actions.yml"><img alt="Fast CI" src="https://github.com/COMBINE-lab/seqproc/actions/workflows/actions.yml/badge.svg"></a>
+  <a href="https://github.com/COMBINE-lab/seqproc/actions/workflows/comprehensive.yml"><img alt="Comprehensive CI" src="https://github.com/COMBINE-lab/seqproc/actions/workflows/comprehensive.yml/badge.svg"></a>
+  <a href="https://combine-lab.github.io/seqproc/"><img alt="Documentation" src="https://github.com/COMBINE-lab/seqproc/actions/workflows/docs.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: BSD-3-Clause" src="https://img.shields.io/badge/license-BSD--3--Clause-blue.svg"></a>
+</p>
 
 `seqproc` is a performance-oriented FASTQ preprocessing engine for single-cell
 and other structured sequencing data. A compact geometry describes where

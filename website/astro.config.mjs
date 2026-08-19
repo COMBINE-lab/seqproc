@@ -9,6 +9,12 @@ export default defineConfig({
       title: 'seqproc',
       description:
         'Geometry-driven, high-performance preprocessing for structured sequencing reads.',
+      logo: {
+        dark: './src/assets/seqproc_logo_oblique_wordmark_dark.svg',
+        light: './src/assets/seqproc_logo_oblique_wordmark.svg',
+        alt: 'seqproc',
+        replacesTitle: true,
+      },
       customCss: ['./src/styles/custom.css'],
       social: [
         {
