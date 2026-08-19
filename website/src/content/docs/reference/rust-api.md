@@ -1,0 +1,68 @@
+---
+title: Rust API
+description: Compile a geometry and execute it through RunConfig and RunReport.
+---
+
+The CLI is a thin client over the public execution API. The typed entry point
+is `RunConfig` plus `run`, which returns a `RunReport` on success.
+
+```rust
+use std::fs;
+use std::path::PathBuf;
+
+use seqproc::execute::{compile_geom, run, RunConfig};
+
+let source = fs::read_to_string("protocol.geom")?;
+let compiled = compile_geom(source).expect("geometry must compile");
+
+let mut config = RunConfig::new("reads_R1.fastq.gz");
+config.input2 = Some(PathBuf::from("reads_R2.fastq.gz"));
+config.output1 = Some(PathBuf::from("processed_R1.fastq.gz"));
+config.output2 = Some(PathBuf::from("processed_R2.fastq.gz"));
+config.threads = 8;
+
+let report = run(config, compiled)?;
+println!("effective transform threads: {}", report.effective_threads);
+# Ok::<(), anyhow::Error>(())
+```
+
+## `RunConfig`
+
+`RunConfig::new(input1)` selects conservative defaults:
+
+- one transform thread;
+- unordered output;
+- the normal worker path;
+- gzip level 3;
+- serial output compression;
+- default `needletail` input decoding;
+- statistics off.
+
+Fields are public for explicit configuration of second input/output paths,
+ordering, staged-pipeline bounds, gzip backends, additional geometry arguments,
+demultiplexing, and statistics.
+
+If a compiled geometry transforms into two reads, both primary output paths are
+required unless demultiplexing handles output routing.
+
+## `RunReport`
+
+The report describes effective execution choices even when statistics are off:
+
+- effective threads and ordering;
+- selected pipeline and bounded-stage information, when applicable;
+- compression and decompression backends;
+- optional `SeqprocStats` when collection was enabled.
+
+Use these effective fields in logs rather than reconstructing runtime behavior
+from requested options.
+
+## Error handling
+
+`run` is fallible and returns an error for invalid thread counts, unsupported
+option combinations, FASTQ opening/parsing failures, graph execution failures,
+and output failures. Applications should propagate or report the error and exit
+nonzero; do not discard it.
+
+The Rust API is still pre-1.0. Pin the exact seqproc and ANTISEQUENCE revisions
+for applications that need API stability.
