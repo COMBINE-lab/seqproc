@@ -640,6 +640,46 @@ fn annotation_stacked_on_definition() {
 }
 
 #[test]
+fn ambiguity_policy_assignment_parses_simple_and_parameterized_variants() {
+    let src = "#[ambig_policy = random(seed = 42)] bc = filter_within_dist(b[4], \"wl.txt\", 1)\n1{<bc>r:}";
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty(), "lex errors: {:?}", lex_errs);
+    assert!(parse_errs.is_empty(), "parse errors: {:?}", parse_errs);
+    let parsed = parse_res.unwrap();
+    let annotation = &parsed.definitions.0[0].0.annotations[0].0;
+    assert_eq!(annotation.name.0, "ambig_policy");
+    assert!(annotation.args.is_empty());
+    let value = &annotation.value.as_ref().unwrap().0;
+    assert_eq!(value.variant.0, "random");
+    assert_eq!(value.args.len(), 1);
+    assert_eq!(value.args[0].0.name.as_ref().unwrap().0, "seed");
+    assert_eq!(value.args[0].0.value.0, "42");
+
+    let simple = "#[ambig_policy = accept] bc = filter_within_dist(b[4], \"wl.txt\", 1)\n1{<bc>r:}";
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(simple);
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
+    let value = parse_res.unwrap().definitions.0[0].0.annotations[0]
+        .0
+        .value
+        .as_ref()
+        .unwrap()
+        .0
+        .clone();
+    assert_eq!(value.variant.0, "accept");
+    assert!(value.args.is_empty());
+}
+
+#[test]
 fn annotation_on_definition_and_read() {
     // Annotation on both a definition and a read.
     let src = "#[edit(3)] linker1 = f[CAGAGC]\n#[match_ori(either)] 1{<linker1>r:}";

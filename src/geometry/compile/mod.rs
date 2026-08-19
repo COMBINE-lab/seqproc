@@ -223,6 +223,17 @@ pub fn compile(
 
     // Read-level annotations.
     for S(r, _) in reads.0.iter() {
+        if let Some(S(_, span)) = r
+            .annotations
+            .iter()
+            .find(|S(annotation, _)| annotation.name.0 == "ambig_policy")
+        {
+            return Err(Error {
+                span: *span,
+                msg: "`ambig_policy` must be attached to the definition containing the map or filter operation"
+                    .to_string(),
+            });
+        }
         if !r.annotations.is_empty() {
             element_annotations.push(ElementAnnotations {
                 element_id: ElementId::Read(r.index.0),
@@ -397,6 +408,7 @@ mod tests {
             Annotation {
                 name: S("match_ori".to_string(), span),
                 args: vec![S("either".to_string(), span)],
+                value: None,
             },
             span,
         );
@@ -465,6 +477,7 @@ mod tests {
             Annotation {
                 name: S(name.to_string(), span),
                 args: args.iter().map(|a| S(a.to_string(), span)).collect(),
+                value: None,
             },
             span,
         )

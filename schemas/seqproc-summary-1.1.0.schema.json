@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/COMBINE-lab/seqproc/schemas/seqproc-summary-1.1.0.schema.json",
+  "title": "seqproc summary report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "seqproc_version",
+    "ordering_mode",
+    "effective_threads",
+    "gzip_compression_level",
+    "parallel_gzip_members",
+    "n_fastqs",
+    "n_processed",
+    "n_reads_max",
+    "total_fragments",
+    "accepted_fragments",
+    "rejected_fragments",
+    "failed_parsing",
+    "rejection_reasons",
+    "read_length_mean",
+    "read_length_min",
+    "read_length_max",
+    "match_distance_stats"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.1.0" },
+    "seqproc_version": { "type": "string" },
+    "call": { "type": ["string", "null"] },
+    "geometry_digest": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z0-9-]+:[0-9a-f]+$"
+    },
+    "ordering_mode": { "enum": ["input-order", "unordered"] },
+    "effective_threads": { "type": "integer", "minimum": 1 },
+    "gzip_compression_level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9
+    },
+    "parallel_gzip_members": { "type": "boolean" },
+    "n_fastqs": { "type": "integer", "minimum": 0 },
+    "n_processed": { "type": "integer", "minimum": 0 },
+    "n_reads_max": { "type": "integer", "minimum": 0 },
+    "total_fragments": { "type": "integer", "minimum": 0 },
+    "accepted_fragments": { "type": "integer", "minimum": 0 },
+    "rejected_fragments": { "type": "integer", "minimum": 0 },
+    "failed_parsing": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Legacy name for rejected_fragments; retained for compatibility."
+    },
+    "rejection_reasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "count"],
+        "properties": {
+          "reason": { "type": "string" },
+          "count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "read_length_mean": {
+      "type": "array",
+      "items": { "type": "number", "minimum": 0 }
+    },
+    "read_length_min": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "read_length_max": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "match_distance_stats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "unmatched", "distance_histogram"],
+        "properties": {
+          "label": { "type": "string" },
+          "unmatched": { "type": "integer", "minimum": 0 },
+          "distance_histogram": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["distance", "count"],
+              "properties": {
+                "distance": { "type": "integer", "minimum": 0 },
+                "count": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

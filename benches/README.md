@@ -26,6 +26,13 @@ This directory contains Criterion benchmarks for the `seqproc` API on top of the
     1{<brc1> hamming(<anchor>, 1) u[8] b[10]}2{r:}
     ```
 
+- `antisequence_statistics_overhead`
+  - Runs the same tolerant sci-RNA-seq3 graph with statistics disabled and
+    enabled, so the cost of input counters and match-distance histograms is
+    measured directly.
+  - Defaults to 100,000 synthetic read pairs. Override with
+    `ANTISEQ_STATS_BENCH_READS`.
+
 - `antisequence_sci_rna_seq3_disk`
   - On-disk gzipped FASTQs (ENA subsets).
   - Uses env vars `SCI3_R1` and `SCI3_R2` if set; otherwise defaults to `data/sci3/SRR7827206_{1,2}_10k.fastq.gz` under `CARGO_MANIFEST_DIR`.
@@ -52,6 +59,7 @@ This directory contains Criterion benchmarks for the `seqproc` API on top of the
   ```bash
   cargo bench --bench antisequence_benches -- 10x_
   cargo bench --bench antisequence_benches -- sci3
+  cargo bench --bench antisequence_benches -- statistics_overhead
   cargo bench --bench antisequence_benches -- sci3_ENA_10k
   cargo bench --bench antisequence_benches -- sci3_ENA_multi
   ```

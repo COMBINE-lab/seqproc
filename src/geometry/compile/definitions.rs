@@ -8,6 +8,104 @@ use crate::{
     parser::{Annotation, Definition, Expr},
     S,
 };
+use antisequence::AmbiguityPolicy;
+
+fn parse_ambiguity_policy(
+    annotation: &Annotation,
+    span: crate::Span,
+) -> Result<AmbiguityPolicy, Error> {
+    let value = annotation.value.as_ref().ok_or_else(|| Error {
+        span,
+        msg: "`ambig_policy` uses assignment syntax; write #[ambig_policy = no_match]".to_string(),
+    })?;
+    if !annotation.args.is_empty() {
+        return Err(Error {
+            span,
+            msg: "`ambig_policy` cannot combine call and assignment syntax".to_string(),
+        });
+    }
+
+    let variant = value.0.variant.0.as_str();
+    let args = &value.0.args;
+    let no_args = || {
+        if args.is_empty() {
+            Ok(())
+        } else {
+            Err(Error {
+                span,
+                msg: format!("ambiguity policy `{variant}` does not accept arguments"),
+            })
+        }
+    };
+    let numeric_arg = |expected_name: &str, default: u64| -> Result<u64, Error> {
+        if args.is_empty() {
+            return Ok(default);
+        }
+        if args.len() != 1 {
+            return Err(Error {
+                span,
+                msg: format!(
+                    "ambiguity policy `{variant}` accepts at most one `{expected_name}` argument"
+                ),
+            });
+        }
+        let arg = &args[0].0;
+        if let Some(name) = &arg.name {
+            if name.0 != expected_name {
+                return Err(Error {
+                    span,
+                    msg: format!(
+                        "unknown `{}` argument for ambiguity policy `{variant}`; expected `{expected_name}`",
+                        name.0
+                    ),
+                });
+            }
+        }
+        arg.value.0.parse::<u64>().map_err(|_| Error {
+            span,
+            msg: format!(
+                "`{expected_name}` for ambiguity policy `{variant}` must be a non-negative integer"
+            ),
+        })
+    };
+
+    match variant {
+        "accept" => {
+            no_args()?;
+            Ok(AmbiguityPolicy::Accept)
+        }
+        "no_match" => {
+            no_args()?;
+            Ok(AmbiguityPolicy::NoMatch)
+        }
+        "first" => {
+            no_args()?;
+            Ok(AmbiguityPolicy::First)
+        }
+        "error" => {
+            no_args()?;
+            Ok(AmbiguityPolicy::Error)
+        }
+        "random" => Ok(AmbiguityPolicy::Random {
+            seed: numeric_arg("seed", 0)?,
+        }),
+        "quality" => {
+            let min_delta = numeric_arg("min_delta", 1)?;
+            let min_delta = u8::try_from(min_delta).map_err(|_| Error {
+                span,
+                msg: "`min_delta` for ambiguity policy `quality` must be between 0 and 255"
+                    .to_string(),
+            })?;
+            Ok(AmbiguityPolicy::Quality { min_delta })
+        }
+        _ => Err(Error {
+            span,
+            msg: format!(
+                "unknown ambiguity policy `{variant}`; expected accept, no_match, first, quality, random, or error"
+            ),
+        }),
+    }
+}
 
 /// validate definitions there should be no labels, just labeled geom pieces and functions
 fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, Error> {
@@ -85,6 +183,12 @@ fn annotations_to_compiled_functions(
     for S(ann, span) in annotations.iter() {
         match ann.name.0.as_str() {
             "hamming" => {
+                if ann.value.is_some() {
+                    return Err(Error {
+                        span: *span,
+                        msg: "`hamming` uses call syntax; write #[hamming(N)]".to_string(),
+                    });
+                }
                 let arg = ann.args.first().ok_or_else(|| Error {
                     span: *span,
                     msg: "#[hamming(N)] requires a numeric argument, e.g. #[hamming(1)]"
@@ -100,6 +204,12 @@ fn annotations_to_compiled_functions(
                 result.push(S(CompiledFunction::Hamming(n), *span));
             }
             "edit" => {
+                if ann.value.is_some() {
+                    return Err(Error {
+                        span: *span,
+                        msg: "`edit` uses call syntax; write #[edit(N)]".to_string(),
+                    });
+                }
                 let arg = ann.args.first().ok_or_else(|| Error {
                     span: *span,
                     msg: "#[edit(N)] requires a numeric argument, e.g. #[edit(1)]".to_string(),
@@ -111,6 +221,12 @@ fn annotations_to_compiled_functions(
                 result.push(S(CompiledFunction::Edit(n), *span));
             }
             "search" => {
+                if ann.value.is_some() {
+                    return Err(Error {
+                        span: *span,
+                        msg: "`search` uses call syntax; write #[search(relative)]".to_string(),
+                    });
+                }
                 let arg = ann.args.first().map(|S(a, _)| a.as_str());
                 if arg != Some("relative") {
                     return Err(Error {
@@ -124,6 +240,10 @@ fn annotations_to_compiled_functions(
                 }
                 result.push(S(CompiledFunction::Anchor, *span));
             }
+            "ambig_policy" => result.push(S(
+                CompiledFunction::AmbiguityPolicy(parse_ambiguity_policy(ann, *span)?),
+                *span,
+            )),
             _ => {}
         }
     }
@@ -169,6 +289,57 @@ fn check_annotation_conflicts(
         }
     }
     false
+}
+
+fn validate_ambiguity_policy_target(
+    stack: &[S<CompiledFunction>],
+    definition: &str,
+    span: crate::Span,
+) -> Result<(), Error> {
+    let policies: Vec<_> = stack
+        .iter()
+        .filter_map(|S(function, _)| match function {
+            CompiledFunction::AmbiguityPolicy(policy) => Some(*policy),
+            _ => None,
+        })
+        .collect();
+    if policies.is_empty() {
+        return Ok(());
+    }
+    if policies.len() > 1 {
+        return Err(Error {
+            span,
+            msg: format!("definition `{definition}` specifies `ambig_policy` more than once"),
+        });
+    }
+
+    let target = stack.iter().find_map(|S(function, _)| match function {
+        CompiledFunction::Map(..) => Some("map"),
+        CompiledFunction::MapWithMismatch(..) => Some("map_with_mismatch"),
+        CompiledFunction::MapWithEdit(..) => Some("map_with_edit"),
+        CompiledFunction::FilterWithinDist(..) => Some("filter_within_dist"),
+        _ => None,
+    });
+    let Some(target) = target else {
+        return Err(Error {
+            span,
+            msg: format!(
+                "#[ambig_policy = ...] on definition `{definition}` requires a map or filter operation"
+            ),
+        });
+    };
+
+    if matches!(policies[0], AmbiguityPolicy::Quality { .. })
+        && matches!(target, "map_with_edit" | "map")
+    {
+        return Err(Error {
+            span,
+            msg: format!(
+                "quality ambiguity resolution on `{target}` is not supported; use equal-length Hamming matching"
+            ),
+        });
+    }
+    Ok(())
 }
 
 pub fn compile_definitions(
@@ -259,6 +430,10 @@ pub fn compile_definitions(
                 break;
             }
             gm.stack.extend(ann_fns);
+            if let Err(e) = validate_ambiguity_policy_target(&gm.stack, &label_str, label_span) {
+                err = Some(e);
+                break;
+            }
             // Re-validate after injecting annotation-derived functions.
             if let Err(e) = gm.validate_expr() {
                 err = Some(e);
