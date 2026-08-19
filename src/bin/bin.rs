@@ -43,6 +43,9 @@ struct Cli {
 }
 
 #[derive(Debug, clap::Subcommand)]
+// Parsed once at startup; boxing the run arguments would add indirection
+// without reducing steady-state processing memory.
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Process FASTQ input with an EFGDL geometry.
     Run(RunArgs),

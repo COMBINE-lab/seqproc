@@ -280,11 +280,7 @@ fn check_annotation_conflicts(
                     return true;
                 }
             }
-            CompiledFunction::Anchor => {
-                if stack_has_anchor {
-                    return true;
-                }
-            }
+            CompiledFunction::Anchor if stack_has_anchor => return true,
             _ => {}
         }
     }

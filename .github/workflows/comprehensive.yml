@@ -1,18 +1,15 @@
-name: Fast CI
+name: Comprehensive CI
 
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
-
-concurrency:
-  group: fast-ci-${{ github.ref }}
-  cancel-in-progress: true
+    tags:
+      - "**[0-9]+.[0-9]+.[0-9]+*"
+  schedule:
+    - cron: "0 6 15 * *"
 
 jobs:
-  fast:
+  comprehensive:
     runs-on: ubuntu-latest
 
     env:
@@ -44,10 +41,11 @@ jobs:
       - name: fmt
         run: cargo fmt --all --check
 
-      - name: test (unit and high-value integration targets)
-        run: >-
-          cargo test --locked --workspace --lib --bins
-          --test cli_workflow_tests
-          --test error_handling_tests
-          --test paper_chemistry_tests
-          --no-fail-fast
+      - name: clippy (all targets)
+        run: cargo clippy --locked --workspace --all-targets
+
+      - name: test (all targets)
+        run: cargo test --locked --workspace --all-targets --no-fail-fast
+
+      - name: doc
+        run: cargo doc --locked --workspace --no-deps

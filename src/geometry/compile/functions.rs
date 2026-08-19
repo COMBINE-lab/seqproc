@@ -188,7 +188,7 @@ fn compile_inner_expr(
         stack: self_stack
             .clone()
             .into_iter()
-            .chain(inner_stack.into_iter())
+            .chain(inner_stack)
             .collect::<Vec<_>>(),
     }
     .validate_expr()?;

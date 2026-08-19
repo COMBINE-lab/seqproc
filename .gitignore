@@ -11,6 +11,7 @@ target/
 
 # vscode files
 .vscode/
+.cargo/config.local.toml
 
 # mac files
 .DS_store
