@@ -7,7 +7,7 @@ use std::{
 
 use assert_cmd::cargo::CommandCargoExt;
 use similar_asserts::SimpleDiff;
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 #[derive(Debug)]
 struct DiffErr;
@@ -28,7 +28,7 @@ fn run_tests() -> Result<(), Box<dyn Error>> {
     let test_data_dir_path = &*tests_dir_path.join("test_data");
     let fgdl_dir_path = &*tests_dir_path.join("fgdl");
     let in_dir_path = &*test_data_dir_path.join("in");
-    let out_dir = TempDir::new("seqproc_test_out")?;
+    let out_dir = TempDir::new()?;
     let expected_out_dir_path = &*test_data_dir_path.join("expected_out");
 
     for entry in in_dir_path.read_dir()? {

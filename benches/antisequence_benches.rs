@@ -7,7 +7,7 @@ use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use seqproc::execute::compile_geom;
 
 fn nuc(i: usize) -> u8 {
-    const N: [u8; 4] = [b'A', b'C', b'G', b'T'];
+    const N: [u8; 4] = *b"ACGT";
     N[i & 3]
 }
 
@@ -233,7 +233,7 @@ brc1  = norm(b[9-10])
                     graph.run_with_threads(threads());
                 },
                 BatchSize::LargeInput,
-            )
+            );
         });
     }
     group.finish();
@@ -599,14 +599,14 @@ brc1  = b[9-10]
     let mut pairs: Vec<(String, String, String)> = Vec::new(); // (acc, r1, r2)
     for acc in runs {
         let r1_candidates = [
-            base_dir.join(format!("{}_1_10k.fastq.gz", &acc)),
-            base_dir.join(format!("{}_1_10000k.fastq.gz", &acc)),
-            base_dir.join(format!("{}_1.fastq.gz", &acc)),
+            base_dir.join(format!("{}_1_10k.fastq.gz", acc)),
+            base_dir.join(format!("{}_1_10000k.fastq.gz", acc)),
+            base_dir.join(format!("{}_1.fastq.gz", acc)),
         ];
         let r2_candidates = [
-            base_dir.join(format!("{}_2_10k.fastq.gz", &acc)),
-            base_dir.join(format!("{}_2_10000k.fastq.gz", &acc)),
-            base_dir.join(format!("{}_2.fastq.gz", &acc)),
+            base_dir.join(format!("{}_2_10k.fastq.gz", acc)),
+            base_dir.join(format!("{}_2_10000k.fastq.gz", acc)),
+            base_dir.join(format!("{}_2.fastq.gz", acc)),
         ];
 
         let r1 = r1_candidates.iter().find(|p| p.exists()).cloned();

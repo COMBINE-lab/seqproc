@@ -17,7 +17,7 @@ use seqproc::execute::{compile_geom, read_pairs_to_file};
 // ---------------------------------------------------------------------------
 
 fn nuc(i: usize) -> u8 {
-    const N: [u8; 4] = [b'A', b'C', b'G', b'T'];
+    const N: [u8; 4] = *b"ACGT";
     N[i & 3]
 }
 

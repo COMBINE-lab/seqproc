@@ -49,7 +49,7 @@ fn compile_error_text(geometry: &str) -> String {
 }
 
 fn nuc(i: usize) -> u8 {
-    const N: [u8; 4] = [b'A', b'C', b'G', b'T'];
+    const N: [u8; 4] = *b"ACGT";
     N[i & 3]
 }
 

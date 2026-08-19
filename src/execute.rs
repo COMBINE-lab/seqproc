@@ -409,18 +409,10 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         statistics_from_graph(
             &graph,
             statistics_level,
-            config.call,
-            config.geometry_digest,
-            config.threads,
-            config.preserve_order,
-            config.gzip_level,
-            config.parallel_gzip,
-            config.parallel_gzip_stream,
+            config.call.clone(),
+            config.geometry_digest.clone(),
+            &config,
             effective_gzip_threads,
-            config.gzip_block_size,
-            config.accelerated_gzip_input,
-            config.gzip_input_threads,
-            config.gzip_input_chunk_size,
         )
     });
     Ok(RunReport {
@@ -457,16 +449,8 @@ fn statistics_from_graph(
     statistics_level: StatisticsLevel,
     call: Option<String>,
     geometry_digest: Option<String>,
-    effective_threads: usize,
-    preserve_order: bool,
-    gzip_compression_level: u32,
-    parallel_gzip_members: bool,
-    parallel_gzip_stream: bool,
+    config: &RunConfig,
     gzip_compression_threads: usize,
-    gzip_block_size: usize,
-    accelerated_gzip_input: bool,
-    gzip_input_threads: usize,
-    gzip_input_chunk_size: usize,
 ) -> SeqprocStats {
     let input_stats = graph.input_stats();
     let (n_fastqs, n_processed, n_reads_max, read_length_min, read_length_max, read_length_mean) =
@@ -566,29 +550,29 @@ fn statistics_from_graph(
         statistics_level,
         call,
         geometry_digest,
-        ordering_mode: if preserve_order || effective_threads == 1 {
+        ordering_mode: if config.preserve_order || config.threads == 1 {
             "input-order".to_owned()
         } else {
             "unordered".to_owned()
         },
-        effective_threads,
-        gzip_compression_level,
-        parallel_gzip_members,
-        parallel_gzip_stream,
+        effective_threads: config.threads,
+        gzip_compression_level: config.gzip_level,
+        parallel_gzip_members: config.parallel_gzip,
+        parallel_gzip_stream: config.parallel_gzip_stream,
         gzip_compression_threads,
-        gzip_block_size,
-        gzip_input_backend: if accelerated_gzip_input {
+        gzip_block_size: config.gzip_block_size,
+        gzip_input_backend: if config.accelerated_gzip_input {
             "rapidgzip-core".to_owned()
         } else {
             "needletail-auto".to_owned()
         },
-        gzip_input_threads: if accelerated_gzip_input {
-            gzip_input_threads
+        gzip_input_threads: if config.accelerated_gzip_input {
+            config.gzip_input_threads
         } else {
             1
         },
-        gzip_input_chunk_size: if accelerated_gzip_input {
-            gzip_input_chunk_size
+        gzip_input_chunk_size: if config.accelerated_gzip_input {
+            config.gzip_input_chunk_size
         } else {
             0
         },

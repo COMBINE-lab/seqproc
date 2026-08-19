@@ -2,8 +2,13 @@
 name = "seqproc"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"
+description = "A fast, programmable preprocessing engine for sequencing reads"
 license = "BSD-3-Clause"
 repository = "https://github.com/COMBINE-lab/seqproc"
+readme = "README.md"
+keywords = ["bioinformatics", "fastq", "sequencing", "preprocessing"]
+categories = ["command-line-utilities", "science"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -15,14 +20,14 @@ name = "seqproc"
 path = "src/bin/bin.rs"
 
 [dependencies]
-antisequence = { git = "https://github.com/COMBINE-lab/ANTISEQUENCE", rev = "f3b0f1ea0b286b680d963382f2bf7316058d83e4" }
+antisequence = { version = "0.1.0", git = "https://github.com/COMBINE-lab/ANTISEQUENCE", rev = "5efba5aedc3ffa2bcfbd4d7816c31935426618c6" }
 rustc-hash = "1.1.0"
-tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tracing = "0.1.37"
 ariadne = "0.5.0"
 chumsky = "0.12.0"
 clap = { version = "4.4.8", features = ["derive"] }
-anyhow = "1.0"
+anyhow = "1.0.103"
 tempfile = "3.5.0"
 nix = { version = "0.26.2", features = ["fs"] }
 csv = "1.3.0"
@@ -39,7 +44,6 @@ jemalloc = ["antisequence/jemalloc"]
 [dev-dependencies]
 assert_cmd = "2.0.12"
 similar-asserts = "1.5.0"
-tempdir = "0.3.7"
 criterion = { version = "0.5" }
 proptest = "1.4"
 flate2 = { version = "1.0", features = ["zlib-rs"], default-features = false }
@@ -62,3 +66,8 @@ debug = false
 debug-assertions = false
 overflow-checks = false
 strip = false
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

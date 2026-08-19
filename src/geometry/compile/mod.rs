@@ -147,7 +147,7 @@ impl CompiledData {
 
     // normalize variable length segments, remove anchors, update lengths
     pub fn get_simplified_description_string(self) -> String {
-        if self.transformation.is_some() {
+        if let Some(transformation) = self.transformation {
             let mut map: HashMap<String, String> = HashMap::new();
 
             for geom in self.geometry.iter().flatten() {
@@ -162,9 +162,10 @@ impl CompiledData {
                 }
             }
 
-            self.transformation.unwrap().into_iter().enumerate().fold(
-                String::new(),
-                |mut acc, (i, labels)| {
+            transformation
+                .into_iter()
+                .enumerate()
+                .fold(String::new(), |mut acc, (i, labels)| {
                     let geom_desc = labels
                         .into_iter()
                         .map(|l| {
@@ -183,8 +184,7 @@ impl CompiledData {
                         .expect("Should have been able to format!");
 
                     acc
-                },
-            )
+                })
         } else {
             self.geometry
                 .into_iter()
