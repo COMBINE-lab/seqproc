@@ -147,7 +147,6 @@ jobs:
       - name: "Cache Rust release build"
         uses: "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6"
         with:
-          "cache-on-failure": true
           "shared-key": "cargo-dist-${{ join(matrix.targets, '-') }}"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
