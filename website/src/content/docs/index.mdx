@@ -1,0 +1,71 @@
+---
+title: seqproc
+description: Geometry-driven, high-performance preprocessing for structured sequencing reads.
+template: splash
+hero:
+  tagline: Describe a sequencing protocol once. Compile it into a fast, reproducible FASTQ transformation pipeline.
+  actions:
+    - text: Get started
+      link: /seqproc/getting-started/quick-start/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/COMBINE-lab/seqproc
+      icon: external
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Protocol logic as data">
+    Express barcodes, UMIs, anchors, biological reads, filters, and output
+    transformations in the Extended Fragment Geometry Description Language.
+  </Card>
+  <Card title="Built for large FASTQs">
+    A Rust execution backend combines bounded parallelism, compressed I/O,
+    ordered-output support, and specialized matching paths.
+  </Card>
+  <Card title="Auditable runs">
+    Validate and explain a geometry before processing, then optionally emit a
+    versioned JSON report with counts, rejection reasons, and match statistics.
+  </Card>
+</CardGrid>
+
+## Start with the geometry
+
+```text
+bc = b[16]
+umi = u[10]
+bio = r:
+
+1{<bc><umi>}
+2{<bio>}
+-> 1{<bc><umi>} 2{<bio>}
+```
+
+This 10x Chromium v2 example says that read 1 contains a 16-base cell barcode
+and a 10-base UMI, while read 2 contains the biological read. The arrow gives
+the output arrangement explicitly.
+
+<LinkCard
+  title="Learn the language"
+  description="Read the EFGDL overview and build geometries from fixed, variable, and anchor-delimited intervals."
+  href="/seqproc/efgdl/overview/"
+/>
+
+## Inspect, then run
+
+```console
+seqproc validate 10x-v2.geom
+seqproc explain 10x-v2.geom
+seqproc run --geom 10x-v2.geom \
+  --file1 reads_R1.fastq.gz --file2 reads_R2.fastq.gz \
+  --out1 processed_R1.fastq.gz --out2 processed_R2.fastq.gz \
+  --threads 8
+```
+
+<LinkCard
+  title="Use seqproc"
+  description="Install from source, process a small FASTQ, and choose safe runtime options."
+  href="/seqproc/getting-started/quick-start/"
+/>
