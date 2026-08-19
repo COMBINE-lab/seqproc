@@ -27,7 +27,7 @@ Options:
   --publish     Publish seqproc to crates.io after pushing the commit and tag
   --dry-run     Validate packaging and print release actions without modifying,
                 committing, tagging, pushing, publishing, or triggering dist
-  --skip-tests  Skip cargo test --all-targets (use only after running it yourself)
+  --skip-tests  Skip cargo test --locked --all-targets (use only after running it yourself)
   -h, --help    Show this help message
 EOF
 }
@@ -121,8 +121,8 @@ echo
 echo "Preflight: cargo fmt --all --check"
 cargo fmt --all --check
 if [[ "$SKIP_TESTS" == false ]]; then
-    echo "Preflight: cargo test --all-targets"
-    cargo test --all-targets
+    echo "Preflight: cargo test --locked --all-targets"
+    cargo test --locked --all-targets
 else
     echo "Preflight: skipping tests (--skip-tests)"
 fi
