@@ -21,9 +21,11 @@ jobs:
       CARGO_NET_RETRY: 10
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
+      RUSTC_WRAPPER: sccache
       RUSTFLAGS: -D warnings
       RUSTDOCFLAGS: -D warnings
       RUSTUP_MAX_RETRIES: 10
+      SCCACHE_GHA_ENABLED: "true"
 
     steps:
       - uses: actions/checkout@v6
@@ -40,8 +42,18 @@ jobs:
         with:
           shared-key: seqproc-ci
 
+      - name: Cache Rust compiler outputs
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.16.0
+
       - name: fmt
         run: cargo fmt --all --check
 
-      - name: test (unit and integration targets)
-        run: cargo test --locked --workspace --lib --bins --tests --no-fail-fast
+      - name: test (unit and high-value integration targets)
+        run: >-
+          cargo test --locked --workspace --lib --bins
+          --test cli_workflow_tests
+          --test error_handling_tests
+          --test paper_chemistry_tests
+          --no-fail-fast

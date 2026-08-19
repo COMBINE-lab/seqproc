@@ -18,9 +18,11 @@ jobs:
       CARGO_NET_RETRY: 10
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
+      RUSTC_WRAPPER: sccache
       RUSTFLAGS: -D warnings
       RUSTDOCFLAGS: -D warnings
       RUSTUP_MAX_RETRIES: 10
+      SCCACHE_GHA_ENABLED: "true"
 
     steps:
       - uses: actions/checkout@v6
@@ -36,6 +38,11 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: seqproc-ci
+
+      - name: Cache Rust compiler outputs
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.16.0
 
       - name: fmt
         run: cargo fmt --all --check
