@@ -45,6 +45,11 @@ ones. Advanced controls are:
 - `--queue-capacity N`
 - `--max-in-flight-batches N`
 
+When the staged planner proves that a terminal projection is safe, it can
+render FASTQ directly without materializing the projected records. This is
+enabled by default for the measured one-worker case. Use
+`--no-direct-output-rendering` only to validate or benchmark the fallback.
+
 Treat these as workload-specific tuning controls and benchmark before changing
 their defaults.
 

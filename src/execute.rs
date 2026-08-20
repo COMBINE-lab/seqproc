@@ -57,6 +57,9 @@ pub struct RunConfig {
     pub threads: usize,
     pub preserve_order: bool,
     pub staged_pipeline: bool,
+    /// Render a safe terminal FASTQ projection directly into output buffers
+    /// when staged execution can prove that intermediate records are dead.
+    pub direct_output_rendering: bool,
     pub queue_capacity: Option<usize>,
     pub max_in_flight_batches: Option<usize>,
     pub batch_size: Option<usize>,
@@ -102,6 +105,7 @@ impl RunConfig {
             threads: 1,
             preserve_order: false,
             staged_pipeline: false,
+            direct_output_rendering: true,
             queue_capacity: None,
             max_in_flight_batches: None,
             batch_size: None,
@@ -391,6 +395,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
     let pipeline = if use_pipeline {
         let mut pipeline_config = PipelineConfig::new(config.threads);
         pipeline_config.preserve_order = config.preserve_order;
+        pipeline_config.direct_output_rendering = config.direct_output_rendering;
         if let Some(queue_capacity) = config.queue_capacity {
             pipeline_config.queue_capacity = queue_capacity;
         }

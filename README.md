@@ -147,6 +147,14 @@ headline performance measurements do not silently include instrumentation.
 Geometry provenance uses an algorithm-tagged BLAKE3 digest of the complete
 geometry text, including its EFGDL header.
 
+The bounded staged backend can render a proven-safe terminal FASTQ projection
+directly into recycled output buffers, avoiding intermediate record
+materialization while preserving byte-identical output. The optimization is
+currently selected for one-worker staged runs; the faster whole-graph backend
+remains the default for ordinary one-thread execution. See the
+[performance guide](https://combine-lab.github.io/seqproc/guides/performance/)
+for selection rules and the validation escape hatch.
+
 Please report bugs and feature requests through
 [GitHub Issues](https://github.com/COMBINE-lab/seqproc/issues).
 

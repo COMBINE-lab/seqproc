@@ -46,6 +46,18 @@ faster on the normal worker path.
 controls and memory bounds. Retain defaults unless a representative benchmark
 shows a stable improvement.
 
+For a safe terminal sequence of projections followed by FASTQ output, a
+one-worker staged pipeline writes the projected sequence, quality, and header
+directly into recycled output buffers. This avoids materializing intermediate
+records and preserves byte-identical FASTQ output. Multiworker runs currently
+retain the materializing path because measurements did not establish a robust
+gain. `--no-direct-output-rendering` disables the optimization for validation
+or A/B measurement; it is not recommended for normal use.
+
+The normal whole-graph worker remains the one-thread default: it is faster than
+the staged pipeline on very cheap graphs even after direct rendering. Direct
+rendering therefore does not silently change backend selection.
+
 ## Statistics
 
 No `--summary` means statistics collection is off. For manuscript-quality

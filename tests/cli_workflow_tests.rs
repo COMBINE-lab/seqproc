@@ -473,6 +473,59 @@ fn summary_counts_fragments_omitted_by_primary_output() {
 }
 
 #[test]
+fn direct_terminal_rendering_matches_materialized_fastq() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("direct-render.geom");
+    let input = directory.path().join("input.fastq");
+    let direct = directory.path().join("direct.fastq");
+    let materialized = directory.path().join("materialized.fastq");
+    fs::write(
+        &geometry,
+        concat!(
+            "header { efgdl = 2 }\n",
+            "1{b<bc>[4]r<read>:}\n",
+            "-> #[header = append(\" CB:Z:\", <bc>)] ",
+            "1{f[AC]<bc><read>}\n",
+        ),
+    )
+    .unwrap();
+    fs::write(&input, b"@one\nAAAATGCA\n+\n12345678\n").unwrap();
+
+    let common = [
+        "run",
+        "--geom",
+        geometry.to_str().unwrap(),
+        "--file1",
+        input.to_str().unwrap(),
+        "--threads",
+        "1",
+        "--staged-pipeline",
+    ];
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args(common)
+        .args(["--out1", direct.to_str().unwrap()])
+        .assert()
+        .success();
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args(common)
+        .args([
+            "--out1",
+            materialized.to_str().unwrap(),
+            "--no-direct-output-rendering",
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read(&direct).unwrap(), fs::read(&materialized).unwrap());
+    assert_eq!(
+        fs::read_to_string(&direct).unwrap(),
+        "@one CB:Z:AAAA\nACAAAATGCA\n+\nII12345678\n"
+    );
+}
+
+#[test]
 fn gzip_level_is_validated_and_preserves_fastq_bytes() {
     let directory = tempdir().unwrap();
     let geometry = fixture("fgdl/match.geom");

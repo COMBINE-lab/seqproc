@@ -95,6 +95,12 @@ pub struct RunArgs {
     #[arg(long)]
     staged_pipeline: bool,
 
+    /// Materialize terminal projected reads instead of rendering them directly.
+    /// Intended for validation and performance comparisons; direct rendering is
+    /// enabled by default whenever the staged planner proves it safe.
+    #[arg(long)]
+    no_direct_output_rendering: bool,
+
     /// Capacity of each pipeline hand-off queue, in batches. By default this
     /// is tuned from the worker count.
     #[arg(long)]
@@ -288,6 +294,7 @@ fn main() {
             config.threads = threads;
             config.preserve_order = args.preserve_order;
             config.staged_pipeline = args.staged_pipeline;
+            config.direct_output_rendering = !args.no_direct_output_rendering;
             config.queue_capacity = args.queue_capacity;
             config.max_in_flight_batches = args.max_in_flight_batches;
             config.batch_size = args.batch_size;

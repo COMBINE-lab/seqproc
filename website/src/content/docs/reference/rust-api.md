@@ -47,7 +47,7 @@ println!("effective transform threads: {}", report.effective_threads);
 
 Fields are public for explicit configuration of second input/output paths,
 ordering, staged-pipeline bounds, gzip backends, additional geometry arguments,
-demultiplexing, and statistics.
+demultiplexing, direct terminal rendering, and statistics.
 
 If a compiled geometry transforms into two reads, both primary output paths are
 required unless demultiplexing handles output routing.
@@ -57,7 +57,8 @@ required unless demultiplexing handles output routing.
 The report describes effective execution choices even when statistics are off:
 
 - effective threads and ordering;
-- selected pipeline and bounded-stage information, when applicable;
+- selected pipeline and bounded-stage information, including whether direct
+  terminal rendering was selected, when applicable;
 - compression and decompression backends;
 - optional `SeqprocStats` when collection was enabled.
 
