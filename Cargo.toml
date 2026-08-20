@@ -20,7 +20,7 @@ name = "seqproc"
 path = "src/bin/bin.rs"
 
 [dependencies]
-antisequence = { version = "0.1.0", git = "https://github.com/COMBINE-lab/ANTISEQUENCE", rev = "aac6fad3dbf26d1a7e455d4e927896303de18aac" }
+antisequence = { version = "0.1.0", git = "https://github.com/COMBINE-lab/ANTISEQUENCE", rev = "325722b15224c125ae171529e231d2ae2e6204ba" }
 rustc-hash = "1.1.0"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tracing = "0.1.37"

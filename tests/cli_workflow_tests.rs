@@ -275,6 +275,56 @@ fn efgdl_two_modifies_fastq_headers_with_captured_labels() {
 }
 
 #[test]
+fn paired_output_headers_capture_labels_before_terminal_projection() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("paired-headers.geom");
+    let input1 = directory.path().join("input_R1.fastq");
+    let input2 = directory.path().join("input_R2.fastq");
+    let output1 = directory.path().join("output_R1.fastq");
+    let output2 = directory.path().join("output_R2.fastq");
+
+    fs::write(
+        &geometry,
+        r#"header { efgdl = 2 }
+1{b<bc>[2]u<umi>[2]}
+2{r<bio>:}
+-> #[header = append(" CB:Z:", <bc>, " UB:Z:", <umi>)] 1{f[TT]<bc><umi>}
+   #[header = append(" CB:Z:", <bc>, " UB:Z:", <umi>)] 2{<bio>}
+"#,
+    )
+    .unwrap();
+    fs::write(&input1, "@pair/1\nACGT\n+\n1234\n").unwrap();
+    fs::write(&input2, "@pair/2\nGGA\n+\n567\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--file1",
+            input1.to_str().unwrap(),
+            "--file2",
+            input2.to_str().unwrap(),
+            "--out1",
+            output1.to_str().unwrap(),
+            "--out2",
+            output2.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(output1).unwrap(),
+        "@pair/1 CB:Z:AC UB:Z:GT\nTTACGT\n+\nII1234\n"
+    );
+    assert_eq!(
+        fs::read_to_string(output2).unwrap(),
+        "@pair/2 CB:Z:AC UB:Z:GT\nGGA\n+\n567\n"
+    );
+}
+
+#[test]
 fn detailed_summary_reports_ambiguity_outcomes() {
     let directory = tempdir().unwrap();
     let geometry = directory.path().join("ambiguity.geom");

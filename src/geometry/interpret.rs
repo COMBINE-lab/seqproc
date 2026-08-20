@@ -11,7 +11,7 @@ use expr::Expr;
 use graph::{
     Graph,
     MatchType::{Edit, EditPrefix, Exact, ExactPrefix, Hamming, HammingPrefix},
-    ProjectOp, ProjectPart, SelectOp, Threshold, TryOrientationOp,
+    ProjectOp, ProjectPart, SelectOp, SwitchOp, Threshold, TryOrientationOp,
 };
 
 use crate::{
@@ -117,23 +117,23 @@ fn add_output_header(graph: &mut Graph, output_index: usize, header: &HeaderTran
     graph.add(set_node(LabelOrAttr::Label(&name), expression));
 }
 
-fn add_output_transformation(
+fn add_output_transformations(
     graph: &mut Graph,
-    output_index: usize,
-    transformation: &ReadTransformation,
+    transformations: &[ReadTransformation],
     terminal_projection: bool,
 ) {
-    // Header templates may reference captured labels. Apply them before the
-    // terminal sequence projection discards non-default interval mappings.
-    if let Some(header) = &transformation.header {
-        add_output_header(graph, output_index, header);
+    // Any output header may reference a label from any input lane. Construct
+    // every name before a terminal sequence projection can discard mappings
+    // needed by a later output's template.
+    for (i, transformation) in transformations.iter().enumerate() {
+        if let Some(header) = &transformation.header {
+            add_output_header(graph, i + 1, header);
+        }
     }
-    add_output_projection(
-        graph,
-        output_index,
-        &transformation.sequence,
-        terminal_projection,
-    );
+
+    for (i, transformation) in transformations.iter().enumerate() {
+        add_output_projection(graph, i + 1, &transformation.sequence, terminal_projection);
+    }
 }
 
 impl<'a> CompiledData {
@@ -241,14 +241,9 @@ impl<'a> CompiledData {
                     }
                 }
 
-                // Apply the label rearrangement.
-                for (i, tr) in arm_transformation.iter().enumerate() {
-                    // These subgraphs are followed by the selector for the
-                    // other orientation. Keep selector attributes alive by
-                    // using SetOp rather than the terminal ProjectOp, which
-                    // deliberately discards interval metadata.
-                    add_output_transformation(&mut arm_graph, i + 1, tr, false);
-                }
+                // SwitchOp evaluates every selector before running an arm, so
+                // the arm may safely end in a destructive terminal projection.
+                add_output_transformations(&mut arm_graph, arm_transformation, true);
 
                 arm_graph
             };
@@ -256,17 +251,15 @@ impl<'a> CompiledData {
             let fw_graph = build_arm_graph(&match_block.fw_transformation, &match_block.fw_map);
             let rc_graph = build_arm_graph(&match_block.rc_transformation, &match_block.rc_map);
 
-            // SelectOp for fw: apply fw_graph when attr == "fw"
+            // Route once before either terminal arm can discard `ori`.
             let fw_selector = Expr::from(antisequence::expr::attr(&attr_name)).eq(b"fw".to_vec());
-            graph.add(SelectOp::new(fw_selector, fw_graph));
-
-            // SelectOp for rc: apply rc_graph when attr == "rc"
             let rc_selector = Expr::from(antisequence::expr::attr(&attr_name)).eq(b"rc".to_vec());
-            graph.add(SelectOp::new(rc_selector, rc_graph));
+            graph.add(SwitchOp::new([
+                (fw_selector, fw_graph),
+                (rc_selector, rc_graph),
+            ]));
         } else if let Some(transformation) = transformation {
-            for (i, tr) in transformation.iter().enumerate() {
-                add_output_transformation(graph, i + 1, tr, true);
-            }
+            add_output_transformations(graph, transformation, true);
         };
     }
 }
