@@ -12,6 +12,11 @@ contains the versioned configurations used for manuscript comparisons.
 ## Fixed paired-end layout: 10x Chromium v2
 
 ```text
+header {
+  efgdl = 2,
+  name = "10x Chromium v2",
+}
+
 bc = b[16]
 umi = u[10]
 bio = r:
@@ -22,7 +27,30 @@ bio = r:
 ```
 
 This is a purely positional transformation: it does not correct the cell
-barcode or filter it against a whitelist.
+barcode or filter it against a whitelist. New geometries should use the EFGDL
+2 header even when they do not yet use constructed output or FASTQ-name
+templates.
+
+## Construct a protocol tag and annotate the FASTQ name
+
+```text
+header { efgdl = 2 }
+
+bc = b[16]
+umi = u[10]
+bio = r:
+
+1{<bc><umi>}
+2{<bio>}
+-> #[header = append(" CB:Z:", <bc>, " UB:Z:", <umi>)]
+   1{f[ACGT]<bc><umi>}
+   2{<bio>}
+```
+
+The fixed `ACGT` tag is emitted with `I` qualities, captured intervals retain
+their qualities, and the read-1 name receives the captured barcode and UMI.
+No header string is constructed for output read 2 because it has no header
+template.
 
 ## Variable barcode followed by an approximate anchor
 

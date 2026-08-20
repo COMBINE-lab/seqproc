@@ -30,6 +30,9 @@ The header is a version-neutral metadata block. EFGDL 2 documents must declare
 Headerless files remain valid and use legacy EFGDL 1 semantics. Duplicate
 fields, missing versions, and unsupported versions are rejected.
 
+See [EFGDL 2](../version-2/) for the complete metadata grammar, migration
+guidance, constructed sequence, FASTQ-name templates, and a runnable example.
+
 Definitions bind names such as `bc`. Angle brackets insert a reference to a
 definition in a read layout or output. Read numbers correspond to FASTQ input
 and output order.
@@ -66,6 +69,10 @@ fixed text and `<label>` parts insert captured sequence. Delimiters are
 explicit: include the desired space or punctuation in a quoted part. When the
 annotation is absent, seqproc adds no header operation and the existing FASTQ
 name is passed directly to the writer without constructing a replacement.
+
+These are the output-construction additions gated by EFGDL 2. Existing
+matching, filtering, mapping, ambiguity, orientation, and conditional-output
+features retain their established semantics in a versioned document.
 
 If no arrow is present, the recognized reads pass through according to the
 compiled geometry. When reproducibility matters, prefer an explicit output

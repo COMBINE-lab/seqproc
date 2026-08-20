@@ -10,6 +10,11 @@ This example extracts the standard 10x Chromium v2 barcode and UMI layout.
 Create `10x-v2.geom`:
 
 ```text
+header {
+  efgdl = 2,
+  name = "10x Chromium v2",
+}
+
 bc = b[16]
 umi = u[10]
 bio = r:
@@ -21,7 +26,8 @@ bio = r:
 
 The interval prefix identifies its role: `b` is a barcode, `u` a UMI, and `r`
 a biological read. `[16]` and `[10]` are fixed lengths; `:` consumes the
-remaining sequence.
+remaining sequence. The document header explicitly selects EFGDL 2 and may
+carry additional scalar metadata.
 
 ## 2. Validate and inspect
 
@@ -31,8 +37,10 @@ seqproc explain 10x-v2.geom
 ```
 
 `validate` exits nonzero if parsing, compilation, or semantic validation fails.
-`explain` prints both normalized EFGDL and the compiled representation, which
-is useful when reviewing a protocol configuration.
+`explain` prints a concise effective sequence layout and the full compiled
+representation. The compact layout is not a lossless serialization; inspect
+the compiled section for the EFGDL version, document metadata, and FASTQ-name
+transformations.
 
 ## 3. Process paired reads
 
@@ -75,6 +83,6 @@ At minimum, confirm that:
 - the summary's accepted and rejected totals agree with expectations;
 - the geometry and exact whitelist/map files are archived with the run.
 
-For more complex examples, see [protocol recipes](../../guides/protocol-recipes/)
-and the exact configurations in the
+For more complex examples, see [protocol recipes](../../guides/protocol-recipes/),
+the [EFGDL 2 guide](../../efgdl/version-2/), and the exact configurations in the
 [paper analysis repository](https://github.com/COMBINE-lab/seqproc-paper-analysis).

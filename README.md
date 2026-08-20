@@ -20,8 +20,9 @@ barcodes, UMIs, biological reads, anchors, and discarded sequence occur;
 
 This keeps protocol logic out of ad hoc scripts while supporting fixed and
 variable intervals, approximate matching, barcode correction, filtering,
-orientation-aware processing, demultiplexing, ordered output, compressed I/O,
-and versioned run summaries.
+orientation-aware and conditional processing, constructed output sequence,
+FASTQ-name templates, demultiplexing, ordered output, compressed I/O, and
+versioned run summaries.
 
 - **Documentation:** <https://combine-lab.github.io/seqproc/>
 - **EFGDL language specification:** <https://efgdl-spec.readthedocs.io/>
@@ -67,12 +68,26 @@ discarded rather than written to standard output. See the
 and [command-line reference](https://combine-lab.github.io/seqproc/getting-started/command-line/)
 for paired-end, compressed-I/O, demultiplexing, and reporting examples.
 
+New geometry files should declare EFGDL 2 in the general document header.
+Optional metadata fields accept integers, quoted strings, or bare identifiers
+and are retained for provenance tooling. Headerless files continue to use
+legacy EFGDL 1 semantics.
+
 EFGDL 2 output layouts can construct fixed sequence with `f[...]`; for example,
 `-> 1{f[ACGT]<bc><umi>}` prefixes those bases and assigns them `I` quality
-scores while retaining qualities from captured intervals.
-They can also add captured data to FASTQ names without an auxiliary tool, for
-example `-> #[header = append(" CB:Z:", <bc>)] 1{<read>}`. Header work is absent
-from the execution graph when no such annotation is used.
+scores while retaining qualities from captured intervals. They can also add
+captured data to FASTQ names without an auxiliary tool:
+
+```efgdl
+-> #[header = append(" CB:Z:", <bc>, " UB:Z:", <umi>)]
+   1{f[ACGT]<bc><umi>}
+```
+
+`append`, `prepend`, and `replace` templates are supported independently on
+each output read. Header work is absent from the execution graph when no such
+template is used. The [EFGDL 2 guide](https://combine-lab.github.io/seqproc/efgdl/version-2/)
+documents the complete syntax, quality behavior, migration boundary, and a
+runnable paired-end example.
 
 ## Install from source
 
@@ -129,6 +144,8 @@ npm run build
 The JSON emitted by `--summary` follows the versioned schemas in
 [`schemas/`](schemas/). Runtime statistics are disabled unless requested, so
 headline performance measurements do not silently include instrumentation.
+Geometry provenance uses an algorithm-tagged BLAKE3 digest of the complete
+geometry text, including its EFGDL header.
 
 Please report bugs and feature requests through
 [GitHub Issues](https://github.com/COMBINE-lab/seqproc/issues).

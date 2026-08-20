@@ -39,6 +39,33 @@ bc = b[8]
 This is a native either-orientation operation. It avoids requiring users to
 reverse-complement an entire FASTQ and run a second external pass.
 
+### Orientation-conditional output
+
+When the emitted layout must differ according to the successful orientation,
+branch on the `ori` attribute produced by `match_ori(either)`:
+
+```text
+header { efgdl = 2 }
+
+#[match_ori(either)]
+1{b<bc>[8]f[CAGAGC]r<read>:}
+-> match 1.ori {
+  fw => #[header = append(" ORI:Z:fw")] 1{f[A]<bc><read>},
+  rc => #[header = append(" ORI:Z:rc")] 1{f[T]revcomp(<bc>)<read>}
+}
+```
+
+The `fw` arm runs for a forward match and the `rc` arm for a successful
+reverse-complement retry. Each arm can independently transform captured
+labels, arrange output reads, construct EFGDL 2 fixed sequence, and set an
+output FASTQ-name template. A `match 1.ori` block is rejected unless read 1 has
+`#[match_ori(either)]`, because otherwise the selector attribute cannot exist.
+
+Use conditional output only when the desired emitted representation genuinely
+depends on input orientation. If both orientations should be normalized to the
+same output, a direct `-> 1{...}` transformation is shorter and easier to
+review.
+
 ## What “ambiguous” means
 
 Ambiguity is an **equal-best match to two or more distinct whitelist or mapping
