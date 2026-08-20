@@ -40,6 +40,33 @@ The left side of `->` must account for the input structure to be recognized.
 The right side states what should be emitted. It may reorder, omit, combine, or
 transform extracted intervals.
 
+EFGDL 2 output layouts may also construct fixed bases directly with `f[...]`:
+
+```text
+header { efgdl = 2 }
+1{b<bc>[8]r<read>:}
+-> 1{f[ACGT]<bc>f[T]<read>}
+```
+
+Inserted bases receive `I` quality scores. Existing captured intervals retain
+their input qualities. Fixed construction is deliberately restricted to
+explicit EFGDL 2 documents so legacy files do not silently change meaning.
+
+Output reads can also modify their FASTQ record names with a typed header
+template:
+
+```text
+header { efgdl = 2 }
+1{b<bc>[8]r<read>:}
+-> #[header = append(" CB:Z:", <bc>)] 1{<read>}
+```
+
+The supported modes are `append`, `prepend`, and `replace`. Quoted parts are
+fixed text and `<label>` parts insert captured sequence. Delimiters are
+explicit: include the desired space or punctuation in a quoted part. When the
+annotation is absent, seqproc adds no header operation and the existing FASTQ
+name is passed directly to the writer without constructing a replacement.
+
 If no arrow is present, the recognized reads pass through according to the
 compiled geometry. When reproducibility matters, prefer an explicit output
 layout so the intended product is visible during review.

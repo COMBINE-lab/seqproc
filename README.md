@@ -67,6 +67,13 @@ discarded rather than written to standard output. See the
 and [command-line reference](https://combine-lab.github.io/seqproc/getting-started/command-line/)
 for paired-end, compressed-I/O, demultiplexing, and reporting examples.
 
+EFGDL 2 output layouts can construct fixed sequence with `f[...]`; for example,
+`-> 1{f[ACGT]<bc><umi>}` prefixes those bases and assigns them `I` quality
+scores while retaining qualities from captured intervals.
+They can also add captured data to FASTQ names without an auxiliary tool, for
+example `-> #[header = append(" CB:Z:", <bc>)] 1{<read>}`. Header work is absent
+from the execution graph when no such annotation is used.
+
 ## Install from source
 
 Tagged binary releases are planned. During the pre-release phase, build the

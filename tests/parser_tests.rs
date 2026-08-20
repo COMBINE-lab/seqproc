@@ -2,7 +2,8 @@ mod common;
 
 use seqproc::{
     parser::{
-        Definition, Expr, Function, HeaderValue, IntervalKind, IntervalShape, Read, TransformOutput,
+        Definition, Expr, Function, HeaderValue, IntervalKind, IntervalShape, OutputHeaderMode,
+        OutputHeaderPart, Read, TransformOutput,
     },
     Nucleotide, S,
 };
@@ -36,6 +37,34 @@ fn document_header() {
         header.fields[2].0.value.0,
         HeaderValue::Identifier("draft".to_string())
     );
+}
+
+#[test]
+fn output_header_template_parses_typed_parts() {
+    let src = r#"header { efgdl = 2 }
+        1{b<bc>[4]r<read>:}
+        -> #[header = append(" CB:Z:", <bc>)] 1{<read>}"#;
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
+
+    let TransformOutput::Direct(reads) = parse_res.unwrap().transforms.unwrap().0 else {
+        panic!("expected direct output");
+    };
+    let header = reads[0].0.output_header.as_ref().unwrap();
+    assert_eq!(header.0.mode.0, OutputHeaderMode::Append);
+    assert_eq!(
+        header.0.parts[0].0,
+        OutputHeaderPart::Literal(" CB:Z:".to_string())
+    );
+    assert!(matches!(
+        &header.0.parts[1].0,
+        OutputHeaderPart::Label(S(label, _)) if label == "bc"
+    ));
 }
 
 use crate::common::utils::{result_with_errs, ParsedInput};
@@ -97,6 +126,7 @@ fn transformation() {
         S::new(
             Read {
                 annotations: vec![],
+                output_header: None,
                 index: S::new(1, 16..17),
                 exprs: vec![S::new(Expr::Label(S::new("t".to_string(), 18..21)), 18..21)],
             },
@@ -105,6 +135,7 @@ fn transformation() {
         S::new(
             Read {
                 annotations: vec![],
+                output_header: None,
                 index: S::new(2, 22..23),
                 exprs: vec![S::new(
                     Expr::GeomPiece(IntervalKind::ReadSeq, IntervalShape::UnboundedLen),
@@ -159,6 +190,7 @@ fn hamming() {
 
     let expected_res = Read {
         annotations: vec![],
+        output_header: None,
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::Function(
@@ -194,6 +226,7 @@ fn remove() {
 
     let expected_res = Read {
         annotations: vec![],
+        output_header: None,
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::Function(
@@ -243,6 +276,7 @@ fn nested() {
 
     let expected_res = Read {
         annotations: vec![],
+        output_header: None,
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::Function(
@@ -284,6 +318,7 @@ fn labeled_unbounded() {
 
     let expected_res = Read {
         annotations: vec![],
+        output_header: None,
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::LabeledGeomPiece(
@@ -322,6 +357,7 @@ fn ranged() {
 
     let expected_res = Read {
         annotations: vec![],
+        output_header: None,
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::GeomPiece(
@@ -354,6 +390,7 @@ fn fixed() {
 
     let expected_res = Read {
         annotations: vec![],
+        output_header: None,
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::GeomPiece(
@@ -386,6 +423,7 @@ fn fixed_seq() {
 
     let expected_res = Read {
         annotations: vec![],
+        output_header: None,
         index: S::new(1, 0..1),
         exprs: vec![S::new(
             Expr::GeomPiece(

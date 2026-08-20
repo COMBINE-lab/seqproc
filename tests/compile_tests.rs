@@ -418,6 +418,12 @@ fn headerless_geometry_uses_legacy_efgdl_version() {
 }
 
 #[test]
+fn legacy_geometry_can_use_header_as_a_definition_name() {
+    let compiled = compile_geom("header = b[2] 1{<header>r:}".to_string()).unwrap();
+    assert_eq!(compiled.efgdl_version, 1);
+}
+
+#[test]
 fn efgdl_two_header_is_retained() {
     let compiled = compile_geom(
         r#"header { efgdl = 2, name = "test protocol" }
@@ -439,6 +445,46 @@ fn header_requires_supported_integer_version() {
     ] {
         assert!(compile_geom(geom.to_string()).is_err(), "accepted: {geom}");
     }
+}
+
+#[test]
+fn efgdl_two_constructs_fixed_output_sequences() {
+    let compiled = compile_geom(
+        "header { efgdl = 2 } 1{b<bc>[2]r<read>:} -> 1{f[AC]<bc>f[T]<read>}".to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        compiled.get_simplified_description_string(),
+        "1{f[AC]b[2]f[T]r:}"
+    );
+}
+
+#[test]
+fn legacy_efgdl_rejects_fixed_output_construction() {
+    let result = compile_geom("1{b<bc>[2]r:} -> 1{f[AC]<bc>}".to_string());
+    assert!(result.is_err());
+    let message = result.unwrap_err()[0].to_string();
+    assert!(message.contains("efgdl = 2"), "{message}");
+}
+
+#[test]
+fn efgdl_two_compiles_output_header_templates() {
+    for mode in ["append", "prepend", "replace"] {
+        let geometry = format!(
+            "header {{ efgdl = 2 }} 1{{b<bc>[2]r<read>:}} -> #[header = {mode}(\" tag:\", <bc>)] 1{{<read>}}"
+        );
+        let compiled = compile_geom(geometry).unwrap();
+        assert!(compiled.transformation.unwrap()[0].header.is_some());
+    }
+}
+
+#[test]
+fn output_header_templates_require_efgdl_two_and_matched_labels() {
+    let legacy = "1{b<bc>[2]r<read>:} -> #[header = append(\" tag:\", <bc>)] 1{<read>}";
+    assert!(compile_geom(legacy.to_string()).is_err());
+
+    let unmatched = "header { efgdl = 2 } missing = b[2] 1{r<read>:} -> #[header = append(<missing>)] 1{<read>}";
+    assert!(compile_geom(unmatched.to_string()).is_err());
 }
 
 #[test]

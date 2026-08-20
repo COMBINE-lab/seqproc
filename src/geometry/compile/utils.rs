@@ -9,7 +9,41 @@ use super::functions::{ChangeAs, CompiledFunction};
 
 pub type Geometry = Vec<Vec<(Interval, usize)>>;
 
-pub type Transformation = Vec<Vec<String>>;
+/// One component of an output read transformation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TransformSegment {
+    /// A captured interval, numbered with its source read after compilation.
+    Label(String),
+    /// Fixed bases constructed directly in an EFGDL 2 output read.
+    Literal(Vec<u8>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CompiledHeaderMode {
+    Append,
+    Prepend,
+    Replace,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum HeaderSegment {
+    Literal(Vec<u8>),
+    Label(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct HeaderTransformation {
+    pub mode: CompiledHeaderMode,
+    pub parts: Vec<HeaderSegment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ReadTransformation {
+    pub sequence: Vec<TransformSegment>,
+    pub header: Option<HeaderTransformation>,
+}
+
+pub type Transformation = Vec<ReadTransformation>;
 
 fn log4_roundup(n: usize) -> usize {
     (n.ilog2() + 1).div_ceil(2) as usize

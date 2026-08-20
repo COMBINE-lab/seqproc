@@ -20,7 +20,7 @@ use crate::{
 use self::{
     reads::standardize_geometry,
     transformation::label_transformation,
-    utils::{GeometryMeta, Interval, Transformation},
+    utils::{GeometryMeta, Interval, TransformSegment, Transformation},
 };
 
 /// Identifies the element an annotation is attached to.
@@ -210,21 +210,23 @@ impl CompiledData {
                 }
             }
 
-            transformation
-                .into_iter()
-                .enumerate()
-                .fold(String::new(), |mut acc, (i, labels)| {
-                    let geom_desc = labels
+            transformation.into_iter().enumerate().fold(
+                String::new(),
+                |mut acc, (i, read_transform)| {
+                    let geom_desc = read_transform
+                        .sequence
                         .into_iter()
-                        .map(|l| {
-                            let key = l
-                                .split('.')
-                                .collect::<Vec<&str>>()
-                                .get(1)
-                                .unwrap()
-                                .to_string();
-
-                            map.get(&key).unwrap().clone()
+                        .map(|segment| match segment {
+                            TransformSegment::Label(label) => {
+                                let key =
+                                    label.split_once('.').map(|(_, key)| key).unwrap_or(&label);
+                                map.get(key).unwrap().clone()
+                            }
+                            TransformSegment::Literal(bytes) => format!(
+                                "f[{}]",
+                                std::str::from_utf8(&bytes)
+                                    .expect("compiled EFGDL literals are valid ASCII")
+                            ),
                         })
                         .collect::<String>();
 
@@ -232,7 +234,8 @@ impl CompiledData {
                         .expect("Should have been able to format!");
 
                     acc
-                })
+                },
+            )
         } else {
             self.geometry
                 .into_iter()
@@ -350,8 +353,12 @@ pub fn compile(
 
     match transforms {
         Some(S(TransformOutput::Direct(transform_reads), span)) => {
-            let (transformation, map) =
-                compile_transformation(S(transform_reads, span), map, &numbered_labels)?;
+            let (transformation, map) = compile_transformation(
+                S(transform_reads, span),
+                map,
+                &numbered_labels,
+                efgdl_version,
+            )?;
 
             let transformation = label_transformation(transformation, &numbered_labels);
 
@@ -377,10 +384,18 @@ pub fn compile(
             span,
         )) => {
             // Compile both arms as separate transformations.
-            let (fw_transformation, fw_map) =
-                compile_transformation(S(fw_arm, span), map.clone(), &numbered_labels)?;
-            let (rc_transformation, rc_map) =
-                compile_transformation(S(rc_arm, span), map.clone(), &numbered_labels)?;
+            let (fw_transformation, fw_map) = compile_transformation(
+                S(fw_arm, span),
+                map.clone(),
+                &numbered_labels,
+                efgdl_version,
+            )?;
+            let (rc_transformation, rc_map) = compile_transformation(
+                S(rc_arm, span),
+                map.clone(),
+                &numbered_labels,
+                efgdl_version,
+            )?;
             let base_map = map;
 
             let fw_transformation = label_transformation(fw_transformation, &numbered_labels);
@@ -472,6 +487,7 @@ mod tests {
         S(
             Read {
                 annotations: vec![annotation],
+                output_header: None,
                 index: S(read_idx, span),
                 exprs: vec![S(
                     Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen(S(10, span))),
@@ -489,6 +505,7 @@ mod tests {
         // index exceeds u8::MAX.
         let span = (0..1).into();
         let desc = Description {
+            header: None,
             definitions: S(vec![], span),
             reads: S(vec![make_annotated_read(256)], span),
             transforms: None,
@@ -513,6 +530,7 @@ mod tests {
         // missing geometry, but not due to index overflow).
         let span = (0..1).into();
         let desc = Description {
+            header: None,
             definitions: S(vec![], span),
             reads: S(vec![make_annotated_read(255)], span),
             transforms: None,

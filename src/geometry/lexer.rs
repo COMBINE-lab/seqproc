@@ -38,8 +38,6 @@ pub enum Token {
     Dash,
     /// `:`.
     Colon,
-    /// `header`.
-    Header,
     /// `b`.
     Barcode,
     /// `s`.
@@ -152,7 +150,6 @@ impl fmt::Display for Token {
             Equals => f.write_char('='),
             Dash => f.write_char('-'),
             Colon => f.write_char(':'),
-            Header => f.write_str("header"),
             Reverse => f.write_str("rev"),
             ReverseComp => f.write_str("revcomp"),
             Truncate => f.write_str("trunc"),
@@ -268,7 +265,6 @@ pub fn lexer<'src>(
         "edit" => Token::Edit,
         "map_with_edit" => Token::MapWithEdit,
         "anchor_relative" => Token::Anchor,
-        "header" => Token::Header,
         "match" => Token::Match,
         "fw" => Token::Fw,
         "rc" => Token::Rc,

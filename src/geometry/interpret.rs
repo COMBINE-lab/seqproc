@@ -11,13 +11,16 @@ use expr::Expr;
 use graph::{
     Graph,
     MatchType::{Edit, EditPrefix, Exact, ExactPrefix, Hamming, HammingPrefix},
-    ProjectOp, SelectOp, Threshold, TryOrientationOp,
+    ProjectOp, ProjectPart, SelectOp, Threshold, TryOrientationOp,
 };
 
 use crate::{
     compile::{
         functions::CompiledFunction,
-        utils::{GeometryMeta, GeometryPiece},
+        utils::{
+            CompiledHeaderMode, GeometryMeta, GeometryPiece, HeaderSegment, HeaderTransformation,
+            ReadTransformation, TransformSegment,
+        },
         CompiledData, ElementAnnotations, ElementId,
     },
     parser::{IntervalKind, IntervalShape},
@@ -51,6 +54,86 @@ fn labels(read_label: &[&str]) -> (String, String) {
     } else {
         (next_label.clone(), next_label)
     }
+}
+
+fn add_output_projection(
+    graph: &mut Graph,
+    output_index: usize,
+    parts: &[TransformSegment],
+    terminal_projection: bool,
+) {
+    let target_str_type = StrType::Seq(output_index as u8);
+    let same_lane = parts.iter().all(|part| match part {
+        TransformSegment::Label(name) => antisequence::expr::Label::new(name.as_bytes())
+            .map(|label| label.str_type == target_str_type)
+            .unwrap_or(false),
+        TransformSegment::Literal(_) => true,
+    });
+
+    if terminal_projection && same_lane {
+        let project_parts = parts.iter().map(|part| match part {
+            TransformSegment::Label(name) => ProjectPart::Label(
+                antisequence::expr::Label::new(name.as_bytes())
+                    .expect("compiled transformation labels must be valid"),
+            ),
+            TransformSegment::Literal(bytes) => ProjectPart::Literal(bytes.clone()),
+        });
+        graph.add(ProjectOp::with_parts(target_str_type, project_parts));
+        return;
+    }
+
+    let mut expressions = parts.iter().map(|part| match part {
+        TransformSegment::Label(name) => Expr::from(antisequence::expr::label(name)),
+        TransformSegment::Literal(bytes) => Expr::from(bytes.clone()),
+    });
+    let Some(first) = expressions.next() else {
+        return;
+    };
+    let concatenated = expressions.fold(first, Expr::concat);
+    let seq_name = format!("seq{output_index}.*");
+    graph.add(set_node(LabelOrAttr::Label(&seq_name), concatenated));
+}
+
+fn concatenate_header_parts(parts: &[HeaderSegment]) -> Option<Expr> {
+    let mut expressions = parts.iter().map(|part| match part {
+        HeaderSegment::Literal(bytes) => Expr::from(bytes.clone()),
+        HeaderSegment::Label(name) => Expr::from(antisequence::expr::label(name)),
+    });
+    let first = expressions.next()?;
+    Some(expressions.fold(first, Expr::concat))
+}
+
+fn add_output_header(graph: &mut Graph, output_index: usize, header: &HeaderTransformation) {
+    let Some(template) = concatenate_header_parts(&header.parts) else {
+        return;
+    };
+    let name = format!("name{output_index}.*");
+    let original = || Expr::from(antisequence::expr::label(&name));
+    let expression = match header.mode {
+        CompiledHeaderMode::Append => original().concat(template),
+        CompiledHeaderMode::Prepend => template.concat(original()),
+        CompiledHeaderMode::Replace => template,
+    };
+    graph.add(set_node(LabelOrAttr::Label(&name), expression));
+}
+
+fn add_output_transformation(
+    graph: &mut Graph,
+    output_index: usize,
+    transformation: &ReadTransformation,
+    terminal_projection: bool,
+) {
+    // Header templates may reference captured labels. Apply them before the
+    // terminal sequence projection discards non-default interval mappings.
+    if let Some(header) = &transformation.header {
+        add_output_header(graph, output_index, header);
+    }
+    add_output_projection(
+        graph,
+        output_index,
+        &transformation.sequence,
+        terminal_projection,
+    );
 }
 
 impl<'a> CompiledData {
@@ -114,7 +197,7 @@ impl<'a> CompiledData {
             // compiled map has extra functions compared to the base geometry.
             // If so, apply those functions (e.g., revcomp) before the label
             // rearrangement.
-            let build_arm_graph = |arm_transformation: &[Vec<String>],
+            let build_arm_graph = |arm_transformation: &[ReadTransformation],
                                    arm_map: &std::collections::HashMap<
                 String,
                 crate::compile::utils::GeometryMeta,
@@ -123,8 +206,11 @@ impl<'a> CompiledData {
                 let mut arm_graph = Graph::new();
 
                 // Apply arm-specific per-label functions (diff vs base map).
-                for tr_labels in arm_transformation.iter() {
-                    for full_label in tr_labels.iter() {
+                for read_transform in arm_transformation.iter() {
+                    for segment in read_transform.sequence.iter() {
+                        let TransformSegment::Label(full_label) = segment else {
+                            continue;
+                        };
                         // full_label is like "seq1.bc" -- extract just "bc"
                         let short_label = full_label.split('.').nth(1).unwrap_or(full_label);
 
@@ -157,12 +243,11 @@ impl<'a> CompiledData {
 
                 // Apply the label rearrangement.
                 for (i, tr) in arm_transformation.iter().enumerate() {
-                    let seq_name = format!("seq{}.*", i + 1);
-                    let tr = format!("{{{}}}", tr.join("}{"));
-                    arm_graph.add(set_node(
-                        LabelOrAttr::Label(&seq_name),
-                        antisequence::expr::fmt_expr(tr),
-                    ));
+                    // These subgraphs are followed by the selector for the
+                    // other orientation. Keep selector attributes alive by
+                    // using SetOp rather than the terminal ProjectOp, which
+                    // deliberately discards interval metadata.
+                    add_output_transformation(&mut arm_graph, i + 1, tr, false);
                 }
 
                 arm_graph
@@ -180,32 +265,7 @@ impl<'a> CompiledData {
             graph.add(SelectOp::new(rc_selector, rc_graph));
         } else if let Some(transformation) = transformation {
             for (i, tr) in transformation.iter().enumerate() {
-                let seq_name = format!("seq{}.*", i + 1);
-                let projection_labels = tr
-                    .iter()
-                    .map(|name| {
-                        antisequence::expr::Label::new(name.as_bytes())
-                            .expect("compiled transformation labels must be valid")
-                    })
-                    .collect::<Vec<_>>();
-                let target_str_type = StrType::Seq((i + 1) as u8);
-
-                if !projection_labels.is_empty()
-                    && projection_labels
-                        .iter()
-                        .all(|label| label.str_type == target_str_type)
-                {
-                    // This is the final operation before output. Compact
-                    // same-lane projections in place instead of allocating a
-                    // concatenation and copying it back into the read buffer.
-                    graph.add(ProjectOp::new(projection_labels));
-                } else {
-                    let tr = format!("{{{}}}", tr.join("}{"));
-                    graph.add(set_node(
-                        LabelOrAttr::Label(&seq_name),
-                        antisequence::expr::fmt_expr(tr),
-                    ));
-                }
+                add_output_transformation(graph, i + 1, tr, true);
             }
         };
     }
@@ -1176,6 +1236,16 @@ mod tests {
     fn test_interpret_with_transformation() {
         let data = compile_geom(
             "1{b<bc>[16]u<umi>[10]r<read>:}2{r<read2>:}->1{<bc><umi>}2{<read2>}".to_string(),
+        )
+        .unwrap();
+        let mut graph = Graph::new();
+        data.interpret(&mut graph, &[]);
+    }
+
+    #[test]
+    fn test_interpret_with_fixed_output_sequence() {
+        let data = compile_geom(
+            "header { efgdl = 2 } 1{b<bc>[4]r<read>:}->1{f[AC]<bc>f[T]<read>}".to_string(),
         )
         .unwrap();
         let mut graph = Graph::new();

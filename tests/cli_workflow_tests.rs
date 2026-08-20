@@ -158,6 +158,9 @@ fn summary_mode_uses_the_same_processing_pipeline() {
     assert_eq!(report["gzip_input_chunk_size"], 0);
     assert_eq!(report["effective_threads"], 2);
     assert_eq!(report["ordering_mode"], "input-order");
+    let geometry_digest = report["geometry_digest"].as_str().unwrap();
+    assert!(geometry_digest.starts_with("blake3:"));
+    assert_eq!(geometry_digest.len(), "blake3:".len() + 64);
     assert_eq!(report["n_processed"], 3);
     assert_eq!(report["failed_parsing"], 0);
 
@@ -194,6 +197,81 @@ fn summary_mode_uses_the_same_processing_pipeline() {
     assert_eq!(basic["read_length_mean"], serde_json::json!([]));
     assert_eq!(basic["read_length_min"], serde_json::json!([]));
     assert_eq!(basic["read_length_max"], serde_json::json!([]));
+}
+
+#[test]
+fn efgdl_two_constructs_fixed_output_bases_and_qualities() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("fixed-output.geom");
+    let input = directory.path().join("input.fastq");
+    let output = directory.path().join("output.fastq");
+    fs::write(
+        &geometry,
+        "header { efgdl = 2 }\n1{b<bc>[2]r<rest>:} -> 1{f[TT]<bc>f[A]<rest>}\n",
+    )
+    .unwrap();
+    fs::write(&input, "@read1\nACGT\n+\n1234\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--file1",
+            input.to_str().unwrap(),
+            "--out1",
+            output.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(output).unwrap(),
+        "@read1\nTTACAGT\n+\nII12I34\n"
+    );
+}
+
+#[test]
+fn efgdl_two_modifies_fastq_headers_with_captured_labels() {
+    let directory = tempdir().unwrap();
+    let input = directory.path().join("input.fastq");
+    fs::write(&input, "@read1\nACGT\n+\n1234\n").unwrap();
+
+    for (mode, template, expected_name) in [
+        ("append", "\" CB:Z:\", <bc>", "read1 CB:Z:AC"),
+        ("prepend", "\"sample:\", <bc>, \" \"", "sample:AC read1"),
+        ("replace", "\"new:\", <bc>", "new:AC"),
+    ] {
+        let geometry = directory.path().join(format!("header-{mode}.geom"));
+        let output = directory.path().join(format!("header-{mode}.fastq"));
+        fs::write(
+            &geometry,
+            format!(
+                "header {{ efgdl = 2 }}\n1{{b<bc>[2]r<rest>:}} -> #[header = {mode}({template})] 1{{<rest>}}\n"
+            ),
+        )
+        .unwrap();
+
+        Command::cargo_bin("seqproc")
+            .unwrap()
+            .args([
+                "run",
+                "--geom",
+                geometry.to_str().unwrap(),
+                "--file1",
+                input.to_str().unwrap(),
+                "--out1",
+                output.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+
+        assert_eq!(
+            fs::read_to_string(output).unwrap(),
+            format!("@{expected_name}\nGT\n+\n34\n")
+        );
+    }
 }
 
 #[test]

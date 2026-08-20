@@ -240,10 +240,34 @@ pub struct DocumentHeader {
     pub fields: Vec<S<HeaderField>>,
 }
 
+/// How an EFGDL 2 output transformation modifies a FASTQ record name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OutputHeaderMode {
+    Append,
+    Prepend,
+    Replace,
+}
+
+/// One component of an output FASTQ-header template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum OutputHeaderPart {
+    Literal(String),
+    Label(S<String>),
+}
+
+/// An optional output-record header transformation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct OutputHeader {
+    pub mode: S<OutputHeaderMode>,
+    pub parts: Vec<S<OutputHeaderPart>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// A read, with optional annotations, index, and expressions: `#[match_ori(either)] 1{...}`.
 pub struct Read {
     pub annotations: Vec<S<Annotation>>,
+    /// Only populated for reads on the output side of `->`.
+    pub output_header: Option<S<OutputHeader>>,
     pub index: S<usize>,
     pub exprs: Vec<S<Expr>>,
 }
@@ -435,18 +459,20 @@ pub fn parser<'tokens>(
         .then_ignore(just(Token::Equals))
         .then(header_value.map_with(|value, state| S(value, state.span())))
         .map_with(|(name, value), state| S(HeaderField { name, value }, state.span()));
-    let document_header = just(Token::Header)
-        .ignore_then(
-            header_field
-                .separated_by(just(Token::Comma))
-                .allow_trailing()
-                .at_least(1)
-                .collect::<Vec<_>>()
-                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-        )
-        .map_with(|fields, state| S(DocumentHeader { fields }, state.span()))
-        .or_not()
-        .boxed();
+    let document_header = select! {
+        Token::Label(name) if name == "header" => (),
+    }
+    .ignore_then(
+        header_field
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .at_least(1)
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+    )
+    .map_with(|fields, state| S(DocumentHeader { fields }, state.span()))
+    .or_not()
+    .boxed();
 
     let piece_type = select! {
         Token::Barcode => IntervalKind::Barcode,
@@ -713,6 +739,44 @@ pub fn parser<'tokens>(
         )
         .map_with(|(name, (args, value)), state| S(Annotation { name, args, value }, state.span()));
 
+    // Output FASTQ-name templates are parsed separately from general
+    // annotations because their arguments are typed literals and captured
+    // labels rather than annotation-policy scalars.
+    let output_header_mode = select! {
+        Token::Label(mode) if mode == "append" => OutputHeaderMode::Append,
+        Token::Label(mode) if mode == "prepend" => OutputHeaderMode::Prepend,
+        Token::Label(mode) if mode == "replace" => OutputHeaderMode::Replace,
+    }
+    .map_with(|mode, state| S(mode, state.span()));
+    let output_header_part = choice((
+        file.clone()
+            .map(OutputHeaderPart::Literal)
+            .map_with(|part, state| S(part, state.span())),
+        label
+            .clone()
+            .map_with(|name, state| S(name, state.span()))
+            .delimited_by(just(Token::LAngle), just(Token::RAngle))
+            .map(OutputHeaderPart::Label)
+            .map_with(|part, state| S(part, state.span())),
+    ));
+    let output_header = just(Token::HashBracket)
+        .ignore_then(select! {
+            Token::Label(name) if name == "header" => (),
+        })
+        .then_ignore(just(Token::Equals))
+        .ignore_then(
+            output_header_mode.then(
+                output_header_part
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .at_least(1)
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LParen), just(Token::RParen)),
+            ),
+        )
+        .then_ignore(just(Token::RBracket))
+        .map_with(|(mode, parts), state| S(OutputHeader { mode, parts }, state.span()));
+
     // define the basic peices of an EFGDL description
     // Definitions may be preceded by annotations: #[edit(5)] foo = f[ABC]
     let definitions = annotation
@@ -760,6 +824,7 @@ pub fn parser<'tokens>(
             S(
                 Read {
                     annotations,
+                    output_header: None,
                     index,
                     exprs,
                 },
@@ -771,20 +836,24 @@ pub fn parser<'tokens>(
         .collect::<Vec<_>>()
         .map_with(|v, span| S(v, span.span()));
 
-    let transform_read = num
-        .labelled("read number")
-        .map_with(|n, state| S(n, state.span()))
+    let transform_read = output_header
+        .or_not()
         .then(
-            transformed_pieces
-                .repeated()
-                .at_least(1)
-                .collect()
-                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            num.labelled("read number")
+                .map_with(|n, state| S(n, state.span()))
+                .then(
+                    transformed_pieces
+                        .repeated()
+                        .at_least(1)
+                        .collect()
+                        .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+                ),
         )
-        .map_with(|(index, exprs), state| {
+        .map_with(|(output_header, (index, exprs)), state| {
             S(
                 Read {
                     annotations: vec![],
+                    output_header,
                     index,
                     exprs,
                 },
