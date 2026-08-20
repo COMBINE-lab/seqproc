@@ -378,8 +378,15 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         }
     }
 
+    // Geometry compilation currently relies on the historical conditional
+    // skip behavior. Make that compatibility choice explicit before freezing
+    // the graph; future EFGDL validation can select stricter policies.
+    graph.set_missing_input_policy(MissingInputPolicy::Skip);
     let statistics_level = config.effective_statistics_level();
     graph.set_statistics_level(statistics_level);
+    let graph = graph
+        .compile()
+        .map_err(|error| anyhow!("failed to compile processing graph: {error}"))?;
     let use_pipeline = config.preserve_order || config.staged_pipeline;
     let pipeline = if use_pipeline {
         let mut pipeline_config = PipelineConfig::new(config.threads);
@@ -746,6 +753,14 @@ pub fn interpret_with_unassigned(
         }
     }
 
+    graph.set_missing_input_policy(MissingInputPolicy::Skip);
+    let graph = match graph.compile() {
+        Ok(graph) => graph,
+        Err(error) => {
+            tracing::error!("Failed to compile processing graph: {}", error);
+            return;
+        }
+    };
     graph.run_with_threads(threads);
 }
 
@@ -852,6 +867,14 @@ pub fn interpret_with_demux(
         }
     }
 
+    graph.set_missing_input_policy(MissingInputPolicy::Skip);
+    let graph = match graph.compile() {
+        Ok(graph) => graph,
+        Err(error) => {
+            tracing::error!("Failed to compile processing graph: {}", error);
+            return;
+        }
+    };
     graph.run_with_threads(threads);
 }
 
@@ -905,7 +928,11 @@ fn interpret_to_pipes(
 
     // This is the reporting path. Normal execution leaves statistics disabled
     // in antisequence so it avoids per-read counters and histogram locks.
+    graph.set_missing_input_policy(MissingInputPolicy::Skip);
     graph.set_statistics_level(StatisticsLevel::Detailed);
+    let graph = graph
+        .compile()
+        .unwrap_or_else(|error| panic!("Failed to compile processing graph: {error}"));
     graph.run_with_threads(threads);
 
     let input_stats = graph.input_stats();

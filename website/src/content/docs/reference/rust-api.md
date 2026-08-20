@@ -6,6 +6,13 @@ description: Compile a geometry and execute it through RunConfig and RunReport.
 The CLI is a thin client over the public execution API. The typed entry point
 is `RunConfig` plus `run`, which returns a `RunReport` on success.
 
+Internally, `run` finishes constructing the ANTISEQUENCE operation graph,
+validates input/transform/output stage order, and freezes it as a structurally
+immutable `CompiledGraph` before starting any reader, worker, or writer thread.
+The current EFGDL compiler explicitly selects ANTISEQUENCE's compatibility
+`MissingInputPolicy::Skip`; moving individual language operations to strict
+`Error` or per-read `Reject` behavior will be a versioned semantic change.
+
 ```rust
 use std::fs;
 use std::path::PathBuf;
