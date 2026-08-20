@@ -3,13 +3,19 @@ title: Language overview
 description: The structure of an EFGDL geometry as implemented by seqproc.
 ---
 
-An EFGDL file has three conceptual parts:
+An EFGDL file has four conceptual parts:
 
-1. reusable **definitions** for named intervals or transformed intervals;
-2. one or more numbered **input read layouts**;
-3. an optional **output transformation** after `->`.
+1. an optional versioned document **header**;
+2. reusable **definitions** for named intervals or transformed intervals;
+3. one or more numbered **input read layouts**;
+4. an optional **output transformation** after `->`.
 
 ```text
+header {
+  efgdl = 2,
+  name = "10x Chromium v2",
+}
+
 bc = b[16]
 umi = u[10]
 bio = r:
@@ -18,6 +24,11 @@ bio = r:
 2{<bio>}
 -> 1{<bc><umi>} 2{<bio>}
 ```
+
+The header is a version-neutral metadata block. EFGDL 2 documents must declare
+`efgdl = 2`; additional scalar fields are retained for tooling and provenance.
+Headerless files remain valid and use legacy EFGDL 1 semantics. Duplicate
+fields, missing versions, and unsupported versions are rejected.
 
 Definitions bind names such as `bc`. Angle brackets insert a reference to a
 definition in a read layout or output. Read numbers correspond to FASTQ input

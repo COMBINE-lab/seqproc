@@ -4,7 +4,7 @@ pub mod reads;
 mod transformation;
 pub mod utils;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use definitions::compile_definitions;
@@ -13,7 +13,7 @@ use transformation::compile_transformation;
 use utils::Error;
 
 use crate::{
-    parser::{Annotation, Description, TransformOutput},
+    parser::{Annotation, Description, DocumentHeader, HeaderValue, TransformOutput},
     S,
 };
 
@@ -129,6 +129,10 @@ pub struct CompiledMatchBlock {
 
 #[derive(Debug)]
 pub struct CompiledData {
+    /// Effective EFGDL language version. Headerless legacy documents are v1.
+    pub efgdl_version: usize,
+    /// User-provided document metadata, if an EFGDL header was present.
+    pub document_header: Option<DocumentHeader>,
     pub geometry: Vec<Vec<GeometryMeta>>,
     pub transformation: Option<Transformation>,
     /// Per-element annotations (reads and definitions) from the input geometry.
@@ -137,6 +141,50 @@ pub struct CompiledData {
     pub match_block: Option<CompiledMatchBlock>,
     /// Deprecation warnings collected during compilation.
     pub warnings: Vec<String>,
+}
+
+fn validate_document_header(header: &Option<S<DocumentHeader>>) -> Result<usize, Error> {
+    let Some(S(header, header_span)) = header else {
+        return Ok(1);
+    };
+
+    let mut seen = HashSet::with_capacity(header.fields.len());
+    let mut version = None;
+    for S(field, field_span) in &header.fields {
+        if !seen.insert(field.name.0.as_str()) {
+            return Err(Error {
+                span: *field_span,
+                msg: format!("duplicate EFGDL header field `{}`", field.name.0),
+            });
+        }
+        if field.name.0 == "efgdl" {
+            match field.value.0 {
+                HeaderValue::Number(value) => version = Some((value, field.value.1)),
+                _ => {
+                    return Err(Error {
+                        span: field.value.1,
+                        msg: "EFGDL header field `efgdl` must be an integer version".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    let Some((version, span)) = version else {
+        return Err(Error {
+            span: *header_span,
+            msg: "EFGDL header must contain `efgdl = 2`".to_string(),
+        });
+    };
+    if version != 2 {
+        return Err(Error {
+            span,
+            msg: format!(
+                "unsupported EFGDL version {version}; this seqproc build supports EFGDL 2, while headerless files use legacy EFGDL 1 semantics"
+            ),
+        });
+    }
+    Ok(version)
 }
 
 impl CompiledData {
@@ -213,11 +261,14 @@ impl CompiledData {
 /// Returns CompiledData { geometry, transformation } or Error.
 pub fn compile(
     Description {
+        header,
         definitions,
         reads,
         transforms,
     }: Description,
 ) -> Result<CompiledData, Error> {
+    let efgdl_version = validate_document_header(&header)?;
+    let document_header = header.map(|S(header, _)| header);
     // Extract per-element annotations (reads + definitions).
     let mut element_annotations: Vec<ElementAnnotations> = Vec::new();
 
@@ -307,6 +358,8 @@ pub fn compile(
             let geometry = standardize_geometry(map, geometry);
 
             Ok(CompiledData {
+                efgdl_version,
+                document_header,
                 geometry,
                 transformation: Some(transformation),
                 element_annotations,
@@ -368,6 +421,8 @@ pub fn compile(
             let geometry = standardize_geometry(fw_map.clone(), geometry);
 
             Ok(CompiledData {
+                efgdl_version,
+                document_header,
                 geometry,
                 transformation: Some(fw_transformation.clone()),
                 element_annotations,
@@ -387,6 +442,8 @@ pub fn compile(
             let geometry = standardize_geometry(map, geometry);
 
             Ok(CompiledData {
+                efgdl_version,
+                document_header,
                 geometry,
                 transformation: None,
                 element_annotations,

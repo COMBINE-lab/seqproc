@@ -35,6 +35,11 @@ FASTQ contains a 16-base cell barcode followed by a 10-base UMI, and the second
 contains the biological read.
 
 ```efgdl
+header {
+  efgdl = 2,
+  name = "10x Chromium v2",
+}
+
 bc = b[16]
 umi = u[10]
 bio = r:

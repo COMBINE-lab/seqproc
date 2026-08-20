@@ -47,5 +47,6 @@ revisions emit the same fields. Additive fields require a schema minor version;
 removing fields or changing their meaning requires a major version.
 
 The geometry digest is a content/provenance identifier, not a security
-primitive. Archive the geometry itself and all referenced maps or whitelists in
-addition to the report.
+primitive. Current releases use the algorithm-tagged form `blake3:<hex>` (early
+reports used `md5:<hex>`). Archive the geometry itself and all referenced maps
+or whitelists in addition to the report.

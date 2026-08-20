@@ -250,7 +250,7 @@ fn main() {
     });
 
     let geom = read_geometry(&geom_path);
-    let geometry_digest = format!("md5:{:x}", md5::compute(geom.as_bytes()));
+    let geometry_digest = format!("blake3:{}", blake3::hash(geom.as_bytes()).to_hex());
 
     // Validate input FASTQ paths up front so a missing file surfaces as a clean
     // error instead of a panic from deep inside the read-processing engine.

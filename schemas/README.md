@@ -11,8 +11,9 @@ For schema 1.0.0:
 - `rejected_fragments = failed_parsing` while the legacy field name is retained;
 - rejection-reason counts sum to `rejected_fragments`;
 - `ordering_mode = input-order` only when the effective thread count is one;
-- `geometry_digest` includes its algorithm prefix (currently `md5:`) and is a
-  content/provenance identifier, not a security primitive;
+- `geometry_digest` includes its algorithm prefix. Current releases emit
+  `blake3:`; early reports emitted `md5:`. It is a content/provenance
+  identifier rather than a substitute for archiving the geometry;
 - read-length vectors contain one entry per FASTQ input.
 
 Schema 1.1.0 adds the required `gzip_compression_level` and

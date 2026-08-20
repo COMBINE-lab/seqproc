@@ -1,9 +1,42 @@
 mod common;
 
 use seqproc::{
-    parser::{Definition, Expr, Function, IntervalKind, IntervalShape, Read, TransformOutput},
+    parser::{
+        Definition, Expr, Function, HeaderValue, IntervalKind, IntervalShape, Read, TransformOutput,
+    },
     Nucleotide, S,
 };
+
+#[test]
+fn document_header() {
+    let src = r#"header {
+        efgdl = 2,
+        name = "10x Chromium v2",
+        status = draft,
+    }
+    1{b[16]u[10]}2{r:}"#;
+
+    let ParsedInput {
+        parse_res,
+        lex_errs,
+        parse_errs,
+    } = result_with_errs(src);
+
+    assert!(lex_errs.is_empty());
+    assert!(parse_errs.is_empty());
+    let header = parse_res.unwrap().header.unwrap().0;
+    assert_eq!(header.fields.len(), 3);
+    assert_eq!(header.fields[0].0.name.0, "efgdl");
+    assert_eq!(header.fields[0].0.value.0, HeaderValue::Number(2));
+    assert_eq!(
+        header.fields[1].0.value.0,
+        HeaderValue::String("10x Chromium v2".to_string())
+    );
+    assert_eq!(
+        header.fields[2].0.value.0,
+        HeaderValue::Identifier("draft".to_string())
+    );
+}
 
 use crate::common::utils::{result_with_errs, ParsedInput};
 

@@ -219,6 +219,27 @@ pub struct AnnotationValueArg {
     pub value: S<String>,
 }
 
+/// A scalar value in the version-neutral EFGDL document header.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum HeaderValue {
+    Number(usize),
+    String(String),
+    Identifier(String),
+}
+
+/// One entry in an EFGDL document header, such as `efgdl = 2`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct HeaderField {
+    pub name: S<String>,
+    pub value: S<HeaderValue>,
+}
+
+/// Version-neutral metadata at the beginning of an EFGDL document.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DocumentHeader {
+    pub fields: Vec<S<HeaderField>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// A read, with optional annotations, index, and expressions: `#[match_ori(either)] 1{...}`.
 pub struct Read {
@@ -244,6 +265,9 @@ pub enum TransformOutput {
 /// A full EFGDL file: 0+ definitions, then input reads, then transformed reads.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Description {
+    /// Optional document header. Headerless files retain legacy EFGDL 1
+    /// semantics; new EFGDL 2 documents declare `header { efgdl = 2 }`.
+    pub header: Option<S<DocumentHeader>>,
     /// The list of definitions at the top of an EFGDL file:
     /// `brc = b[10] foo = f[CAGAGC]`.
     pub definitions: S<Vec<S<Definition>>>,
@@ -397,6 +421,32 @@ pub fn parser<'tokens>(
     let file = select! {Token::File(f) => f.clone() };
     let argument = select! {Token::Arg(n) => n.to_string() };
     let self_ = select! { Token::Self_ => Expr::Self_ };
+
+    // The document header intentionally uses a small, version-neutral scalar
+    // grammar so it can select the grammar/semantics of the body that follows.
+    let header_key = select! { Token::Label(key) => key.clone() };
+    let header_value = choice((
+        select! { Token::Num(value) => HeaderValue::Number(value) },
+        select! { Token::File(value) => HeaderValue::String(value.clone()) },
+        select! { Token::Label(value) => HeaderValue::Identifier(value.clone()) },
+    ));
+    let header_field = header_key
+        .map_with(|name, state| S(name, state.span()))
+        .then_ignore(just(Token::Equals))
+        .then(header_value.map_with(|value, state| S(value, state.span())))
+        .map_with(|(name, value), state| S(HeaderField { name, value }, state.span()));
+    let document_header = just(Token::Header)
+        .ignore_then(
+            header_field
+                .separated_by(just(Token::Comma))
+                .allow_trailing()
+                .at_least(1)
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map_with(|fields, state| S(DocumentHeader { fields }, state.span()))
+        .or_not()
+        .boxed();
 
     let piece_type = select! {
         Token::Barcode => IntervalKind::Barcode,
@@ -805,10 +855,12 @@ pub fn parser<'tokens>(
     ));
 
     Box::new(
-        definitions
+        document_header
+            .then(definitions)
             .then(reads)
             .then(transformations)
-            .map(|((defs, reads), transforms)| Description {
+            .map(|(((header, defs), reads), transforms)| Description {
+                header,
                 definitions: defs,
                 reads,
                 transforms,

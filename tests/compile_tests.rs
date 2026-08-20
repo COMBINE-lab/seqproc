@@ -411,6 +411,37 @@ fn test_simplified_geom() {
 }
 
 #[test]
+fn headerless_geometry_uses_legacy_efgdl_version() {
+    let compiled = compile_geom("1{b[16]}2{r:}".to_string()).unwrap();
+    assert_eq!(compiled.efgdl_version, 1);
+    assert!(compiled.document_header.is_none());
+}
+
+#[test]
+fn efgdl_two_header_is_retained() {
+    let compiled = compile_geom(
+        r#"header { efgdl = 2, name = "test protocol" }
+        1{b[16]}2{r:}"#
+            .to_string(),
+    )
+    .unwrap();
+    assert_eq!(compiled.efgdl_version, 2);
+    assert_eq!(compiled.document_header.unwrap().fields.len(), 2);
+}
+
+#[test]
+fn header_requires_supported_integer_version() {
+    for geom in [
+        "header { name = test } 1{b[16]}2{r:}",
+        "header { efgdl = two } 1{b[16]}2{r:}",
+        "header { efgdl = 3 } 1{b[16]}2{r:}",
+        "header { efgdl = 2, efgdl = 2 } 1{b[16]}2{r:}",
+    ] {
+        assert!(compile_geom(geom.to_string()).is_err(), "accepted: {geom}");
+    }
+}
+
+#[test]
 fn test_simplified_geom_with_transformation() {
     let geom = String::from(
         "1{b<brc>[9-10]f[CAGAGC]u<umi>[8]b<brc2>[10]}2{r<read>:} -> 1{<brc><brc2><umi>}2{<read>}",
