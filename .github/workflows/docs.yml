@@ -2,7 +2,8 @@ name: Deploy documentation
 
 on:
   push:
-    branches: [main]
+    # Temporary dev deployment while EFGDL 2 is developed before merge.
+    branches: [main, dev]
     paths:
       - "website/**"
       - ".github/workflows/docs.yml"
