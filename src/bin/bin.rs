@@ -67,6 +67,7 @@ impl From<PipelineInputModeArg> for PipelineInputMode {
 #[derive(Debug, clap::Parser)]
 #[command(
     name = "seqproc",
+    version,
     about = "Geometry-driven FASTQ preprocessing",
     args_conflicts_with_subcommands = true
 )]
@@ -540,7 +541,13 @@ fn main() {
             } else {
                 StatisticsLevel::Off
             };
-            config.call = Some(std::env::args().collect::<Vec<_>>().join(" "));
+            // args_os: non-UTF-8 arguments are legal on Unix and must not panic.
+            config.call = Some(
+                std::env::args_os()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
             config.geometry_digest = Some(geometry_digest);
 
             let report = match run(config, geom) {
