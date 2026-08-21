@@ -166,6 +166,9 @@ pub struct RunConfig {
     /// Primary grouped input representation. `None` uses the legacy
     /// `input1`/`input2` fields.
     pub input_lanes: Option<Vec<InputLane>>,
+    /// Ordered shards containing complete interleaved fragments. Geometry
+    /// input arity determines the records per fragment.
+    pub interleaved_input: Option<Vec<InputSource>>,
     pub output1: Option<PathBuf>,
     pub output2: Option<PathBuf>,
     /// Primary output representation. `None` uses `output1`/`output2`.
@@ -232,6 +235,7 @@ impl RunConfig {
             input1: input1.into(),
             input2: None,
             input_lanes: None,
+            interleaved_input: None,
             output1: None,
             output2: None,
             outputs: None,
@@ -290,6 +294,14 @@ impl RunConfig {
         self
     }
 
+    pub fn with_interleaved_input(
+        mut self,
+        sources: impl IntoIterator<Item = impl Into<InputSource>>,
+    ) -> Self {
+        self.interleaved_input = Some(sources.into_iter().map(Into::into).collect());
+        self
+    }
+
     fn effective_input_lanes(&self) -> Result<Vec<InputLane>> {
         let lanes = self.input_lanes.clone().unwrap_or_else(|| {
             let mut lanes = vec![InputLane::single(self.input1.clone())];
@@ -342,6 +354,7 @@ pub struct RunReport {
     pub execution_plan: ExecutionPlan,
     pub resources: ResourceResolutionReport,
     pub input_topology: Vec<Vec<String>>,
+    pub input_layout: String,
     pub output_topology: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<PipelineReport>,
@@ -372,6 +385,7 @@ pub struct SeqprocStats {
     pub execution_plan: Option<ExecutionPlan>,
     pub resources: ResourceResolutionReport,
     pub input_topology: Vec<Vec<String>>,
+    pub input_layout: String,
     pub output_topology: Vec<String>,
 
     pub n_fastqs: u32,
@@ -490,14 +504,37 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         1
     };
 
-    let input_lanes = config.effective_input_lanes()?;
-    let input_lane_count = input_lanes.len();
-    if compiled_data.geometry.len() != input_lane_count {
+    if config.interleaved_input.is_some() && config.input_lanes.is_some() {
+        bail!("interleaved input and separate input lanes are mutually exclusive");
+    }
+    let interleaved_sources = config.interleaved_input.clone();
+    let input_lanes = if interleaved_sources.is_some() {
+        Vec::new()
+    } else {
+        config.effective_input_lanes()?
+    };
+    let input_lane_count = if interleaved_sources.is_some() {
+        compiled_data.geometry.len()
+    } else {
+        input_lanes.len()
+    };
+    if interleaved_sources.is_none() && compiled_data.geometry.len() != input_lane_count {
         bail!(
             "geometry requires {} input lanes, but {} were supplied",
             compiled_data.geometry.len(),
             input_lane_count
         );
+    }
+    if let Some(sources) = &interleaved_sources {
+        if sources.is_empty() {
+            bail!("interleaved input requires at least one FASTQ source");
+        }
+        if !(1..=3).contains(&input_lane_count) {
+            bail!(
+                "interleaved input supports geometry arities 1, 2, and 3; got {}",
+                input_lane_count
+            );
+        }
     }
 
     let output_arity = compiled_data
@@ -550,7 +587,8 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
 
     let stdin_sources = input_lanes
         .iter()
-        .flat_map(|lane| &lane.shards)
+        .flat_map(|lane| lane.shards.iter())
+        .chain(interleaved_sources.iter().flatten())
         .filter(|source| matches!(source, InputSource::Stdin))
         .count();
     if stdin_sources > 1 {
@@ -566,15 +604,27 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         config.geometry_base.as_deref(),
     )?;
     let mut graph = Graph::new();
-    let input_topology = input_lanes
-        .iter()
-        .map(|lane| {
-            lane.shards
-                .iter()
-                .map(|source| source.kind().to_owned())
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+    let input_layout = if interleaved_sources.is_some() {
+        "interleaved"
+    } else {
+        "separate"
+    };
+    let input_topology = if let Some(sources) = &interleaved_sources {
+        vec![sources
+            .iter()
+            .map(|source| source.kind().to_owned())
+            .collect::<Vec<_>>()]
+    } else {
+        input_lanes
+            .iter()
+            .map(|lane| {
+                lane.shards
+                    .iter()
+                    .map(|source| source.kind().to_owned())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
     let grouped_files = input_lanes
         .iter()
         .map(|lane| {
@@ -585,7 +635,36 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    if stdin_sources > 0 {
+    if let Some(sources) = &interleaved_sources {
+        if stdin_sources > 0 {
+            if sources.len() != 1 {
+                bail!("interleaved stdin must be the only shard in its input stream");
+            }
+            graph.add(
+                InputFastqOp::from_interleaved_reader(io::stdin(), input_lane_count)
+                    .map_err(|error| anyhow!("failed to parse interleaved stdin: {error}"))?,
+            );
+        } else {
+            let files = sources
+                .iter()
+                .filter_map(InputSource::path)
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            let input = if config.accelerated_gzip_input {
+                GroupedInputFastqOp::from_interleaved_files_accelerated_gzip(
+                    files,
+                    input_lane_count,
+                    config.gzip_input_threads,
+                    config.gzip_input_chunk_size,
+                )
+            } else {
+                GroupedInputFastqOp::from_interleaved_files(files, input_lane_count)
+            };
+            graph.add(input.map_err(|error| {
+                anyhow!("failed to configure interleaved FASTQ input: {error}")
+            })?);
+        }
+    } else if stdin_sources > 0 {
         if input_lanes.iter().any(|lane| lane.shards.len() != 1) {
             bail!("stdin currently represents a complete logical lane and cannot be combined with file shards");
         }
@@ -721,6 +800,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
                 execution_plan: &execution_plan,
                 resources: resolved_resources.report(),
                 input_topology: &input_topology,
+                input_layout,
                 output_topology: &primary_targets,
             },
         )
@@ -753,6 +833,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         execution_plan,
         resources: resolved_resources.report().clone(),
         input_topology,
+        input_layout: input_layout.to_owned(),
         output_topology: primary_targets
             .iter()
             .map(|target| target.kind().to_owned())
@@ -769,6 +850,7 @@ struct RuntimeProvenance<'a> {
     execution_plan: &'a ExecutionPlan,
     resources: &'a ResourceResolutionReport,
     input_topology: &'a [Vec<String>],
+    input_layout: &'a str,
     output_topology: &'a [OutputTarget],
 }
 
@@ -786,6 +868,7 @@ fn statistics_from_graph(
         execution_plan,
         resources,
         input_topology,
+        input_layout,
         output_topology,
     } = provenance;
     let input_stats = graph.input_stats();
@@ -908,7 +991,7 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.9.0".to_owned(),
+        schema_version: "1.10.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
         statistics_level,
         call,
@@ -943,6 +1026,7 @@ fn statistics_from_graph(
         execution_plan: Some(execution_plan.clone()),
         resources: resources.clone(),
         input_topology: input_topology.to_vec(),
+        input_layout: input_layout.to_owned(),
         output_topology: output_topology
             .iter()
             .map(|target| target.kind().to_owned())
@@ -1449,7 +1533,7 @@ fn interpret_to_pipes(
     }
 
     Ok(SeqprocStats {
-        schema_version: "1.9.0".to_string(),
+        schema_version: "1.10.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
@@ -1472,6 +1556,7 @@ fn interpret_to_pipes(
         execution_plan: None,
         resources: ResourceResolutionReport::default(),
         input_topology: vec![vec!["path".to_owned()]; n_fastqs as usize],
+        input_layout: "separate".to_owned(),
         output_topology: vec!["path".to_owned(); n_fastqs as usize],
 
         n_fastqs,
@@ -1827,7 +1912,7 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.9.0".to_string(),
+            schema_version: "1.10.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
@@ -1846,6 +1931,7 @@ mod tests {
             execution_plan: None,
             resources: ResourceResolutionReport::default(),
             input_topology: vec![vec!["path".to_owned()], vec!["path".to_owned()]],
+            input_layout: "separate".to_owned(),
             output_topology: vec!["path".to_owned(), "path".to_owned()],
             n_fastqs: 2,
             n_processed: 100,

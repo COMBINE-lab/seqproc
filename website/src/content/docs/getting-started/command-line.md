@@ -38,6 +38,21 @@ contain the same number of records. Plain and gzip shards may be mixed. Empty
 shards are valid when they occur in every lane. `--file1` and `--file2` remain
 single-path compatibility aliases.
 
+If complete fragments are stored consecutively in one physical FASTQ stream,
+use repeatable/comma-separated `--interleaved-input` instead of `--read1` and
+`--read2`. The compiled geometry is the sole authority for the number of
+records per fragment:
+
+```console
+seqproc run --geom paired.geom \
+  --interleaved-input part1.fastq.gz,part2.fastq.gz \
+  --out1 clean_R1.fastq.gz --out2 clean_R2.fastq.gz
+```
+
+Each shard must end on a complete fragment. Interleaved stdin is supported as
+`--interleaved-input -`; output remains one separate target per logical lane.
+Ordinary gzip and `--accelerated-gzip-input` work for interleaved file shards.
+
 Output arguments are optional syntactically, but an omitted primary output is
 discarded. Use `--out1` and, for two-output geometries, `--out2` explicitly.
 
@@ -56,8 +71,8 @@ gzip -cd reads.fastq.gz | seqproc run --geom protocol.geom \
 ```
 
 At most one source may consume stdin and at most one FASTQ lane may target
-stdout. The first stream implementation treats stdin as a complete logical
-lane, so it cannot also be one member of a multi-shard lane. Parallel gzip
+stdout. Stdin must be the only shard in its separate or interleaved input
+stream. Parallel gzip
 output modes are path-only; stdout uses the ordinary bounded writer path.
 If a downstream process closes the pipe, seqproc cancels the remaining graph
 and exits nonzero with the write diagnostic on stderr; it never treats a

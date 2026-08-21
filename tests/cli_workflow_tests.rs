@@ -19,8 +19,10 @@ fn gzip_copy(source: &str, destination: &std::path::Path) {
 }
 
 fn assert_current_summary_shape(report: &Value) {
-    let schema: Value =
-        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.9.0.schema.json")).unwrap();
+    let schema: Value = serde_json::from_str(include_str!(
+        "../schemas/seqproc-summary-1.10.0.schema.json"
+    ))
+    .unwrap();
     assert_eq!(
         report["schema_version"],
         schema["properties"]["schema_version"]["const"]
@@ -29,7 +31,7 @@ fn assert_current_summary_shape(report: &Value) {
     for key in report.as_object().unwrap().keys() {
         assert!(
             properties.contains_key(key),
-            "summary field {key:?} is absent from schema 1.9.0"
+            "summary field {key:?} is absent from schema 1.10.0"
         );
     }
     for required in schema["required"].as_array().unwrap() {
@@ -413,7 +415,7 @@ fn summary_mode_uses_the_same_processing_pipeline() {
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.9.0");
+    assert_eq!(report["schema_version"], "1.10.0");
     assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
@@ -983,7 +985,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.9.0");
+    assert_eq!(report["schema_version"], "1.10.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);
@@ -1132,7 +1134,7 @@ fn stdin_stdout_streams_are_clean_typed_and_composable() {
         .success();
     assert_eq!(stdin_to_stdout.get_output().stdout, expected);
     let stderr = String::from_utf8_lossy(&stdin_to_stdout.get_output().stderr);
-    assert!(stderr.contains("\"schema_version\": \"1.9.0\""));
+    assert!(stderr.contains("\"schema_version\": \"1.10.0\""));
     assert!(stderr.contains("\"input_topology\""));
     assert!(stderr.contains("\"stdin\""));
     assert!(stderr.contains("\"stdout\""));
@@ -1179,4 +1181,150 @@ fn stdin_stdout_streams_are_clean_typed_and_composable() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("at most one FASTQ input source"));
+}
+
+#[test]
+fn interleaved_shards_stdin_and_rejection_routing_match_separate_lanes() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("paired-filter.geom");
+    fs::write(&geometry, "anchor = f[AAAA]\n1{<anchor>r:}\n2{r:}\n").unwrap();
+    let r1 = directory.path().join("r1.fastq");
+    let r2 = directory.path().join("r2.fastq");
+    let shard1 = directory.path().join("interleaved-1.fastq");
+    let shard2_plain = directory.path().join("interleaved-2.fastq");
+    let shard2 = directory.path().join("interleaved-2.fastq.gz");
+    let r1_bytes = b"@accepted/1\nAAAACC\n+\nIIIIII\n@rejected/1\nTTTTCC\n+\nJJJJJJ\n";
+    let r2_bytes = b"@accepted/2\nGGGG\n+\nKKKK\n@rejected/2\nCCCC\n+\nLLLL\n";
+    let first = b"@accepted/1\nAAAACC\n+\nIIIIII\n@accepted/2\nGGGG\n+\nKKKK\n";
+    let second = b"@rejected/1\nTTTTCC\n+\nJJJJJJ\n@rejected/2\nCCCC\n+\nLLLL\n";
+    fs::write(&r1, r1_bytes).unwrap();
+    fs::write(&r2, r2_bytes).unwrap();
+    fs::write(&shard1, first).unwrap();
+    fs::write(&shard2_plain, second).unwrap();
+    gzip_copy(shard2_plain.to_str().unwrap(), &shard2);
+
+    let separate1 = directory.path().join("separate-r1.fastq");
+    let separate2 = directory.path().join("separate-r2.fastq");
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            r1.to_str().unwrap(),
+            "--read2",
+            r2.to_str().unwrap(),
+            "--out1",
+            separate1.to_str().unwrap(),
+            "--out2",
+            separate2.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let interleaved1 = directory.path().join("interleaved-r1.fastq");
+    let interleaved2 = directory.path().join("interleaved-r2.fastq");
+    let rejected1 = directory.path().join("rejected-r1.fastq");
+    let rejected2 = directory.path().join("rejected-r2.fastq");
+    let summary = directory.path().join("interleaved-summary.json");
+    let input_list = format!("{},{}", shard1.display(), shard2.display());
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--interleaved-input",
+            &input_list,
+            "--out1",
+            interleaved1.to_str().unwrap(),
+            "--out2",
+            interleaved2.to_str().unwrap(),
+            "--unassigned1",
+            rejected1.to_str().unwrap(),
+            "--unassigned2",
+            rejected2.to_str().unwrap(),
+            "--threads",
+            "2",
+            "--preserve-order",
+            "--accelerated-gzip-input",
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read(&interleaved1).unwrap(),
+        fs::read(&separate1).unwrap()
+    );
+    assert_eq!(
+        fs::read(&interleaved2).unwrap(),
+        fs::read(&separate2).unwrap()
+    );
+    assert!(fs::read_to_string(&rejected1)
+        .unwrap()
+        .contains("@rejected/1"));
+    assert!(fs::read_to_string(&rejected2)
+        .unwrap()
+        .contains("@rejected/2"));
+    let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
+    assert_current_summary_shape(&report);
+    assert_eq!(report["input_layout"], "interleaved");
+    assert_eq!(report["n_fastqs"], 2);
+    assert_eq!(report["total_fragments"], 2);
+    assert_eq!(report["accepted_fragments"], 1);
+    assert_eq!(report["rejected_fragments"], 1);
+    assert_eq!(report["shard_read_counts"][0], serde_json::json!([1, 1]));
+    assert_eq!(report["shard_read_counts"][1], serde_json::json!([1, 1]));
+
+    let mut all_interleaved = first.to_vec();
+    all_interleaved.extend_from_slice(second);
+    let stdin1 = directory.path().join("stdin-r1.fastq");
+    let stdin2 = directory.path().join("stdin-r2.fastq");
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--interleaved-input",
+            "-",
+            "--out1",
+            stdin1.to_str().unwrap(),
+            "--out2",
+            stdin2.to_str().unwrap(),
+        ])
+        .write_stdin(all_interleaved)
+        .assert()
+        .success();
+    assert_eq!(fs::read(stdin1).unwrap(), fs::read(separate1).unwrap());
+    assert_eq!(fs::read(stdin2).unwrap(), fs::read(separate2).unwrap());
+
+    let truncated = directory.path().join("truncated.fastq");
+    fs::write(
+        &truncated,
+        first
+            .iter()
+            .copied()
+            .chain(b"@partial\nAA\n+\nII\n".iter().copied())
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--interleaved-input",
+            truncated.to_str().unwrap(),
+            "--out1",
+            interleaved1.to_str().unwrap(),
+            "--out2",
+            interleaved2.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("expected 2 records, observed 1"));
 }

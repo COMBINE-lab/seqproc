@@ -36,7 +36,7 @@ fn bench_compiled(
         benchmark.iter_batched(
             || Cursor::new(fastq.to_vec()),
             |reader| {
-                let mut graph = Graph::new();
+                let mut graph = Graph::<antisequence::trace::NoTrace>::new();
                 graph.add(InputFastqOp::from_reader(reader).unwrap());
                 compiled.interpret(&mut graph, &[]);
                 graph.add(NullOutputOp::new());
@@ -151,11 +151,72 @@ fn bench_anchor_set_scale(c: &mut Criterion) {
     group.finish();
 }
 
+fn paired_fastq(count: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let mut read1 = Vec::with_capacity(count * 48);
+    let mut read2 = Vec::with_capacity(count * 48);
+    let mut interleaved = Vec::with_capacity(count * 96);
+    for index in 0..count {
+        let first = format!("@r{index}/1\nACGTACGT\n+\nIIIIIIII\n");
+        let second = format!("@r{index}/2\nTGCATGCA\n+\nJJJJJJJJ\n");
+        read1.extend_from_slice(first.as_bytes());
+        read2.extend_from_slice(second.as_bytes());
+        interleaved.extend_from_slice(first.as_bytes());
+        interleaved.extend_from_slice(second.as_bytes());
+    }
+    (read1, read2, interleaved)
+}
+
+fn bench_interleaved_input(c: &mut Criterion) {
+    let (read1, read2, interleaved) = paired_fastq(reads());
+    let mut group = c.benchmark_group("interleaved_input");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(5));
+    group.bench_function("separate_two_lane", |benchmark| {
+        benchmark.iter_batched(
+            || {
+                let mut graph = Graph::<antisequence::trace::NoTrace>::new();
+                graph.add(
+                    InputFastqOp::from_readers([
+                        Cursor::new(read1.clone()),
+                        Cursor::new(read2.clone()),
+                    ])
+                    .unwrap(),
+                );
+                graph
+            },
+            |mut graph| {
+                graph.add(NullOutputOp::new());
+                graph.try_run_with_threads(1).unwrap();
+            },
+            BatchSize::LargeInput,
+        );
+    });
+    group.bench_function("interleaved_two_lane", |benchmark| {
+        benchmark.iter_batched(
+            || {
+                let mut graph = Graph::<antisequence::trace::NoTrace>::new();
+                graph.add(
+                    InputFastqOp::from_interleaved_reader(Cursor::new(interleaved.clone()), 2)
+                        .unwrap(),
+                );
+                graph
+            },
+            |mut graph| {
+                graph.add(NullOutputOp::new());
+                graph.try_run_with_threads(1).unwrap();
+            },
+            BatchSize::LargeInput,
+        );
+    });
+    group.finish();
+}
+
 criterion_group!(
     feature_benches,
     bench_layout_choice_paths,
     bench_legacy_neutrality,
     bench_indexed_capture_lowering,
     bench_anchor_set_scale,
+    bench_interleaved_input,
 );
 criterion_main!(feature_benches);

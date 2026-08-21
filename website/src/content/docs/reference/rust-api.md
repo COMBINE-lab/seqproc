@@ -52,6 +52,10 @@ let config = RunConfig::new("unused")
 Only configurations that contain a stream use the reader/writer-backed graph
 nodes. Path-only configurations retain the existing optimized file operators.
 
+`RunConfig::with_interleaved_input` supplies ordered physical shards whose
+records alternate by logical lane. The compiled geometry determines arity;
+callers do not repeat it in the run configuration.
+
 ## `RunConfig`
 
 `RunConfig::new(input1)` selects conservative defaults:

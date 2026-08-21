@@ -113,6 +113,16 @@ pub struct RunArgs {
     #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
     read2: Vec<PathBuf>,
 
+    /// Ordered FASTQ shards containing interleaved complete fragments. The
+    /// geometry determines whether each fragment contains 1, 2, or 3 records.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        action = clap::ArgAction::Append,
+        conflicts_with_all = ["file1", "read1", "file2", "read2"]
+    )]
+    interleaved_input: Vec<PathBuf>,
+
     /// r1 out fastq file
     #[arg(short = 'o', long)]
     out1: Option<PathBuf>,
@@ -316,12 +326,13 @@ fn main() {
         eprintln!("error: --geom is required for a run");
         exit(2);
     });
+    let interleaved_input = args.interleaved_input.clone();
     let read1 = if args.read1.is_empty() {
         args.file1.clone().into_iter().collect::<Vec<_>>()
     } else {
         args.read1.clone()
     };
-    if read1.is_empty() {
+    if read1.is_empty() && interleaved_input.is_empty() {
         eprintln!("error: --read1 (or legacy --file1) is required for a run");
         exit(2);
     }
@@ -330,7 +341,11 @@ fn main() {
     } else {
         args.read2.clone()
     };
-    let file1 = read1[0].clone();
+    let file1 = interleaved_input
+        .first()
+        .or_else(|| read1.first())
+        .expect("a FASTQ input was validated")
+        .clone();
 
     let geom = read_geometry(&geom_path);
     let geometry_digest = format!("blake3:{}", blake3::hash(geom.as_bytes()).to_hex());
@@ -344,6 +359,7 @@ fn main() {
     for f in read1
         .iter()
         .chain(&read2)
+        .chain(&interleaved_input)
         .filter(|path| *path != std::path::Path::new("-"))
     {
         if !f.exists() {
@@ -387,15 +403,25 @@ fn main() {
         Ok(geom) => {
             let mut config = RunConfig::new(file1.clone());
             config.input2 = read2.first().cloned();
-            let mut input_lanes = vec![InputLane::new(
-                read1.iter().cloned().map(InputSource::from_cli_path),
-            )];
-            if !read2.is_empty() {
-                input_lanes.push(InputLane::new(
-                    read2.iter().cloned().map(InputSource::from_cli_path),
-                ));
+            if interleaved_input.is_empty() {
+                let mut input_lanes = vec![InputLane::new(
+                    read1.iter().cloned().map(InputSource::from_cli_path),
+                )];
+                if !read2.is_empty() {
+                    input_lanes.push(InputLane::new(
+                        read2.iter().cloned().map(InputSource::from_cli_path),
+                    ));
+                }
+                config.input_lanes = Some(input_lanes);
+            } else {
+                config.interleaved_input = Some(
+                    interleaved_input
+                        .iter()
+                        .cloned()
+                        .map(InputSource::from_cli_path)
+                        .collect(),
+                );
             }
-            config.input_lanes = Some(input_lanes);
             config.output1 = args.out1.clone();
             config.output2 = args.out2.clone();
             config.unassigned1 = args.unassigned1.clone();

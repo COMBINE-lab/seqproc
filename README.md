@@ -77,6 +77,10 @@ example, `seqproc run --geom protocol.geom --read1 - --out1 -` is a clean FASTQ
 filter in a Unix pipeline; diagnostics remain on stderr. Add `--stdout-gzip`
 when stdout itself should be gzip-compressed.
 
+For FASTQ files that alternate complete fragment segments in one stream, use
+`--interleaved-input`. Its arity is derived from the geometry, and ordered file
+shards are opened lazily just like separate read lanes.
+
 New geometry files should declare EFGDL 2 in the general document header.
 Optional metadata fields accept integers, quoted strings, or bare identifiers
 and are retained for provenance tooling. Headerless files continue to use
