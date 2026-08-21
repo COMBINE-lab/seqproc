@@ -54,7 +54,7 @@ Every milestone must satisfy these requirements:
 | ---: | --- | --- | --- |
 | 1 | Named resource bindings | Complete | EFGDL 2 document model |
 | 2 | Lists of FASTQ files per lane | Complete | Grouped input-source model |
-| 3 | stdin/stdout | Foundation exists in ANTISEQUENCE | Input/output target model |
+| 3 | stdin/stdout | Complete | Input/output target model |
 | 4 | Interleaved input | Foundation exists in ANTISEQUENCE | Stream targets and geometry arity |
 | 5 | Three or more input segments | Foundation exists in compiler/backend | Generalized bounded lane model |
 | 6 | Fully typed `SeqprocError` | Partial foundations only | Public I/O and resource contracts |
@@ -277,6 +277,33 @@ seekable input.
   panic, deadlock, or corrupted diagnostic stream.
 - Summary JSON can be directed to a file or stderr without contaminating FASTQ
   stdout.
+
+### Completion record
+
+- **Implementation:** seqproc commit `dddea38` (`Add typed stdin and stdout
+  FASTQ streams`); ANTISEQUENCE commits `5f50af1` (`Harden stream-backed FASTQ
+  operators`) and `7b5be94` (`Test broken-pipe cancellation`).
+- **Compatibility:** `InputSource::{Path, Stdin}` and
+  `OutputTarget::{Path, Stdout, Discard}` are the primary stream model, while
+  legacy path fields remain supported. Path-only runs still select the
+  pre-existing `InputFastqOp`/`GroupedInputFastqOp` and
+  `OutputFastqFileOp`; writer-backed construction is selected only when stdout
+  is present.
+- **Tests:** seqproc all-target check; `cargo test --lib` (276 passed), `cargo
+  test --test cli_workflow_tests` (17 passed), and `cargo test --test
+  bench_regression` (19 passed). ANTISEQUENCE `cargo test --lib` (359 passed)
+  plus an explicit broken-pipe cancellation test. File-to-stdout,
+  stdin-to-file, stdin-to-stdout, gzip stdin, gzip stdout, multiple-stream
+  rejection, clean stderr summary routing, and accepted-fragment counts are
+  covered.
+- **Performance gate:** the typed-target checks occur once during graph
+  construction. A path-only configuration follows the unchanged optimized
+  operators and incurs no per-record stream branch; the existing SE/PE
+  regression benchmark passed. Stream output uses bounded per-thread buffers.
+- **Reporting and documentation:** summary schema 1.9.0 records path/stdin and
+  path/stdout/discard topology without exposing path names. The README and CLI,
+  summary, and Rust API guides document stream ownership, explicit stdout gzip,
+  stderr reporting, limits, and nonzero broken-pipe behavior.
 
 ---
 
