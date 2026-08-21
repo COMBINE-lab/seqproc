@@ -30,6 +30,15 @@ Headerless files remain valid and use legacy EFGDL 1 semantics. The header is
 the version-negotiation point for future language revisions; there is no
 separate version marker elsewhere in the file.
 
+## Describe alternative input layouts
+
+EFGDL 2 adds bounded layout algebra inside input reads: ordered choice (`|`),
+optional terms (`?`), fixed repetition (`*N`), grouping, and implicit
+concatenation. The compiler normalizes these constructs into a bounded list of
+linear alternatives and executes them with copy-on-write fallback branches.
+See [Layout algebra](/seqproc/efgdl/layout-algebra/) for syntax, limits, and
+capture compatibility.
+
 ## Construct fixed sequence in an output read
 
 On the right side of `->`, `f[...]` inserts literal bases between captured
@@ -145,8 +154,9 @@ whitelist files.
 
 ## EFGDL 2 feature boundary
 
-The document header, fixed output construction, and FASTQ-name templates are
-the EFGDL 2 additions. Approximate anchors, maps, filters, ambiguity policies,
-native either-orientation matching, and orientation-conditional output remain
-available with their existing semantics; new files should nevertheless declare
-EFGDL 2 so their language contract is explicit.
+The document header, bounded input-layout algebra, fixed output construction,
+and FASTQ-name templates are the EFGDL 2 additions. Approximate anchors, maps,
+filters, ambiguity policies, native either-orientation matching, and
+orientation-conditional output remain available with their existing semantics;
+new files should nevertheless declare EFGDL 2 so their language contract is
+explicit.

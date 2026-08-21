@@ -539,7 +539,7 @@ fn e2e_ambiguity_policy_rejects_bad_variants_arguments_and_targets() {
     assert!(bad_argument.contains("expected `seed`"));
 
     let no_target = compile_error_text("#[ambig_policy = first] bc = b[4]\n1{<bc>r:}");
-    assert!(no_target.contains("requires a map or filter operation"));
+    assert!(no_target.contains("requires a map, filter, or anchor_set operation"));
 
     let read_level = compile_error_text("#[ambig_policy = first] 1{b[4]r:}");
     assert!(read_level.contains("must be attached to the definition"));

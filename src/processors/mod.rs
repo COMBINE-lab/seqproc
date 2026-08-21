@@ -72,6 +72,8 @@ impl CompiledFunction {
             CompiledFunction::MapWithEdit(_, _, _) => unimplemented!(),
             CompiledFunction::FilterWithinDist(_, _) => unimplemented!(),
             CompiledFunction::AmbiguityPolicy(_) => unimplemented!(),
+            CompiledFunction::AnchorSet(_) => unimplemented!(),
+            CompiledFunction::PositionAmbiguityPolicy(_) => unimplemented!(),
             CompiledFunction::Hamming(_) => unimplemented!(),
             CompiledFunction::Edit(_) => unimplemented!(),
             // Anchor is handled in the interpreter, not as an expr
@@ -207,6 +209,58 @@ pub fn parse_file_filter(path: PathBuf, ambiguity_policy: AmbiguityPolicy) -> Pa
     Patterns::from_strs(contents)
         .with_pattern_name(FILTER)
         .with_ambiguity_policy(ambiguity_policy)
+}
+
+/// Load and normalize a one-pattern-per-line anchor set without attaching
+/// map/filter metadata. Matching and positional ambiguity are independent.
+pub fn parse_file_anchor_set(
+    path: PathBuf,
+    ambiguity_policy: AmbiguityPolicy,
+    position_policy: antisequence::PositionAmbiguityPolicy,
+) -> Patterns {
+    let file = File::open(path.clone()).unwrap_or_else(|_| {
+        panic!(
+            "Expected anchor-set file -- could not open {:?}",
+            path.file_name().unwrap()
+        )
+    });
+    let reader = BufReader::new(file);
+    let mut contents = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut duplicate_count = 0usize;
+    for (line_index, line) in reader.lines().enumerate() {
+        let line = line.unwrap_or_else(|_| {
+            panic!(
+                "Could not read line {line_index} in anchor-set file {:?}.",
+                path.file_name().unwrap()
+            )
+        });
+        let pattern = line.trim();
+        if pattern.is_empty() || pattern.starts_with('#') {
+            continue;
+        }
+        if seen.insert(pattern.to_owned()) {
+            contents.push(pattern.to_owned());
+        } else {
+            duplicate_count += 1;
+        }
+    }
+    assert!(
+        !contents.is_empty(),
+        "anchor-set file {} contains no patterns",
+        path.display()
+    );
+    if duplicate_count > 0 {
+        tracing::warn!(
+            file = %path.display(),
+            duplicates = duplicate_count,
+            unique = contents.len(),
+            "removed duplicate anchor-set entries"
+        );
+    }
+    Patterns::from_strs(contents)
+        .with_ambiguity_policy(ambiguity_policy)
+        .with_position_ambiguity_policy(position_policy)
 }
 
 #[derive(Debug, Deserialize)]

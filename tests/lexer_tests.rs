@@ -43,7 +43,7 @@ fn tokens() {
 
 #[test]
 fn fail() {
-    let src = "1 ? 2";
+    let src = "1 ! 2";
 
     let (_, err) = lexer().parse(src).into_output_errors();
 

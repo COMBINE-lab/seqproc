@@ -9,7 +9,7 @@ use crate::{
     parser::{Expr, Function},
     Nucleotide, S,
 };
-use antisequence::AmbiguityPolicy;
+use antisequence::{AmbiguityPolicy, PositionAmbiguityPolicy};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CompiledFunction {
@@ -32,6 +32,10 @@ pub enum CompiledFunction {
     /// Property-style ambiguity resolution modifier applied to the next
     /// map/filter operation in this definition's stack.
     AmbiguityPolicy(AmbiguityPolicy),
+    /// Whitelist-backed patterns for a fixed anchor definition.
+    AnchorSet(String),
+    /// Equal-best placement policy for search-style anchors.
+    PositionAmbiguityPolicy(PositionAmbiguityPolicy),
     Hamming(usize),
     Edit(usize),
     /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length

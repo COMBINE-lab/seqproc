@@ -42,6 +42,7 @@ export default defineConfig({
             { label: 'Language overview', slug: 'efgdl/overview' },
             { label: 'EFGDL 2', slug: 'efgdl/version-2' },
             { label: 'Intervals and layouts', slug: 'efgdl/intervals' },
+            { label: 'Layout algebra', slug: 'efgdl/layout-algebra' },
             {
               label: 'Matching and transformations',
               slug: 'efgdl/matching-and-transformations',

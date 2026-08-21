@@ -11,7 +11,7 @@ use expr::Expr;
 use graph::{
     Graph,
     MatchType::{Edit, EditPrefix, Exact, ExactPrefix, Hamming, HammingPrefix},
-    ProjectOp, ProjectPart, SelectOp, SwitchOp, Threshold, TryOrientationOp,
+    ProjectOp, ProjectPart, SelectOp, SwitchOp, Threshold, TryOp, TryOrientationOp,
 };
 
 use crate::{
@@ -35,6 +35,26 @@ pub static FILTER: &str = "_f";
 pub static MAPPED: &str = "_m";
 pub static AMBIG: &str = "ambig";
 pub static SUB: &str = "sub";
+
+#[derive(Clone, Copy)]
+enum AnchorDistance {
+    Hamming(usize),
+    Edit(usize),
+}
+
+fn take_anchor_distance(stack: &mut Vec<S<CompiledFunction>>) -> Option<AnchorDistance> {
+    let index = stack.iter().position(|S(function, _)| {
+        matches!(
+            function,
+            CompiledFunction::Hamming(_) | CompiledFunction::Edit(_)
+        )
+    })?;
+    match stack.remove(index).0 {
+        CompiledFunction::Hamming(distance) => Some(AnchorDistance::Hamming(distance)),
+        CompiledFunction::Edit(distance) => Some(AnchorDistance::Edit(distance)),
+        _ => unreachable!(),
+    }
+}
 
 pub enum LabelOrAttr<'a> {
     Label(&'a str),
@@ -140,6 +160,7 @@ impl<'a> CompiledData {
     pub fn interpret<'b: 'a>(&'a self, graph: &'a mut Graph, additional_args: &[&str]) {
         let Self {
             geometry,
+            layout_alternatives,
             transformation,
             element_annotations,
             ..
@@ -147,6 +168,7 @@ impl<'a> CompiledData {
 
         for (i, read_geometry) in geometry.iter().enumerate() {
             let read_idx = i + 1; // 1-based
+            let alternatives = &layout_alternatives[i];
 
             // Check if this read has a match_ori(either) annotation.
             let has_match_ori = element_annotations.iter().any(|ea| {
@@ -157,22 +179,48 @@ impl<'a> CompiledData {
                     })
             });
 
+            let build_alternative_graphs = || {
+                alternatives
+                    .iter()
+                    .map(|alternative| {
+                        let mut alternative_graph = Graph::new();
+                        interpret_geometry(
+                            &mut alternative_graph,
+                            alternative,
+                            &format!("seq{}.", read_idx),
+                            additional_args,
+                            element_annotations,
+                            read_idx,
+                        );
+                        alternative_graph
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let collapse_alternatives = |mut alternative_graphs: Vec<Graph>| {
+                let mut fallback = alternative_graphs
+                    .pop()
+                    .expect("compiled input reads have at least one layout alternative");
+                while let Some(preferred) = alternative_graphs.pop() {
+                    let mut combined = Graph::new();
+                    combined.add(TryOp::new(preferred, fallback).return_catch_output());
+                    fallback = combined;
+                }
+                fallback
+            };
+
             if has_match_ori {
-                // Build geometry into a separate inner graph, then wrap
-                // it in TryOrientationOp so the read is tried in both
-                // forward and reverse-complement orientations.
-                let mut inner = Graph::new();
-                interpret_geometry(
-                    &mut inner,
-                    read_geometry,
-                    &format!("seq{}.", read_idx),
-                    additional_args,
-                    element_annotations,
-                    read_idx,
-                );
+                // Build geometry into a separate inner graph, then wrap it in
+                // TryOrientationOp. Ordered layout alternatives are resolved
+                // independently in each orientation.
+                let inner = collapse_alternatives(build_alternative_graphs());
                 let read_idx_u8 = u8::try_from(read_idx)
                     .expect("read index must fit in u8 (validated at compile time)");
                 graph.add(TryOrientationOp::new(inner, read_idx_u8, b"ori"));
+            } else if alternatives.len() > 1 {
+                let mut alternative_graphs = build_alternative_graphs();
+                let preferred = alternative_graphs.remove(0);
+                let fallback = collapse_alternatives(alternative_graphs);
+                graph.add(TryOp::new(preferred, fallback).return_catch_output());
             } else {
                 interpret_geometry(
                     graph,
@@ -351,20 +399,15 @@ fn interpret_geometry(
                         };
                         let prev_label = format!("{cur_label}{NEXT_LEFT}");
                         let next_label_str = format!("{cur_label}{NEXT_RIGHT}");
+                        let patterns = anchor_patterns(&seq, &mut anchor_stack, additional_args);
 
                         // Get Hamming or Edit distance if specified
-                        let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) =
-                            anchor_stack.last()
-                        {
-                            let n = *n;
-                            anchor_stack.pop();
-                            HammingSearch(Threshold::Count(seq.len() - n))
-                        } else if let Some(S(CompiledFunction::Edit(n), _)) = anchor_stack.last() {
-                            let n = *n;
-                            anchor_stack.pop();
-                            EditSearch(Threshold::Count(n))
-                        } else {
-                            ExactSearch
+                        let match_type = match take_anchor_distance(&mut anchor_stack) {
+                            Some(AnchorDistance::Hamming(n)) => {
+                                HammingSearch(Threshold::Count(seq.len() - n))
+                            }
+                            Some(AnchorDistance::Edit(n)) => EditSearch(Threshold::Count(n)),
+                            None => ExactSearch,
                         };
 
                         // Search for anchor with 3-way split
@@ -372,7 +415,7 @@ fn interpret_geometry(
                         // For anchor_relative(), search_label is the current position
                         graph.add(
                             match_node(
-                                Patterns::from_strs([Nucleotide::as_str(&seq)]),
+                                patterns,
                                 &search_label,
                                 vec![&prev_label, &anchor_this_label, &next_label_str],
                                 match_type,
@@ -647,6 +690,56 @@ fn parse_additional_args(arg: String, args: &[&str]) -> PathBuf {
     }
 }
 
+fn anchor_patterns(
+    sequence: &[Nucleotide],
+    stack: &mut Vec<S<CompiledFunction>>,
+    additional_args: &[&str],
+) -> Patterns {
+    let ambiguity_policy = stack
+        .iter()
+        .position(|S(function, _)| matches!(function, CompiledFunction::AmbiguityPolicy(_)))
+        .map(|index| match stack.remove(index).0 {
+            CompiledFunction::AmbiguityPolicy(policy) => policy,
+            _ => unreachable!(),
+        })
+        .unwrap_or(AmbiguityPolicy::NoMatch);
+    let position_policy = stack
+        .iter()
+        .position(|S(function, _)| matches!(function, CompiledFunction::PositionAmbiguityPolicy(_)))
+        .map(|index| match stack.remove(index).0 {
+            CompiledFunction::PositionAmbiguityPolicy(policy) => policy,
+            _ => unreachable!(),
+        })
+        .unwrap_or_default();
+    let anchor_set = stack
+        .iter()
+        .position(|S(function, _)| matches!(function, CompiledFunction::AnchorSet(_)))
+        .map(|index| match stack.remove(index).0 {
+            CompiledFunction::AnchorSet(path) => path,
+            _ => unreachable!(),
+        });
+
+    if let Some(path) = anchor_set {
+        let patterns = parse_file_anchor_set(
+            parse_additional_args(path, additional_args),
+            ambiguity_policy,
+            position_policy,
+        );
+        assert!(
+            patterns
+                .iter_literals()
+                .all(|(_, pattern)| pattern.len() == sequence.len()),
+            "anchor_set patterns must all have the placeholder anchor length ({})",
+            sequence.len()
+        );
+        patterns
+    } else {
+        Patterns::from_strs([Nucleotide::as_str(sequence)])
+            .with_ambiguity_policy(ambiguity_policy)
+            .with_position_ambiguity_policy(position_policy)
+    }
+}
+
 fn execute_stack(
     stack: Vec<S<CompiledFunction>>,
     label: &str,
@@ -674,6 +767,11 @@ fn execute_stack(
             CompiledFunction::Anchor => continue,
             CompiledFunction::AmbiguityPolicy(policy) => {
                 ambiguity_policy = Some(policy);
+                continue;
+            }
+            CompiledFunction::AnchorSet(_) | CompiledFunction::PositionAmbiguityPolicy(_) => {
+                // Anchor-only modifiers are consumed while constructing the
+                // MatchAnyOp for the fixed anchor.
                 continue;
             }
             CompiledFunction::Remove => {
@@ -857,61 +955,42 @@ impl<'a> GeometryMeta {
                     // This allows extracting preceding elements relative to the anchor position
                     let prev_label = format!("{cur_label}{NEXT_LEFT}");
                     let labels = vec![prev_label.as_str(), this_label.as_str(), &next_label];
+                    let patterns = anchor_patterns(&seq, &mut stack, additional_args);
 
                     // Determine match type based on what's on stack
-                    let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last()
-                    {
-                        let n = *n;
-                        stack.pop();
-                        HammingSearch(Threshold::Count(seq.len() - n))
-                    } else if let Some(S(CompiledFunction::Edit(n), _)) = stack.last() {
-                        let n = *n;
-                        stack.pop();
-                        EditSearch(Threshold::Count(n))
-                    } else {
-                        ExactSearch
+                    let match_type = match take_anchor_distance(&mut stack) {
+                        Some(AnchorDistance::Hamming(n)) => {
+                            HammingSearch(Threshold::Count(seq.len() - n))
+                        }
+                        Some(AnchorDistance::Edit(n)) => EditSearch(Threshold::Count(n)),
+                        None => ExactSearch,
                     };
 
                     graph.add(
-                        match_node(
-                            Patterns::from_strs([Nucleotide::as_str(&seq)]),
-                            &init_label,
-                            labels,
-                            match_type,
-                        )
-                        .retain_label_present(&this_label),
+                        match_node(patterns, &init_label, labels, match_type)
+                            .retain_label_present(&this_label),
                     );
                 } else {
                     // Original prefix matching behavior
                     let labels = vec![this_label.as_str(), &next_label];
+                    let patterns = anchor_patterns(&seq, &mut stack, additional_args);
 
                     // Determine how we should perform the prefix match based on the top of the stack:
-                    let match_type = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last()
-                    {
-                        let n = *n;
-                        stack.pop();
-                        HammingPrefix(Threshold::Count(seq.len() - n))
-                    } else if let Some(S(CompiledFunction::Edit(n), _)) = stack.last() {
-                        let n = *n;
-                        stack.pop();
-                        EditPrefix(Threshold::Count(n))
-                    } else if !stack.is_empty() {
-                        PrefixAln {
+                    let match_type = match take_anchor_distance(&mut stack) {
+                        Some(AnchorDistance::Hamming(n)) => {
+                            HammingPrefix(Threshold::Count(seq.len() - n))
+                        }
+                        Some(AnchorDistance::Edit(n)) => EditPrefix(Threshold::Count(n)),
+                        None if !stack.is_empty() => PrefixAln {
                             identity: 1.0,
                             overlap: 1.0,
-                        }
-                    } else {
-                        ExactPrefix
+                        },
+                        None => ExactPrefix,
                     };
 
                     graph.add(
-                        match_node(
-                            Patterns::from_strs([Nucleotide::as_str(&seq)]),
-                            &init_label,
-                            labels,
-                            match_type,
-                        )
-                        .retain_label_present(&this_label),
+                        match_node(patterns, &init_label, labels, match_type)
+                            .retain_label_present(&this_label),
                     );
                 }
             }
@@ -986,13 +1065,14 @@ impl<'a> GeometryMeta {
         match size.clone() {
             IntervalShape::FixedSeq(S(seq, _)) => {
                 let seq_len = seq.len();
+                let patterns = anchor_patterns(&seq, &mut stack, additional_args);
                 // check if the first function on the stack is a hamming search
                 // else do an exact match
                 let match_type = get_match_type(prev_len_offset, &mut stack, seq_len, range_start);
 
                 graph.add(
                     match_node(
-                        Patterns::from_strs([Nucleotide::as_str(&seq)]),
+                        patterns,
                         &init_label,
                         vec![&prev_label, &this_label, &next_label],
                         match_type,
@@ -1021,21 +1101,10 @@ fn get_match_type(
     seq_len: usize,
     range_start: &mut usize,
 ) -> MatchType {
-    // Check for Hamming or Edit on the stack
-    let hamming_dist = if let Some(S(CompiledFunction::Hamming(n), _)) = stack.last() {
-        let n = *n;
-        stack.pop();
-        Some(n)
-    } else {
-        None
-    };
-
-    let edit_dist = if let Some(S(CompiledFunction::Edit(n), _)) = stack.last() {
-        let n = *n;
-        stack.pop();
-        Some(n)
-    } else {
-        None
+    let (hamming_dist, edit_dist) = match take_anchor_distance(stack) {
+        Some(AnchorDistance::Hamming(distance)) => (Some(distance), None),
+        Some(AnchorDistance::Edit(distance)) => (None, Some(distance)),
+        None => (None, None),
     };
 
     // Logic based on predecessor type

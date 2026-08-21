@@ -73,6 +73,12 @@ Optional metadata fields accept integers, quoted strings, or bare identifiers
 and are retained for provenance tooling. Headerless files continue to use
 legacy EFGDL 1 semantics.
 
+EFGDL 2 input reads also support bounded layout algebra: ordered choice (`|`),
+optional structure (`?`), fixed repetition (`*N`), and grouping. Alternatives
+are normalized and validated at compile time, then retried through copy-on-write
+graphs. See the [layout algebra guide](https://combine-lab.github.io/seqproc/efgdl/layout-algebra/)
+for expansion limits and capture compatibility.
+
 EFGDL 2 output layouts can construct fixed sequence with `f[...]`; for example,
 `-> 1{f[ACGT]<bc><umi>}` prefixes those bases and assigns them `I` quality
 scores while retaining qualities from captured intervals. They can also add
@@ -119,6 +125,12 @@ bc = map_with_mismatch(b[8], "barcode-map.tsv", self, 1)
 Supported policies are `accept`, `no_match`, `first`, `random`, `quality`, and
 `error`. The [ambiguity guide](https://combine-lab.github.io/seqproc/efgdl/annotations-and-ambiguity/)
 documents their semantics and reproducibility guarantees.
+
+Search anchors independently support `#[position_policy = leftmost]`,
+`rightmost`, `no_match`, or `error`. A one-pattern-per-line anchor whitelist can
+be attached with `#[anchor_set($0)]`, avoiding externally expanded geometry or
+input preprocessing. Pattern ties and repeated-position ties remain separate
+events and receive separate detailed-statistics counters.
 
 ## Development and reproducibility
 

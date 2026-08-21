@@ -88,3 +88,30 @@ preferred spelling of the legacy `anchor_relative(...)` function.
 Choose thresholds from protocol knowledge and controlled validation data;
 larger search tolerances can improve sensitivity while increasing ambiguous or
 spurious matches.
+
+## Whitelist-backed anchor sets
+
+When a protocol permits several known linker sequences, attach an anchor-set
+file rather than preprocessing reads or expanding the geometry by hand:
+
+```text
+#[search(relative)]
+#[anchor_set($0)]
+#[edit(1)]
+#[ambig_policy = no_match]
+#[position_policy = leftmost]
+linker = f[CAGAGC]
+
+1{b[8]<linker>u[10]r:}
+```
+
+The file contains one anchor per line; empty lines, comments beginning with
+`#`, and identical duplicates are normalized. `$0` refers to the first
+`--additional` value and a quoted path may be used instead. In the current
+release every entry must have the same length as the placeholder `f[...]` so
+Hamming thresholds and bounded positions remain identical across backends.
+
+`ambig_policy` resolves equal-best **anchor-pattern** ties.
+`position_policy` independently resolves repeated equal-best placements of the
+selected anchor. This separation prevents a repeated linker in one read from
+being confused with two distinct whitelist entries.

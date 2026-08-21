@@ -142,7 +142,15 @@ pub fn compile_transformation(
                     Expr::Self_ => return Err(Error {
                         span: expr.1,
                         msg: format!("{generic_transformation_msg} - Misplaced reference of 'self', this is a reserved token for the 'map' function."),
-                    })
+                    }),
+                    Expr::LayoutConcat(_)
+                    | Expr::LayoutChoice(_)
+                    | Expr::LayoutOptional(_)
+                    | Expr::LayoutRepeat(_, _) => return Err(Error {
+                        span: expr.1,
+                        msg: "layout algebra is only valid in input-read declarations"
+                            .to_string(),
+                    }),
                 }
             }
 

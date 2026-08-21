@@ -170,6 +170,19 @@ pub enum Expr {
     ///
     /// `.1` is the first argument.
     Function(S<Function>, S<Box<Self>>),
+
+    /// Ordered concatenation in an EFGDL 2 input layout.
+    LayoutConcat(Vec<S<Self>>),
+
+    /// Ordered alternatives in an EFGDL 2 input layout. The first successful
+    /// alternative wins at runtime.
+    LayoutChoice(Vec<S<Self>>),
+
+    /// An optional EFGDL 2 input-layout term.
+    LayoutOptional(S<Box<Self>>),
+
+    /// A fixed-count EFGDL 2 input-layout repetition.
+    LayoutRepeat(S<Box<Self>>, S<usize>),
 }
 
 impl fmt::Display for Expr {
@@ -183,6 +196,23 @@ impl fmt::Display for Expr {
                 write!(f, "{l}={expr}")
             }
             Function(S(fn_, _), S(expr, _)) => fn_.fmt(f, format_args!("{expr}")),
+            LayoutConcat(parts) => {
+                for S(part, _) in parts {
+                    write!(f, "{part}")?;
+                }
+                Ok(())
+            }
+            LayoutChoice(arms) => {
+                for (index, S(arm, _)) in arms.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(" | ")?;
+                    }
+                    write!(f, "{arm}")?;
+                }
+                Ok(())
+            }
+            LayoutOptional(S(expr, _)) => write!(f, "({expr})?"),
+            LayoutRepeat(S(expr, _), S(count, _)) => write!(f, "({expr})*{count}"),
         }
     }
 }
@@ -644,6 +674,62 @@ pub fn parser<'tokens>(
     })
     .map_with(|s, state| S(s, state.span()));
 
+    // EFGDL 2 input-layout algebra. Concatenation remains implicit, `|` is
+    // an ordered choice, `?` makes a term optional, and `*N` repeats a term a
+    // fixed number of times. The compiler rejects these constructs in
+    // headerless (legacy EFGDL 1) documents and bounds their normalization.
+    let input_layout = recursive(|layout| {
+        let grouped = layout
+            .clone()
+            .delimited_by(just(Token::LParen), just(Token::RParen));
+        let atom = choice((transformed_pieces.clone(), grouped));
+
+        let postfix = atom
+            .then(
+                choice((
+                    just(Token::Question).to(None),
+                    just(Token::Star).ignore_then(num).map(Some),
+                ))
+                .or_not(),
+            )
+            .map_with(|(term, modifier), state| match modifier {
+                None => term,
+                Some(None) => S(
+                    Expr::LayoutOptional(S(Box::new(term.0), term.1)),
+                    state.span(),
+                ),
+                Some(Some(count)) => S(
+                    Expr::LayoutRepeat(S(Box::new(term.0), term.1), S(count, state.span())),
+                    state.span(),
+                ),
+            });
+
+        let concat =
+            postfix
+                .repeated()
+                .at_least(1)
+                .collect::<Vec<_>>()
+                .map_with(|mut parts, state| {
+                    if parts.len() == 1 {
+                        parts.pop().expect("one layout part")
+                    } else {
+                        S(Expr::LayoutConcat(parts), state.span())
+                    }
+                });
+
+        concat
+            .separated_by(just(Token::Pipe))
+            .at_least(1)
+            .collect::<Vec<_>>()
+            .map_with(|mut arms, state| {
+                if arms.len() == 1 {
+                    arms.pop().expect("one layout arm")
+                } else {
+                    S(Expr::LayoutChoice(arms), state.span())
+                }
+            })
+    });
+
     // Annotation name: accepts Label tokens and keyword tokens that may appear
     // as annotation names (e.g., edit, hamming, match).
     let annotation_name = choice((
@@ -663,6 +749,8 @@ pub fn parser<'tokens>(
     // accepted as a name should also be accepted as an argument.
     let annotation_arg = choice((
         label,
+        file,
+        argument,
         num.map(|n: usize| n.to_string()),
         just(Token::Edit).to("edit".to_string()),
         just(Token::Hamming).to("hamming".to_string()),
@@ -810,12 +898,12 @@ pub fn parser<'tokens>(
             num.labelled("read number")
                 .map_with(|n, state| S(n, state.span()))
                 .then(
-                    transformed_pieces
-                        .clone()
-                        .repeated()
-                        .at_least(1)
-                        .collect()
-                        .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+                    input_layout
+                        .delimited_by(just(Token::LBrace), just(Token::RBrace))
+                        .map(|S(expr, span)| match expr {
+                            Expr::LayoutConcat(parts) => parts,
+                            expr => vec![S(expr, span)],
+                        }),
                 ),
         )
         .map_with(|(annotations, (index, exprs)), span| {

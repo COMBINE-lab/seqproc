@@ -226,6 +226,10 @@ pub struct AmbiguityStats {
     pub resolved_first: u64,
     pub resolved_random: u64,
     pub resolved_quality: u64,
+    pub position_total: u64,
+    pub position_dropped: u64,
+    pub position_resolved_leftmost: u64,
+    pub position_resolved_rightmost: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -576,6 +580,11 @@ fn statistics_from_graph(
                     resolved_first: counts.ambiguity.resolved_first as u64,
                     resolved_random: counts.ambiguity.resolved_random as u64,
                     resolved_quality: counts.ambiguity.resolved_quality as u64,
+                    position_total: counts.ambiguity.position_total as u64,
+                    position_dropped: counts.ambiguity.position_dropped as u64,
+                    position_resolved_leftmost: counts.ambiguity.position_resolved_leftmost as u64,
+                    position_resolved_rightmost: counts.ambiguity.position_resolved_rightmost
+                        as u64,
                 },
             }
         })
@@ -602,7 +611,7 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.4.0".to_owned(),
+        schema_version: "1.5.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
         statistics_level,
         call,
@@ -1073,6 +1082,10 @@ fn interpret_to_pipes(
                     resolved_first: c.ambiguity.resolved_first as u64,
                     resolved_random: c.ambiguity.resolved_random as u64,
                     resolved_quality: c.ambiguity.resolved_quality as u64,
+                    position_total: c.ambiguity.position_total as u64,
+                    position_dropped: c.ambiguity.position_dropped as u64,
+                    position_resolved_leftmost: c.ambiguity.position_resolved_leftmost as u64,
+                    position_resolved_rightmost: c.ambiguity.position_resolved_rightmost as u64,
                 },
             }
         })
@@ -1100,7 +1113,7 @@ fn interpret_to_pipes(
     }
 
     SeqprocStats {
-        schema_version: "1.4.0".to_string(),
+        schema_version: "1.5.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
@@ -1474,7 +1487,7 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.4.0".to_string(),
+            schema_version: "1.5.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
@@ -1537,10 +1550,15 @@ mod tests {
                 resolved_first: 1,
                 resolved_random: 0,
                 resolved_quality: 0,
+                position_total: 0,
+                position_dropped: 0,
+                position_resolved_leftmost: 0,
+                position_resolved_rightmost: 0,
             },
         };
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("\"label\":\"test\""));
+        assert!(json.contains("\"position_total\":0"));
     }
 
     #[test]

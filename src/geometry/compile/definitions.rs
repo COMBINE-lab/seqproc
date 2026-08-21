@@ -8,7 +8,36 @@ use crate::{
     parser::{Annotation, Definition, Expr},
     S,
 };
-use antisequence::AmbiguityPolicy;
+use antisequence::{AmbiguityPolicy, PositionAmbiguityPolicy};
+
+fn parse_position_ambiguity_policy(
+    annotation: &Annotation,
+    span: crate::Span,
+) -> Result<PositionAmbiguityPolicy, Error> {
+    let value = annotation.value.as_ref().ok_or_else(|| Error {
+        span,
+        msg: "`position_policy` uses assignment syntax; write #[position_policy = leftmost]"
+            .to_string(),
+    })?;
+    if !annotation.args.is_empty() || !value.0.args.is_empty() {
+        return Err(Error {
+            span,
+            msg: "`position_policy` does not accept arguments".to_string(),
+        });
+    }
+    match value.0.variant.0.as_str() {
+        "leftmost" => Ok(PositionAmbiguityPolicy::Leftmost),
+        "rightmost" => Ok(PositionAmbiguityPolicy::Rightmost),
+        "no_match" => Ok(PositionAmbiguityPolicy::NoMatch),
+        "error" => Ok(PositionAmbiguityPolicy::Error),
+        variant => Err(Error {
+            span,
+            msg: format!(
+                "unknown position policy `{variant}`; expected leftmost, rightmost, no_match, or error"
+            ),
+        }),
+    }
+}
 
 fn parse_ambiguity_policy(
     annotation: &Annotation,
@@ -240,8 +269,24 @@ fn annotations_to_compiled_functions(
                 }
                 result.push(S(CompiledFunction::Anchor, *span));
             }
+            "anchor_set" => {
+                if ann.value.is_some() || ann.args.len() != 1 {
+                    return Err(Error {
+                        span: *span,
+                        msg: "`anchor_set` uses call syntax with one path: #[anchor_set($0)]"
+                            .to_string(),
+                    });
+                }
+                result.push(S(CompiledFunction::AnchorSet(ann.args[0].0.clone()), *span));
+            }
             "ambig_policy" => result.push(S(
                 CompiledFunction::AmbiguityPolicy(parse_ambiguity_policy(ann, *span)?),
+                *span,
+            )),
+            "position_policy" => result.push(S(
+                CompiledFunction::PositionAmbiguityPolicy(parse_position_ambiguity_policy(
+                    ann, *span,
+                )?),
                 *span,
             )),
             _ => {}
@@ -314,24 +359,57 @@ fn validate_ambiguity_policy_target(
         CompiledFunction::MapWithMismatch(..) => Some("map_with_mismatch"),
         CompiledFunction::MapWithEdit(..) => Some("map_with_edit"),
         CompiledFunction::FilterWithinDist(..) => Some("filter_within_dist"),
+        CompiledFunction::AnchorSet(..) => Some("anchor_set"),
         _ => None,
     });
     let Some(target) = target else {
         return Err(Error {
             span,
             msg: format!(
-                "#[ambig_policy = ...] on definition `{definition}` requires a map or filter operation"
+                "#[ambig_policy = ...] on definition `{definition}` requires a map, filter, or anchor_set operation"
             ),
         });
     };
 
     if matches!(policies[0], AmbiguityPolicy::Quality { .. })
-        && matches!(target, "map_with_edit" | "map")
+        && matches!(target, "map_with_edit" | "map" | "anchor_set")
     {
         return Err(Error {
             span,
             msg: format!(
                 "quality ambiguity resolution on `{target}` is not supported; use equal-length Hamming matching"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_position_policy_target(
+    stack: &[S<CompiledFunction>],
+    definition: &str,
+    span: crate::Span,
+) -> Result<(), Error> {
+    let policies = stack
+        .iter()
+        .filter(|S(function, _)| matches!(function, CompiledFunction::PositionAmbiguityPolicy(_)))
+        .count();
+    if policies == 0 {
+        return Ok(());
+    }
+    if policies > 1 {
+        return Err(Error {
+            span,
+            msg: format!("definition `{definition}` specifies `position_policy` more than once"),
+        });
+    }
+    if !stack
+        .iter()
+        .any(|S(function, _)| matches!(function, CompiledFunction::Anchor))
+    {
+        return Err(Error {
+            span,
+            msg: format!(
+                "#[position_policy = ...] on definition `{definition}` requires #[search(relative)]"
             ),
         });
     }
@@ -408,6 +486,24 @@ pub fn compile_definitions(
             }
         };
         if !ann_fns.is_empty() {
+            let annotation_distance_count = ann_fns
+                .iter()
+                .filter(|S(function, _)| {
+                    matches!(
+                        function,
+                        CompiledFunction::Hamming(_) | CompiledFunction::Edit(_)
+                    )
+                })
+                .count();
+            if annotation_distance_count > 1 {
+                err = Some(Error {
+                    span: label_span,
+                    msg: format!(
+                        "definition `{label_str}` must choose exactly one distance metric; #[hamming] and #[edit] cannot be combined"
+                    ),
+                });
+                break;
+            }
             // Detect conflict: definition already has a matching modifier
             // from old function-call syntax (e.g., hamming(), edit(),
             // anchor_relative()), and the annotation tries to add another.
@@ -427,6 +523,10 @@ pub fn compile_definitions(
             }
             gm.stack.extend(ann_fns);
             if let Err(e) = validate_ambiguity_policy_target(&gm.stack, &label_str, label_span) {
+                err = Some(e);
+                break;
+            }
+            if let Err(e) = validate_position_policy_target(&gm.stack, &label_str, label_span) {
                 err = Some(e);
                 break;
             }

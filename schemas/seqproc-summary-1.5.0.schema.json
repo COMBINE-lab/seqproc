@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/COMBINE-lab/seqproc/schemas/seqproc-summary-1.5.0.schema.json",
+  "title": "seqproc summary report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "seqproc_version",
+    "statistics_level",
+    "ordering_mode",
+    "effective_threads",
+    "gzip_compression_level",
+    "parallel_gzip_members",
+    "parallel_gzip_stream",
+    "gzip_compression_threads",
+    "gzip_block_size",
+    "gzip_input_backend",
+    "gzip_input_threads",
+    "gzip_input_chunk_size",
+    "n_fastqs",
+    "n_processed",
+    "n_reads_max",
+    "total_fragments",
+    "accepted_fragments",
+    "rejected_fragments",
+    "failed_parsing",
+    "rejection_reasons",
+    "read_length_mean",
+    "read_length_min",
+    "read_length_max",
+    "match_distance_stats"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.5.0" },
+    "seqproc_version": { "type": "string" },
+    "statistics_level": { "enum": ["basic", "detailed"] },
+    "call": { "type": ["string", "null"] },
+    "geometry_digest": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z0-9-]+:[0-9a-f]+$"
+    },
+    "ordering_mode": { "enum": ["input-order", "unordered"] },
+    "effective_threads": { "type": "integer", "minimum": 1 },
+    "gzip_compression_level": { "type": "integer", "minimum": 0, "maximum": 9 },
+    "parallel_gzip_members": { "type": "boolean" },
+    "parallel_gzip_stream": { "type": "boolean" },
+    "gzip_compression_threads": { "type": "integer", "minimum": 1 },
+    "gzip_block_size": { "type": "integer", "minimum": 32768 },
+    "gzip_input_backend": { "enum": ["needletail-auto", "rapidgzip-core"] },
+    "gzip_input_threads": { "type": "integer", "minimum": 1 },
+    "gzip_input_chunk_size": { "type": "integer", "minimum": 0 },
+    "graph_optimization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "original_operations",
+        "optimized_operations",
+        "opaque_barriers",
+        "terminal_projection_candidates",
+        "passes"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "original_operations": { "type": "integer", "minimum": 0 },
+        "optimized_operations": { "type": "integer", "minimum": 0 },
+        "opaque_barriers": { "type": "integer", "minimum": 0 },
+        "terminal_projection_candidates": { "type": "integer", "minimum": 0 },
+        "passes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pass", "changed_nodes"],
+            "properties": {
+              "pass": { "type": "string" },
+              "changed_nodes": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "execution_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_mode",
+        "backend",
+        "pipeline",
+        "costs",
+        "prepared_output",
+        "direct_output_rendering",
+        "reason_codes"
+      ],
+      "properties": {
+        "requested_mode": { "enum": ["auto", "whole_graph", "pipeline"] },
+        "backend": {
+          "enum": ["whole_graph", "worker_local_pipeline", "dedicated_reader_pipeline"]
+        },
+        "pipeline": { "$ref": "#/$defs/pipeline" },
+        "costs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["constant", "linear", "search", "alignment", "io", "opaque"],
+          "properties": {
+            "constant": { "type": "integer", "minimum": 0 },
+            "linear": { "type": "integer", "minimum": 0 },
+            "search": { "type": "integer", "minimum": 0 },
+            "alignment": { "type": "integer", "minimum": 0 },
+            "io": { "type": "integer", "minimum": 0 },
+            "opaque": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "prepared_output": { "type": "boolean" },
+        "direct_output_rendering": { "type": "boolean" },
+        "reason_codes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "n_fastqs": { "type": "integer", "minimum": 0 },
+    "n_processed": { "type": "integer", "minimum": 0 },
+    "n_reads_max": { "type": "integer", "minimum": 0 },
+    "total_fragments": { "type": "integer", "minimum": 0 },
+    "accepted_fragments": { "type": "integer", "minimum": 0 },
+    "rejected_fragments": { "type": "integer", "minimum": 0 },
+    "failed_parsing": { "type": "integer", "minimum": 0 },
+    "rejection_reasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "count"],
+        "properties": {
+          "reason": { "type": "string" },
+          "count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "read_length_mean": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+    "read_length_min": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+    "read_length_max": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+    "match_distance_stats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stage_index",
+          "label",
+          "attempted",
+          "matched",
+          "unmatched",
+          "distance_histogram",
+          "ambiguity"
+        ],
+        "properties": {
+          "stage_index": { "type": "integer", "minimum": 0 },
+          "label": { "type": "string" },
+          "attempted": { "type": "integer", "minimum": 0 },
+          "matched": { "type": "integer", "minimum": 0 },
+          "unmatched": { "type": "integer", "minimum": 0 },
+          "distance_histogram": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["distance", "count"],
+              "properties": {
+                "distance": { "type": "integer", "minimum": 0 },
+                "count": { "type": "integer", "minimum": 0 }
+              }
+            }
+          },
+          "ambiguity": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "total",
+              "accepted",
+              "dropped",
+              "resolved_first",
+              "resolved_random",
+              "resolved_quality",
+              "position_total",
+              "position_dropped",
+              "position_resolved_leftmost",
+              "position_resolved_rightmost"
+            ],
+            "properties": {
+              "total": { "type": "integer", "minimum": 0 },
+              "accepted": { "type": "integer", "minimum": 0 },
+              "dropped": { "type": "integer", "minimum": 0 },
+              "resolved_first": { "type": "integer", "minimum": 0 },
+              "resolved_random": { "type": "integer", "minimum": 0 },
+              "resolved_quality": { "type": "integer", "minimum": 0 },
+              "position_total": { "type": "integer", "minimum": 0 },
+              "position_dropped": { "type": "integer", "minimum": 0 },
+              "position_resolved_leftmost": { "type": "integer", "minimum": 0 },
+              "position_resolved_rightmost": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workers",
+        "queue_capacity",
+        "max_in_flight_batches",
+        "batch_size",
+        "preserve_order",
+        "direct_output_rendering",
+        "input_mode"
+      ],
+      "properties": {
+        "workers": { "type": "integer", "minimum": 1 },
+        "queue_capacity": { "type": "integer", "minimum": 1 },
+        "max_in_flight_batches": { "type": "integer", "minimum": 1 },
+        "batch_size": { "type": "integer", "minimum": 1 },
+        "preserve_order": { "type": "boolean" },
+        "direct_output_rendering": { "type": "boolean" },
+        "input_mode": { "enum": ["worker_local", "dedicated_reader"] }
+      }
+    }
+  }
+}

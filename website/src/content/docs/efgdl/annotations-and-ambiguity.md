@@ -19,8 +19,8 @@ The ambiguity policy is a property and uses assignment syntax:
 bc = filter_within_dist(b[8], "barcodes.txt", 1)
 ```
 
-`seqproc validate` rejects a policy placed on a definition that contains no map
-or filter operation.
+`seqproc validate` rejects a policy placed on a definition that contains no map,
+filter, or anchor-set operation.
 
 ## Orientation-aware matching
 
@@ -115,3 +115,26 @@ cell = map_with_mismatch(b[16], "cell-map.tsv", self, 1)
 
 Detailed summaries report how many equal-best events were accepted, dropped,
 resolved by first/random/quality, or raised as errors.
+
+## Positional ambiguity
+
+Search anchors have a second, independent ambiguity axis: the same anchor can
+occur at multiple equal-best positions in one read. Set its policy on the
+searched definition:
+
+```text
+#[search(relative)]
+#[position_policy = rightmost]
+linker = f[CAGAGC]
+```
+
+| Position policy | Behavior |
+| --- | --- |
+| `leftmost` | Select the smallest start coordinate (default). |
+| `rightmost` | Select the largest start coordinate. |
+| `no_match` | Reject the equal-best placement set. |
+| `error` | Stop execution and report the ambiguity. |
+
+Pattern-ambiguity and position-ambiguity counters are reported separately.
+The selected coordinate is deterministic across hash-table iteration order and
+thread schedules.

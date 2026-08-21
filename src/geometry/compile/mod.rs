@@ -1,5 +1,6 @@
 pub mod definitions;
 pub mod functions;
+pub mod layout;
 pub mod reads;
 mod transformation;
 pub mod utils;
@@ -8,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use definitions::compile_definitions;
-use reads::compile_reads;
+use reads::{compile_read_layouts, ReadLayoutReport, StandardizedLayoutAlternatives};
 use transformation::compile_transformation;
 use utils::Error;
 
@@ -134,6 +135,11 @@ pub struct CompiledData {
     /// User-provided document metadata, if an EFGDL header was present.
     pub document_header: Option<DocumentHeader>,
     pub geometry: Vec<Vec<GeometryMeta>>,
+    /// Bounded, source-ordered alternatives for each input read. Linear
+    /// geometries contain exactly one alternative.
+    pub layout_alternatives: StandardizedLayoutAlternatives,
+    /// Observable normalization details for validation/explain tooling.
+    pub layout_report: Vec<ReadLayoutReport>,
     pub transformation: Option<Transformation>,
     /// Per-element annotations (reads and definitions) from the input geometry.
     pub element_annotations: Vec<ElementAnnotations>,
@@ -338,9 +344,9 @@ pub fn compile(
             def_res.ok().unwrap()
         }
     };
-    let validate_read_res = compile_reads(reads, map);
+    let validate_read_res = compile_read_layouts(reads, map, efgdl_version);
 
-    let Ok((map, geometry)) = validate_read_res else {
+    let Ok((map, geometry, layout_alternatives, layout_report)) = validate_read_res else {
         return Err(validate_read_res.err().unwrap());
     };
 
@@ -368,6 +374,8 @@ pub fn compile(
                 efgdl_version,
                 document_header,
                 geometry,
+                layout_alternatives,
+                layout_report,
                 transformation: Some(transformation),
                 element_annotations,
                 match_block: None,
@@ -439,6 +447,8 @@ pub fn compile(
                 efgdl_version,
                 document_header,
                 geometry,
+                layout_alternatives,
+                layout_report,
                 transformation: Some(fw_transformation.clone()),
                 element_annotations,
                 match_block: Some(CompiledMatchBlock {
@@ -460,6 +470,8 @@ pub fn compile(
                 efgdl_version,
                 document_header,
                 geometry,
+                layout_alternatives,
+                layout_report,
                 transformation: None,
                 element_annotations,
                 match_block: None,

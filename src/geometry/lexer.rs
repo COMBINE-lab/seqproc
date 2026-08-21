@@ -28,6 +28,12 @@ pub enum Token {
     RAngle,
     /// `,`.
     Comma,
+    /// `|`, used for ordered layout alternatives in EFGDL 2.
+    Pipe,
+    /// `?`, used for optional layout terms in EFGDL 2.
+    Question,
+    /// `*`, used for fixed layout repetition in EFGDL 2.
+    Star,
     /// `label_text`.
     Label(String),
     /// `"file_path"`.
@@ -140,6 +146,9 @@ impl fmt::Display for Token {
             LAngle => f.write_char('<'),
             RAngle => f.write_char('>'),
             Comma => f.write_char(','),
+            Pipe => f.write_char('|'),
+            Question => f.write_char('?'),
+            Star => f.write_char('*'),
             Label(s) => write!(f, "{s}"),
             A => f.write_char('A'),
             T => f.write_char('T'),
@@ -202,6 +211,9 @@ pub fn lexer<'src>(
         just('{').to(Token::LBrace),
         just('}').to(Token::RBrace),
         just(',').to(Token::Comma),
+        just('|').to(Token::Pipe),
+        just('?').to(Token::Question),
+        just('*').to(Token::Star),
         just('<').to(Token::LAngle),
         just('>').to(Token::RAngle),
     ));

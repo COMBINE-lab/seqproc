@@ -1,6 +1,6 @@
 # seqproc report schemas
 
-`seqproc-summary-1.4.0.schema.json` is the current versioned schema emitted by
+`seqproc-summary-1.5.0.schema.json` is the current versioned schema emitted by
 `seqproc run --summary`; the 1.0.0 and 1.1.0 files remain immutable for existing
 consumers. Schema versions are independent of the seqproc binary version so
 consumers can negotiate report compatibility explicitly.
@@ -41,6 +41,10 @@ backend, bounded-pipeline parameters, graph cost classes, planner reason codes,
 and the compile-time passes that changed the graph. They are optional only for
 legacy Rust API paths that cannot reconstruct the frozen graph decision;
 ordinary `seqproc run --summary` reports include both objects.
+
+Schema 1.5.0 separates equal-best pattern ambiguity from equal-best positional
+ambiguity. It adds position totals, drops, and leftmost/rightmost resolution
+counts to every detailed match-stage ambiguity object.
 
 Additive fields require a schema minor version. Removing fields, changing their
 meaning, or changing types requires a schema major version and a new file.

@@ -20,7 +20,7 @@ fn gzip_copy(source: &str, destination: &std::path::Path) {
 
 fn assert_current_summary_shape(report: &Value) {
     let schema: Value =
-        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.4.0.schema.json")).unwrap();
+        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.5.0.schema.json")).unwrap();
     assert_eq!(
         report["schema_version"],
         schema["properties"]["schema_version"]["const"]
@@ -29,7 +29,7 @@ fn assert_current_summary_shape(report: &Value) {
     for key in report.as_object().unwrap().keys() {
         assert!(
             properties.contains_key(key),
-            "summary field {key:?} is absent from schema 1.4.0"
+            "summary field {key:?} is absent from schema 1.5.0"
         );
     }
     for required in schema["required"].as_array().unwrap() {
@@ -174,7 +174,7 @@ fn summary_mode_uses_the_same_processing_pipeline() {
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.4.0");
+    assert_eq!(report["schema_version"], "1.5.0");
     assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
@@ -744,7 +744,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.4.0");
+    assert_eq!(report["schema_version"], "1.5.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);

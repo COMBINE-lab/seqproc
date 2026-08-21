@@ -39,7 +39,7 @@ for a headline performance result and measure summary overhead separately.
 
 ## Schema versioning
 
-The current source tree emits summary schema 1.4.0. Schemas are versioned
+The current source tree emits summary schema 1.5.0. Schemas are versioned
 independently from the binary and are committed under
 [`schemas/`](https://github.com/COMBINE-lab/seqproc/tree/main/schemas).
 
@@ -55,6 +55,11 @@ classes, direct-rendering
 decision, and stable reason codes. Normal `seqproc run --summary` reports
 contain both objects; they remain optional only for legacy Rust API report
 constructors that cannot reconstruct the frozen graph decision.
+
+Schema 1.5.0 adds independent positional-ambiguity counters to each detailed
+match stage: `position_total`, `position_dropped`,
+`position_resolved_leftmost`, and `position_resolved_rightmost`. The established
+ambiguity fields continue to describe ties between distinct patterns.
 
 The geometry digest is a content/provenance identifier, not a security
 primitive. Current releases use the algorithm-tagged form `blake3:<hex>` (early

@@ -284,7 +284,17 @@ pub fn validate_composition(
                 ),
             }),
         },
-        CompiledFunction::AmbiguityPolicy(_) => Ok(S(return_type, fn_span)),
+        CompiledFunction::AmbiguityPolicy(_)
+        | CompiledFunction::PositionAmbiguityPolicy(_) => Ok(S(return_type, fn_span)),
+        CompiledFunction::AnchorSet(_) => match return_type {
+            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+            _ => Err(Error {
+                span: return_type_span,
+                msg: format!(
+                    "anchor_set must annotate a FixedSeq anchor, found: {return_type}"
+                ),
+            }),
+        },
         CompiledFunction::Hamming(_) => match return_type {
             ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {

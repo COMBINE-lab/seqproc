@@ -3,11 +3,29 @@ use std::collections::HashMap;
 use crate::{
     compile::{
         functions::{compile_fn, CompiledFunction},
+        layout::normalize_layout,
         utils::*,
     },
     parser::{Expr, Function, IntervalShape, Read},
     S,
 };
+
+/// Observable result of bounded layout normalization for one input read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadLayoutReport {
+    pub read_index: usize,
+    pub used_layout_algebra: bool,
+    pub alternatives: usize,
+    pub max_segments: usize,
+}
+
+pub type StandardizedLayoutAlternatives = Vec<Vec<Vec<GeometryMeta>>>;
+pub type CompiledReadLayouts = (
+    HashMap<String, GeometryMeta>,
+    Geometry,
+    StandardizedLayoutAlternatives,
+    Vec<ReadLayoutReport>,
+);
 
 pub fn validate_geometry(
     map: &HashMap<String, GeometryMeta>,
@@ -136,7 +154,7 @@ pub fn standardize_geometry(
 }
 
 // this should take both reads and parse them. Allowing for combined label_map
-pub fn compile_reads(
+fn compile_linear_reads(
     S(reads, _): S<Vec<S<Read>>>,
     mut map: HashMap<String, GeometryMeta>,
 ) -> Result<(HashMap<String, GeometryMeta>, Geometry), Error> {
@@ -293,4 +311,120 @@ pub fn compile_reads(
     }
 
     Ok((map, geometry))
+}
+
+fn named_labels(geometry: &[(Interval, usize)]) -> Vec<&str> {
+    let mut labels = geometry
+        .iter()
+        .filter_map(|(interval, _)| match interval {
+            Interval::Named(label) => Some(label.as_str()),
+            Interval::Temporary(_) => None,
+        })
+        .collect::<Vec<_>>();
+    labels.sort_unstable();
+    labels.dedup();
+    labels
+}
+
+/// Compile bounded EFGDL input-layout alternatives while retaining the
+/// canonical first alternative for backward-compatible consumers.
+pub fn compile_read_layouts(
+    S(reads, reads_span): S<Vec<S<Read>>>,
+    definitions: HashMap<String, GeometryMeta>,
+    efgdl_version: usize,
+) -> Result<CompiledReadLayouts, Error> {
+    let mut normalized = Vec::with_capacity(reads.len());
+    let mut reports = Vec::with_capacity(reads.len());
+    for S(read, _) in &reads {
+        let layout = normalize_layout(read.exprs.clone(), efgdl_version)?;
+        reports.push(ReadLayoutReport {
+            read_index: read.index.0,
+            used_layout_algebra: layout.uses_algebra,
+            alternatives: layout.alternatives.len(),
+            max_segments: layout.alternatives.iter().map(Vec::len).max().unwrap_or(0),
+        });
+        normalized.push(layout);
+    }
+
+    let make_reads_through = |last_index: usize, selected: &[usize]| {
+        reads
+            .iter()
+            .take(last_index + 1)
+            .enumerate()
+            .map(|(index, S(read, span))| {
+                let mut read = read.clone();
+                read.exprs = normalized[index].alternatives[selected[index]].clone();
+                S(read, *span)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let canonical_selection = vec![0; reads.len()];
+    let canonical_reads = make_reads_through(reads.len().saturating_sub(1), &canonical_selection);
+    let (canonical_map, canonical_geometry) =
+        compile_linear_reads(S(canonical_reads, reads_span), definitions.clone())?;
+
+    let mut standardized_alternatives = Vec::with_capacity(reads.len());
+    for (read_index, layout) in normalized.iter().enumerate() {
+        let canonical_labels = named_labels(&canonical_geometry[read_index]);
+        let mut read_alternatives = Vec::with_capacity(layout.alternatives.len());
+
+        for alternative_index in 0..layout.alternatives.len() {
+            let mut selection = canonical_selection.clone();
+            selection[read_index] = alternative_index;
+            let branch_reads = make_reads_through(read_index, &selection);
+            let (branch_map, branch_geometry) =
+                compile_linear_reads(S(branch_reads, reads_span), definitions.clone())?;
+            let branch = &branch_geometry[read_index];
+            let branch_labels = named_labels(branch);
+            if branch_labels != canonical_labels {
+                return Err(Error {
+                    span: reads[read_index].1,
+                    msg: format!(
+                        "all alternatives for read {} must expose the same labels; alternative 1 has {:?}, alternative {} has {:?}",
+                        reads[read_index].0.index.0,
+                        canonical_labels,
+                        alternative_index + 1,
+                        branch_labels
+                    ),
+                });
+            }
+            for label in &canonical_labels {
+                if canonical_map.get(*label) != branch_map.get(*label) {
+                    return Err(Error {
+                        span: reads[read_index].1,
+                        msg: format!(
+                            "label `{label}` must have the same interval and functions in every alternative for read {}",
+                            reads[read_index].0.index.0
+                        ),
+                    });
+                }
+            }
+
+            let standardized = branch
+                .iter()
+                .map(|(interval, _)| match interval {
+                    Interval::Named(label) => branch_map[label].clone(),
+                    Interval::Temporary(meta) => meta.clone(),
+                })
+                .collect();
+            read_alternatives.push(standardized);
+        }
+        standardized_alternatives.push(read_alternatives);
+    }
+
+    Ok((
+        canonical_map,
+        canonical_geometry,
+        standardized_alternatives,
+        reports,
+    ))
+}
+
+/// Backward-compatible compiler for legacy linear reads.
+pub fn compile_reads(
+    reads: S<Vec<S<Read>>>,
+    map: HashMap<String, GeometryMeta>,
+) -> Result<(HashMap<String, GeometryMeta>, Geometry), Error> {
+    compile_read_layouts(reads, map, 1).map(|(map, geometry, _, _)| (map, geometry))
 }
