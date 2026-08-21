@@ -230,6 +230,7 @@ pub struct AmbiguityStats {
     pub position_dropped: u64,
     pub position_resolved_leftmost: u64,
     pub position_resolved_rightmost: u64,
+    pub position_resolved_quality: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -585,6 +586,7 @@ fn statistics_from_graph(
                     position_resolved_leftmost: counts.ambiguity.position_resolved_leftmost as u64,
                     position_resolved_rightmost: counts.ambiguity.position_resolved_rightmost
                         as u64,
+                    position_resolved_quality: counts.ambiguity.position_resolved_quality as u64,
                 },
             }
         })
@@ -611,7 +613,7 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.5.0".to_owned(),
+        schema_version: "1.6.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
         statistics_level,
         call,
@@ -947,8 +949,8 @@ fn interpret_to_pipes(
     threads: usize,
     additional_args: Vec<&str>,
     compiled_data: CompiledData,
-) -> SeqprocStats {
-    let f1 = File::create(out1).expect("Unable to open read 1 file");
+) -> Result<SeqprocStats> {
+    let f1 = File::create(out1)?;
 
     // Handle second output stream optionally if files2 is present?
     // But this function return signature doesn't change easily.
@@ -961,18 +963,19 @@ fn interpret_to_pipes(
 
     let mut readers = files1
         .iter()
-        .map(|f| File::open(f).expect("Failed to open file"))
-        .collect::<Vec<_>>();
+        .map(File::open)
+        .collect::<std::io::Result<Vec<_>>>()?;
 
     for f in &files2 {
-        readers.push(File::open(f).expect("Failed to open file"));
+        readers.push(File::open(f)?);
     }
 
     let additional_args = additional_args.into_iter().collect::<Vec<_>>();
 
     let mut graph = antisequence::graph::Graph::new();
     graph.add(
-        antisequence::graph::InputFastqOp::from_readers(readers).unwrap_or_else(|e| panic!("{e}")),
+        antisequence::graph::InputFastqOp::from_readers(readers)
+            .map_err(|error| anyhow!(error.to_string()))?,
     );
 
     compiled_data.interpret(&mut graph, &additional_args);
@@ -980,7 +983,7 @@ fn interpret_to_pipes(
     let stream1 = BufWriter::new(f1);
 
     if !files2.is_empty() {
-        let f2 = File::create(out2).expect("Unable to open read 2 file");
+        let f2 = File::create(out2)?;
         let stream2 = BufWriter::new(f2);
         graph.add(OutputFastqOp::from_writers([stream1, stream2]));
     } else {
@@ -993,8 +996,10 @@ fn interpret_to_pipes(
     graph.set_statistics_level(StatisticsLevel::Detailed);
     let graph = graph
         .compile()
-        .unwrap_or_else(|error| panic!("Failed to compile processing graph: {error}"));
-    graph.run_with_threads(threads);
+        .map_err(|error| anyhow!(error.to_string()))?;
+    graph
+        .try_run_with_threads(threads)
+        .map_err(|error| anyhow!(error.to_string()))?;
 
     let input_stats = graph.input_stats();
 
@@ -1086,6 +1091,7 @@ fn interpret_to_pipes(
                     position_dropped: c.ambiguity.position_dropped as u64,
                     position_resolved_leftmost: c.ambiguity.position_resolved_leftmost as u64,
                     position_resolved_rightmost: c.ambiguity.position_resolved_rightmost as u64,
+                    position_resolved_quality: c.ambiguity.position_resolved_quality as u64,
                 },
             }
         })
@@ -1112,8 +1118,8 @@ fn interpret_to_pipes(
         });
     }
 
-    SeqprocStats {
-        schema_version: "1.5.0".to_string(),
+    Ok(SeqprocStats {
+        schema_version: "1.6.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
@@ -1148,7 +1154,7 @@ fn interpret_to_pipes(
         read_length_min,
         read_length_max,
         match_distance_stats,
-    }
+    })
 }
 
 pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, String>>> {
@@ -1215,7 +1221,7 @@ pub fn read_pairs_to_file(
         threads,
         additional_args,
         compiled_data,
-    );
+    )?;
 
     Ok(stats)
 }
@@ -1272,7 +1278,7 @@ pub fn read_pairs_to_fifo<'a: 'static>(
             6, // default to 6 threads
             additional_args,
             compiled_data,
-        );
+        )?;
 
         // Explicitly check for and propagate any errors encountered in the
         // closing and deleting of the temporary directory.  The directory
@@ -1487,7 +1493,7 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.5.0".to_string(),
+            schema_version: "1.6.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
@@ -1554,6 +1560,7 @@ mod tests {
                 position_dropped: 0,
                 position_resolved_leftmost: 0,
                 position_resolved_rightmost: 0,
+                position_resolved_quality: 0,
             },
         };
         let json = serde_json::to_string(&stats).unwrap();

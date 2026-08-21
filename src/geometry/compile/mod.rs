@@ -9,7 +9,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use definitions::compile_definitions;
-use reads::{compile_read_layouts, ReadLayoutReport, StandardizedLayoutAlternatives};
+use reads::{
+    compile_read_layouts, CaptureRegistry, ReadLayoutReport, StandardizedLayoutAlternatives,
+};
 use transformation::compile_transformation;
 use utils::Error;
 
@@ -140,6 +142,8 @@ pub struct CompiledData {
     pub layout_alternatives: StandardizedLayoutAlternatives,
     /// Observable normalization details for validation/explain tooling.
     pub layout_report: Vec<ReadLayoutReport>,
+    /// Fixed-cardinality public captures and their compiler-lowered labels.
+    pub capture_registry: CaptureRegistry,
     pub transformation: Option<Transformation>,
     /// Per-element annotations (reads and definitions) from the input geometry.
     pub element_annotations: Vec<ElementAnnotations>,
@@ -346,7 +350,9 @@ pub fn compile(
     };
     let validate_read_res = compile_read_layouts(reads, map, efgdl_version);
 
-    let Ok((map, geometry, layout_alternatives, layout_report)) = validate_read_res else {
+    let Ok((map, geometry, layout_alternatives, layout_report, capture_registry)) =
+        validate_read_res
+    else {
         return Err(validate_read_res.err().unwrap());
     };
 
@@ -364,6 +370,7 @@ pub fn compile(
                 map,
                 &numbered_labels,
                 efgdl_version,
+                &capture_registry,
             )?;
 
             let transformation = label_transformation(transformation, &numbered_labels);
@@ -376,6 +383,7 @@ pub fn compile(
                 geometry,
                 layout_alternatives,
                 layout_report,
+                capture_registry,
                 transformation: Some(transformation),
                 element_annotations,
                 match_block: None,
@@ -397,12 +405,14 @@ pub fn compile(
                 map.clone(),
                 &numbered_labels,
                 efgdl_version,
+                &capture_registry,
             )?;
             let (rc_transformation, rc_map) = compile_transformation(
                 S(rc_arm, span),
                 map.clone(),
                 &numbered_labels,
                 efgdl_version,
+                &capture_registry,
             )?;
             let base_map = map;
 
@@ -449,6 +459,7 @@ pub fn compile(
                 geometry,
                 layout_alternatives,
                 layout_report,
+                capture_registry,
                 transformation: Some(fw_transformation.clone()),
                 element_annotations,
                 match_block: Some(CompiledMatchBlock {
@@ -472,6 +483,7 @@ pub fn compile(
                 geometry,
                 layout_alternatives,
                 layout_report,
+                capture_registry,
                 transformation: None,
                 element_annotations,
                 match_block: None,

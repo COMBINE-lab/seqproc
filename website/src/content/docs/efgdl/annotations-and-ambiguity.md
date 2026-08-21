@@ -130,10 +130,18 @@ linker = f[CAGAGC]
 
 | Position policy | Behavior |
 | --- | --- |
+| `best` | Select the globally best-distance placement, then the leftmost residual tie. |
 | `leftmost` | Select the smallest start coordinate (default). |
 | `rightmost` | Select the largest start coordinate. |
+| `quality(min_delta = N)` | For exact/Hamming search, select the placement with the lowest summed Phred score at mismatching bases when it wins by at least `N` (default 1); otherwise reject. |
 | `no_match` | Reject the equal-best placement set. |
 | `error` | Stop execution and report the ambiguity. |
+
+All search matchers minimize distance before applying a position policy, so
+`best` is an explicit spelling of that invariant rather than a different
+search algorithm. Quality-based position resolution is deliberately undefined
+for edit distance because insertions and deletions do not provide a unique
+base-quality assignment.
 
 Pattern-ambiguity and position-ambiguity counters are reported separately.
 The selected coordinate is deterministic across hash-table iteration order and

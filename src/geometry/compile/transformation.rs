@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::{
     compile::{
         functions::{compile_fn, CompiledFunction},
+        reads::CaptureRegistry,
         utils::*,
     },
     parser::{
@@ -17,6 +18,7 @@ fn compile_output_header(
     map: &HashMap<String, GeometryMeta>,
     read_labels: &[&String],
     efgdl_version: usize,
+    capture_registry: &CaptureRegistry,
 ) -> Result<Option<HeaderTransformation>, Error> {
     let Some(S(output_header, header_span)) = output_header else {
         return Ok(None);
@@ -46,26 +48,109 @@ fn compile_output_header(
                 parts.push(HeaderSegment::Literal(literal.into_bytes()));
             }
             OutputHeaderPart::Label(S(label, label_span)) => {
-                if !map.contains_key(&label) {
-                    return Err(Error {
-                        span: label_span,
-                        msg: format!("Variable with name \"{label}\" not found"),
-                    });
-                }
-                if !read_labels.contains(&&label) {
-                    return Err(Error {
-                        span: label_span,
-                        msg: format!(
-                            "Cannot place non-matched label \"{label}\" in an output FASTQ header"
-                        ),
-                    });
-                }
-                parts.push(HeaderSegment::Label(label));
+                parts.push(HeaderSegment::Label(resolve_capture(
+                    label,
+                    None,
+                    label_span,
+                    map,
+                    read_labels,
+                    efgdl_version,
+                    capture_registry,
+                    "place",
+                )?));
+            }
+            OutputHeaderPart::IndexedLabel(S(label, label_span), S(index, index_span)) => {
+                parts.push(HeaderSegment::Label(resolve_capture(
+                    label,
+                    Some((index, index_span)),
+                    label_span,
+                    map,
+                    read_labels,
+                    efgdl_version,
+                    capture_registry,
+                    "place",
+                )?));
             }
         }
     }
 
     Ok(Some(HeaderTransformation { mode, parts }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_capture(
+    public_label: String,
+    index: Option<(usize, crate::Span)>,
+    label_span: crate::Span,
+    map: &HashMap<String, GeometryMeta>,
+    read_labels: &[&String],
+    efgdl_version: usize,
+    capture_registry: &CaptureRegistry,
+    action: &str,
+) -> Result<String, Error> {
+    if efgdl_version < 2 {
+        if let Some((_, span)) = &index {
+            return Err(Error {
+                span: *span,
+                msg: "indexed capture references require `header { efgdl = 2 }`".to_string(),
+            });
+        }
+    }
+
+    let resolved = if let Some(occurrences) = capture_registry.get(&public_label) {
+        match index {
+            Some((0, span)) => {
+                return Err(Error {
+                    span,
+                    msg: "capture indices are one-based; index 0 is invalid".to_string(),
+                });
+            }
+            Some((index, span)) => occurrences
+                .get(index - 1)
+                .ok_or_else(|| Error {
+                    span,
+                    msg: format!(
+                        "capture `{public_label}` has {} occurrences; index {index} is out of bounds",
+                        occurrences.len()
+                    ),
+                })?
+                .physical_label
+                .clone(),
+            None if occurrences.len() > 1 => {
+                return Err(Error {
+                    span: label_span,
+                    msg: format!(
+                        "capture `{public_label}` has {} occurrences; use an indexed reference such as `<{public_label}[1]>`",
+                        occurrences.len()
+                    ),
+                });
+            }
+            None => occurrences[0].physical_label.clone(),
+        }
+    } else if index.is_some() {
+        return Err(Error {
+            span: label_span,
+            msg: format!("Variable with name \"{public_label}\" not found"),
+        });
+    } else {
+        public_label.clone()
+    };
+
+    if !map.contains_key(&resolved) {
+        return Err(Error {
+            span: label_span,
+            msg: format!("Variable with name \"{public_label}\" not found"),
+        });
+    }
+    if !read_labels.contains(&&resolved) {
+        return Err(Error {
+            span: label_span,
+            msg: format!(
+                "Cannot {action} non-matched label \"{public_label}\": it was defined but never matched in an input read"
+            ),
+        });
+    }
+    Ok(resolved)
 }
 
 /// Takes the map, all labels should be in the map
@@ -77,6 +162,7 @@ pub fn compile_transformation(
     mut map: HashMap<String, GeometryMeta>,
     read_intervals: &[(Interval, usize)],
     efgdl_version: usize,
+    capture_registry: &CaptureRegistry,
 ) -> Result<(Transformation, HashMap<String, GeometryMeta>), Error> {
     let mut transformation: Transformation = Vec::new();
     let read_labels = read_intervals
@@ -121,7 +207,7 @@ pub fn compile_transformation(
 
             let mut stack: Vec<S<Function>> = Vec::new();
             let mut compiled_stack: Vec<S<CompiledFunction>> = Vec::new();
-            let label: Option<S<String>>;
+            let label: Option<(S<String>, Option<S<usize>>)>;
 
             'inner: loop {
                 let generic_transformation_msg =
@@ -132,7 +218,11 @@ pub fn compile_transformation(
                         stack.push(fn_);
                     }
                     Expr::Label(ref l) => {
-                        label = Some(l.clone());
+                        label = Some((l.clone(), None));
+                        break 'inner;
+                    }
+                    Expr::IndexedLabel(ref l, ref index) => {
+                        label = Some((l.clone(), Some(index.clone())));
                         break 'inner;
                     }
                     Expr::LabeledGeomPiece(_, _) | Expr::GeomPiece(_, _) => return Err(Error {
@@ -154,7 +244,7 @@ pub fn compile_transformation(
                 }
             }
 
-            let Some(S(label, label_span)) = label else {
+            let Some((S(public_label, label_span), index)) = label else {
                 return Err(Error {
                     span,
                     msg: "Transformations must only reference previously defined labels"
@@ -162,19 +252,23 @@ pub fn compile_transformation(
                 });
             };
 
+            let label = resolve_capture(
+                public_label,
+                index.map(|S(index, span)| (index, span)),
+                label_span,
+                &map,
+                &read_labels,
+                efgdl_version,
+                capture_registry,
+                "transform",
+            )?;
+
             let Some(gp) = map.get(&label) else {
                 return Err(Error {
                     span: label_span,
                     msg: format!("Variable with name \"{label}\" not found"),
                 });
             };
-
-            if !read_labels.contains(&&label) {
-                return Err(Error {
-                    span: label_span,
-                    msg: format!("Cannot transform a non-matched label: variable with name \"{label}\" was defined but never matched in read.")
-                });
-            }
 
             for fn_ in stack {
                 compiled_stack.push(compile_fn(fn_, expr.clone())?);
@@ -212,7 +306,13 @@ pub fn compile_transformation(
             map.insert(label, gp);
         }
 
-        let header = compile_output_header(output_header, &map, &read_labels, efgdl_version)?;
+        let header = compile_output_header(
+            output_header,
+            &map,
+            &read_labels,
+            efgdl_version,
+            capture_registry,
+        )?;
         transformation.push(ReadTransformation {
             sequence: inner_transformation,
             header,

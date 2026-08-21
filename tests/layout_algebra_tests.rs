@@ -1,9 +1,12 @@
 use antisequence::{
-    graph::{CountOp, Graph, InputFastqOp},
+    graph::{CountOp, Graph, InputFastqOp, OutputFastqOp, TryOp},
     trace::NoTrace,
 };
 use seqproc::execute::compile_geom;
-use std::io::Cursor;
+use std::{
+    io::{Cursor, Write},
+    sync::{Arc, Mutex},
+};
 
 const V2: &str = "header { efgdl = 2 }\n";
 
@@ -39,7 +42,7 @@ fn alternatives_must_expose_compatible_labels() {
     let errors = compile_geom(geometry).unwrap_err();
     assert!(errors
         .iter()
-        .any(|error| error.to_string().contains("same labels")));
+        .any(|error| error.to_string().contains("same capture cardinality")));
 }
 
 #[test]
@@ -72,4 +75,114 @@ fn runtime_falls_back_to_later_alternative_and_rejects_nonmatches() {
     let count = graph.add(CountOp::new([true]));
     graph.run().unwrap();
     assert_eq!(count.counts(), [2]);
+}
+
+#[derive(Clone, Default)]
+struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+impl Write for SharedWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn run_layout_graph(graph: impl FnOnce(&mut Graph<NoTrace>), fastq: &[u8]) -> Vec<u8> {
+    let output = SharedWriter::default();
+    let bytes = Arc::clone(&output.0);
+    let mut runtime = Graph::<NoTrace>::new();
+    runtime.add(InputFastqOp::from_reader(Cursor::new(fastq.to_vec())).unwrap());
+    graph(&mut runtime);
+    runtime.add(OutputFastqOp::from_writer(output));
+    runtime.try_run_with_threads(1).unwrap();
+    let result = bytes.lock().unwrap().clone();
+    result
+}
+
+#[test]
+fn layout_choice_is_byte_identical_to_manually_expanded_try_graph() {
+    let fastq = b"@first\nGGAAATT\n+\nIIIIIII\n@second\nTTCCCGG\n+\nIIIIIII\n@reject\nAACACGG\n+\nIIIIIII\n";
+    let algebra = compile_geom(format!("{V2}1{{b<bc>[2](f[AAA] | f[CCC])r<read>:}}")).unwrap();
+    let algebra_bytes = run_layout_graph(|graph| algebra.interpret(graph, &[]), fastq);
+
+    let first = compile_geom("1{b<bc>[2]f[AAA]r<read>:}".to_string()).unwrap();
+    let second = compile_geom("1{b<bc>[2]f[CCC]r<read>:}".to_string()).unwrap();
+    let manual_bytes = run_layout_graph(
+        |graph| {
+            let mut first_arm = Graph::<NoTrace>::new();
+            first.interpret(&mut first_arm, &[]);
+            let mut second_arm = Graph::<NoTrace>::new();
+            second.interpret(&mut second_arm, &[]);
+            graph.add(TryOp::new(first_arm, second_arm).return_catch_output());
+        },
+        fastq,
+    );
+
+    assert_eq!(algebra_bytes, manual_bytes);
+}
+
+#[test]
+fn v2_without_new_features_is_byte_identical_to_headerless_protocol() {
+    let fastq = b"@legacy\nAACCGGTTACGT\n+\nIIIIIIIIIIII\n";
+    let legacy =
+        compile_geom("1{b<bc>[4]u<umi>[4]r<read>:}->1{<bc><umi><read>}".to_string()).unwrap();
+    let v2 = compile_geom(format!(
+        "{V2}1{{b<bc>[4]u<umi>[4]r<read>:}}->1{{<bc><umi><read>}}"
+    ))
+    .unwrap();
+    let legacy_bytes = run_layout_graph(|graph| legacy.interpret(graph, &[]), fastq);
+    let v2_bytes = run_layout_graph(|graph| v2.interpret(graph, &[]), fastq);
+    assert_eq!(legacy_bytes, v2_bytes);
+}
+
+#[test]
+fn repeated_named_captures_are_lowered_and_addressable_by_index() {
+    let geometry = format!(
+        "{V2}1{{(b<bc>[2])*2r<read>:}} -> #[header = append(\" second:\", <bc[2]>)] 1{{<bc[2]>f[TT]<bc[1]>}}"
+    );
+    let compiled = compile_geom(geometry).unwrap();
+    let captures = &compiled.capture_registry["bc"];
+    assert_eq!(captures.len(), 2);
+    assert_eq!(captures[0].index, 1);
+    assert_eq!(captures[1].index, 2);
+    assert_ne!(captures[0].physical_label, captures[1].physical_label);
+
+    let output = run_layout_graph(
+        |graph| compiled.interpret(graph, &[]),
+        b"@indexed\nAACCAG\n+\nIIIIII\n",
+    );
+    let output = String::from_utf8(output).unwrap();
+    assert!(
+        output.starts_with("@indexed second:CC\nCCTTAA\n+\n"),
+        "{output}"
+    );
+}
+
+#[test]
+fn repeated_capture_requires_index_and_checks_bounds() {
+    let unindexed = compile_geom(format!("{V2}1{{(b<bc>[2])*2}} -> 1{{<bc>}}")).unwrap_err();
+    assert!(unindexed
+        .iter()
+        .any(|error| error.to_string().contains("has 2 occurrences")));
+
+    let zero = compile_geom(format!("{V2}1{{(b<bc>[2])*2}} -> 1{{<bc[0]>}}")).unwrap_err();
+    assert!(zero
+        .iter()
+        .any(|error| error.to_string().contains("one-based")));
+
+    let out_of_bounds = compile_geom(format!("{V2}1{{(b<bc>[2])*2}} -> 1{{<bc[3]>}}")).unwrap_err();
+    assert!(out_of_bounds
+        .iter()
+        .any(|error| error.to_string().contains("out of bounds")));
+}
+
+#[test]
+fn alternatives_require_equal_repeated_capture_cardinality() {
+    let errors = compile_geom(format!("{V2}1{{((b<bc>[2])*2 | b<bc>[2])r:}}")).unwrap_err();
+    assert!(errors
+        .iter()
+        .any(|error| error.to_string().contains("same capture cardinality")));
 }

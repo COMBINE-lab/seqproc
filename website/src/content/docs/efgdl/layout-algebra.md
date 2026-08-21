@@ -8,7 +8,7 @@ whole protocol file. Four operators form a small, bounded algebra:
 
 | Syntax | Meaning |
 | --- | --- |
-| `AB` | concatenate `A` then `B` (the established implicit syntax) |
+| `A B` | concatenate adjacent terms: match `A`, then immediately match `B` |
 | `A | B` | try `A`, then try `B` if `A` rejects the read |
 | `(A)?` | prefer `A`, but allow it to be absent |
 | `(A)*N` | repeat `A` exactly `N` times |
@@ -60,7 +60,21 @@ bc = b[8]
 -> 1{<bc><read>}
 ```
 
-Optional and repeated terms should currently be anonymous protocol structure
-(fixed anchors, spacers, or discarded sequence). Repeating a named capture
-would create multiple values with one name and is rejected. Indexed repeated
-captures are reserved for a future metadata/liveness revision.
+Repeated terms may contain named captures when their cardinality is statically
+fixed. Refer to an occurrence with a one-based index:
+
+```text
+header { efgdl = 2 }
+
+1{(b<round>[8]f[AAA])*3r<read>:}
+-> #[header = append(" round3:", <round[3]>)]
+   1{<round[1]><round[2]><round[3]><read>}
+```
+
+Every normalized alternative must expose the same number of occurrences for
+each public capture name. When a capture occurs more than once, an unindexed
+reference such as `<round>` is rejected; indices start at 1 and are checked at
+compile time. The compiler lowers each `(capture, index)` pair to an ordinary,
+short internal interval label, so indexing adds no per-read lookup or dynamic
+collection. Dynamically sized capture collections remain outside the bounded
+layout algebra.

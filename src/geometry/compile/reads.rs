@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::{
     compile::{
@@ -20,12 +20,185 @@ pub struct ReadLayoutReport {
 }
 
 pub type StandardizedLayoutAlternatives = Vec<Vec<Vec<GeometryMeta>>>;
+
+/// One statically resolved occurrence of a public capture name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CaptureOccurrence {
+    /// One-based occurrence index used by EFGDL `<capture[N]>` references.
+    pub index: usize,
+    /// Input read containing this occurrence.
+    pub read_index: usize,
+    /// Short internal interval name produced by compiler lowering.
+    pub physical_label: String,
+}
+
+/// Public capture name to its source-ordered, fixed-cardinality occurrences.
+pub type CaptureRegistry = BTreeMap<String, Vec<CaptureOccurrence>>;
+
 pub type CompiledReadLayouts = (
     HashMap<String, GeometryMeta>,
     Geometry,
     StandardizedLayoutAlternatives,
     Vec<ReadLayoutReport>,
+    CaptureRegistry,
 );
+
+fn capture_name(expr: &Expr) -> Option<&S<String>> {
+    match expr {
+        Expr::Label(label) | Expr::LabeledGeomPiece(label, _) => Some(label),
+        Expr::Function(_, inner) => capture_name(&inner.0),
+        _ => None,
+    }
+}
+
+fn indexed_capture_span(expr: &Expr) -> Option<crate::Span> {
+    match expr {
+        Expr::IndexedLabel(_, index) => Some(index.1),
+        Expr::Function(_, inner) => indexed_capture_span(&inner.0),
+        _ => None,
+    }
+}
+
+fn capture_counts(alternative: &[S<Expr>]) -> Result<BTreeMap<String, usize>, Error> {
+    let mut counts = BTreeMap::new();
+    for S(expr, _) in alternative {
+        if let Some(span) = indexed_capture_span(expr) {
+            return Err(Error {
+                span,
+                msg: "indexed captures may only be referenced in output reads or output headers"
+                    .to_string(),
+            });
+        }
+        if let Some(S(label, _)) = capture_name(expr) {
+            *counts.entry(label.clone()).or_default() += 1;
+        }
+    }
+    Ok(counts)
+}
+
+fn rewrite_capture(expr: &mut Expr, physical_label: &str) {
+    match expr {
+        Expr::Label(S(label, _)) | Expr::LabeledGeomPiece(S(label, _), _) => {
+            *label = physical_label.to_string();
+        }
+        Expr::Function(_, inner) => rewrite_capture(&mut inner.0, physical_label),
+        _ => unreachable!("capture-bearing expression changed after normalization"),
+    }
+}
+
+fn allocate_physical_label(reserved: &mut HashSet<String>, next_id: &mut usize) -> String {
+    loop {
+        let candidate = format!("__c{next_id}");
+        *next_id += 1;
+        if reserved.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+}
+
+fn lower_indexed_captures(
+    normalized: &mut [super::layout::NormalizedLayout],
+    reads: &[S<Read>],
+    definitions: &mut HashMap<String, GeometryMeta>,
+    efgdl_version: usize,
+) -> Result<CaptureRegistry, Error> {
+    let mut reserved = definitions.keys().cloned().collect::<HashSet<_>>();
+    for layout in normalized.iter() {
+        for alternative in &layout.alternatives {
+            for S(expr, _) in alternative {
+                if let Some(S(label, _)) = capture_name(expr) {
+                    reserved.insert(label.clone());
+                }
+            }
+        }
+    }
+
+    let mut registry = CaptureRegistry::new();
+    let mut next_physical_id = 0usize;
+    for (read_offset, layout) in normalized.iter_mut().enumerate() {
+        let Some(canonical) = layout.alternatives.first() else {
+            continue;
+        };
+        let canonical_counts = capture_counts(canonical)?;
+        if efgdl_version < 2 {
+            if let Some((label, count)) = canonical_counts.iter().find(|(_, count)| **count > 1) {
+                return Err(Error {
+                    span: reads[read_offset].1,
+                    msg: format!(
+                        "`{label}` has already been used; repeated named captures require `header {{ efgdl = 2 }}` and indexed output references ({count} occurrences found)"
+                    ),
+                });
+            }
+        }
+        for (alternative_offset, alternative) in layout.alternatives.iter().enumerate().skip(1) {
+            let counts = capture_counts(alternative)?;
+            if counts != canonical_counts {
+                return Err(Error {
+                    span: reads[read_offset].1,
+                    msg: format!(
+                        "all alternatives for read {} must expose the same capture cardinality; alternative 1 has {:?}, alternative {} has {:?}",
+                        reads[read_offset].0.index.0,
+                        canonical_counts,
+                        alternative_offset + 1,
+                        counts
+                    ),
+                });
+            }
+        }
+
+        let mut physical_by_public = BTreeMap::<String, Vec<String>>::new();
+        for (public, count) in canonical_counts {
+            if let Some(existing) = registry.get(&public) {
+                return Err(Error {
+                    span: reads[read_offset].1,
+                    msg: format!(
+                        "capture `{public}` was already bound in input read {}; capture names must be unique across reads",
+                        existing[0].read_index
+                    ),
+                });
+            }
+            let physical = if count == 1 {
+                vec![public.clone()]
+            } else {
+                (0..count)
+                    .map(|_| allocate_physical_label(&mut reserved, &mut next_physical_id))
+                    .collect::<Vec<_>>()
+            };
+            let occurrences = physical
+                .iter()
+                .enumerate()
+                .map(|(offset, physical_label)| CaptureOccurrence {
+                    index: offset + 1,
+                    read_index: reads[read_offset].0.index.0,
+                    physical_label: physical_label.clone(),
+                })
+                .collect::<Vec<_>>();
+            registry.insert(public.clone(), occurrences);
+            physical_by_public.insert(public, physical);
+        }
+
+        for alternative in &mut layout.alternatives {
+            let mut seen = BTreeMap::<String, usize>::new();
+            for S(expr, _) in alternative {
+                let Some(S(public, _)) = capture_name(expr).cloned() else {
+                    continue;
+                };
+                let occurrence = seen.entry(public.clone()).or_default();
+                let physical = &physical_by_public[&public][*occurrence];
+                *occurrence += 1;
+                if physical != &public {
+                    rewrite_capture(expr, physical);
+                    if let Some(source) = definitions.get(&public).cloned() {
+                        let mut lowered = source;
+                        lowered.expr.0.label = Some(physical.clone());
+                        definitions.insert(physical.clone(), lowered);
+                    }
+                }
+            }
+        }
+    }
+    Ok(registry)
+}
 
 pub fn validate_geometry(
     map: &HashMap<String, GeometryMeta>,
@@ -330,7 +503,7 @@ fn named_labels(geometry: &[(Interval, usize)]) -> Vec<&str> {
 /// canonical first alternative for backward-compatible consumers.
 pub fn compile_read_layouts(
     S(reads, reads_span): S<Vec<S<Read>>>,
-    definitions: HashMap<String, GeometryMeta>,
+    mut definitions: HashMap<String, GeometryMeta>,
     efgdl_version: usize,
 ) -> Result<CompiledReadLayouts, Error> {
     let mut normalized = Vec::with_capacity(reads.len());
@@ -345,6 +518,8 @@ pub fn compile_read_layouts(
         });
         normalized.push(layout);
     }
+    let capture_registry =
+        lower_indexed_captures(&mut normalized, &reads, &mut definitions, efgdl_version)?;
 
     let make_reads_through = |last_index: usize, selected: &[usize]| {
         reads
@@ -418,6 +593,7 @@ pub fn compile_read_layouts(
         canonical_geometry,
         standardized_alternatives,
         reports,
+        capture_registry,
     ))
 }
 
@@ -426,5 +602,5 @@ pub fn compile_reads(
     reads: S<Vec<S<Read>>>,
     map: HashMap<String, GeometryMeta>,
 ) -> Result<(HashMap<String, GeometryMeta>, Geometry), Error> {
-    compile_read_layouts(reads, map, 1).map(|(map, geometry, _, _)| (map, geometry))
+    compile_read_layouts(reads, map, 1).map(|(map, geometry, _, _, _)| (map, geometry))
 }

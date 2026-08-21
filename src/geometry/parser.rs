@@ -156,6 +156,10 @@ pub enum Expr {
     /// An inline variable reference/binding: `<my_label>`.
     Label(S<String>),
 
+    /// A one-based reference to one occurrence of a statically bounded
+    /// repeated capture: `<my_label[2]>`.
+    IndexedLabel(S<String>, S<usize>),
+
     /// An interval, with a specifier and a length: `b[10]`, `u[11-13]`, `f[AUCG]`, `r:`.
     GeomPiece(IntervalKind, IntervalShape),
 
@@ -191,6 +195,7 @@ impl fmt::Display for Expr {
         match self {
             Self_ => write!(f, "self"),
             Label(S(s, _)) => write!(f, "<{s}>"),
+            IndexedLabel(S(s, _), S(index, _)) => write!(f, "<{s}[{index}]>"),
             GeomPiece(t, s) => write!(f, "{t}{s}"),
             LabeledGeomPiece(S(l, _), S(expr, _)) => {
                 write!(f, "{l}={expr}")
@@ -283,6 +288,7 @@ pub enum OutputHeaderMode {
 pub enum OutputHeaderPart {
     Literal(String),
     Label(S<String>),
+    IndexedLabel(S<String>, S<usize>),
 }
 
 /// An optional output-record header transformation.
@@ -520,13 +526,29 @@ pub fn parser<'tokens>(
         Token::U => Nucleotide::U,
     };
 
-    let inline_label = label
+    let inline_binding = label
         .delimited_by(
             just(Token::LAngle).labelled("opening '<'"),
             just(Token::RAngle).labelled("closing '>'"),
         )
         .map_with(|l, span: &mut _| Expr::Label(S(l, span.span())))
         .labelled("inline label");
+
+    let capture_reference = label
+        .then(
+            num.map_with(|index, state| S(index, state.span()))
+                .delimited_by(just(Token::LBracket), just(Token::RBracket))
+                .or_not(),
+        )
+        .delimited_by(
+            just(Token::LAngle).labelled("opening '<'"),
+            just(Token::RAngle).labelled("closing '>'"),
+        )
+        .map_with(|(label, index), state| match index {
+            Some(index) => Expr::IndexedLabel(S(label, state.span()), index),
+            None => Expr::Label(S(label, state.span())),
+        })
+        .labelled("capture reference");
 
     // interval shape parsers
     let range = num
@@ -554,7 +576,7 @@ pub fn parser<'tokens>(
 
     // geom piece parsers
     let unbounded = piece_type
-        .then(inline_label.clone().or_not())
+        .then(inline_binding.clone().or_not())
         .then_ignore(just(Token::Colon))
         .map_with(|(kind, label), span| {
             make_geom_piece(kind, IntervalShape::UnboundedLen, label, span.span())
@@ -562,22 +584,29 @@ pub fn parser<'tokens>(
         .labelled("Unbounded geometry peice: e.g. 'r:'")
         .as_context();
 
-    let ranged = parse_geometry_piece!(piece_type, inline_label.clone(), range)
+    let ranged = parse_geometry_piece!(piece_type, inline_binding.clone(), range)
         .labelled("Variable length geometry piece: e.g. 'b[9-10]'")
         .as_context();
     let fixed_seq = parse_geometry_piece!(
         just(Token::FixedSeq).to(IntervalKind::FixedSeq),
-        inline_label.clone(),
+        inline_binding.clone(),
         nuc_seq
     )
     .labelled("Fixed sequence geometry piece: e.g. 'f[ATGC]'")
     .as_context();
-    let fixed = parse_geometry_piece!(piece_type, inline_label.clone(), fixed_len)
+    let fixed = parse_geometry_piece!(piece_type, inline_binding.clone(), fixed_len)
         .labelled("Fixed length geometry piece: e.g. 'b[10]'")
         .as_context();
 
     // what constitutes a valid geometry peice
-    let geom_piece = choice((unbounded, ranged, fixed, fixed_seq, inline_label, self_));
+    let geom_piece = choice((
+        unbounded,
+        ranged,
+        fixed,
+        fixed_seq,
+        capture_reference.clone(),
+        self_,
+    ));
 
     // transformed peices
     let transformed_pieces = recursive(|tp| {
@@ -836,14 +865,22 @@ pub fn parser<'tokens>(
         Token::Label(mode) if mode == "replace" => OutputHeaderMode::Replace,
     }
     .map_with(|mode, state| S(mode, state.span()));
+    let output_header_capture = label
+        .map_with(|name, state| S(name, state.span()))
+        .then(
+            num.map_with(|index, state| S(index, state.span()))
+                .delimited_by(just(Token::LBracket), just(Token::RBracket))
+                .or_not(),
+        )
+        .delimited_by(just(Token::LAngle), just(Token::RAngle))
+        .map(|(label, index)| match index {
+            Some(index) => OutputHeaderPart::IndexedLabel(label, index),
+            None => OutputHeaderPart::Label(label),
+        });
     let output_header_part = choice((
         file.map(OutputHeaderPart::Literal)
             .map_with(|part, state| S(part, state.span())),
-        label
-            .map_with(|name, state| S(name, state.span()))
-            .delimited_by(just(Token::LAngle), just(Token::RAngle))
-            .map(OutputHeaderPart::Label)
-            .map_with(|part, state| S(part, state.span())),
+        output_header_capture.map_with(|part, state| S(part, state.span())),
     ));
     let output_header = just(Token::HashBracket)
         .ignore_then(select! {

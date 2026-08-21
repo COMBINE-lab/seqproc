@@ -37,7 +37,9 @@ optional terms (`?`), fixed repetition (`*N`), grouping, and implicit
 concatenation. The compiler normalizes these constructs into a bounded list of
 linear alternatives and executes them with copy-on-write fallback branches.
 See [Layout algebra](/seqproc/efgdl/layout-algebra/) for syntax, limits, and
-capture compatibility.
+capture compatibility. Fixed repetition may bind a name more than once;
+one-based references such as `<round[2]>` select a statically bounded
+occurrence in output sequences and FASTQ-name templates.
 
 ## Construct fixed sequence in an output read
 
@@ -154,9 +156,9 @@ whitelist files.
 
 ## EFGDL 2 feature boundary
 
-The document header, bounded input-layout algebra, fixed output construction,
-and FASTQ-name templates are the EFGDL 2 additions. Approximate anchors, maps,
-filters, ambiguity policies, native either-orientation matching, and
-orientation-conditional output remain available with their existing semantics;
-new files should nevertheless declare EFGDL 2 so their language contract is
-explicit.
+The document header, bounded input-layout algebra, statically indexed repeated
+captures, fixed output construction, and FASTQ-name templates are the EFGDL 2
+additions. Approximate anchors, maps, filters, ambiguity policies, native
+either-orientation matching, and orientation-conditional output remain
+available with their existing semantics; new files should nevertheless declare
+EFGDL 2 so their language contract is explicit.

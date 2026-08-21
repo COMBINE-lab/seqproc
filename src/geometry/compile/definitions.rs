@@ -19,21 +19,84 @@ fn parse_position_ambiguity_policy(
         msg: "`position_policy` uses assignment syntax; write #[position_policy = leftmost]"
             .to_string(),
     })?;
-    if !annotation.args.is_empty() || !value.0.args.is_empty() {
+    if !annotation.args.is_empty() {
         return Err(Error {
             span,
-            msg: "`position_policy` does not accept arguments".to_string(),
+            msg: "`position_policy` cannot combine call and assignment syntax".to_string(),
         });
     }
-    match value.0.variant.0.as_str() {
-        "leftmost" => Ok(PositionAmbiguityPolicy::Leftmost),
-        "rightmost" => Ok(PositionAmbiguityPolicy::Rightmost),
-        "no_match" => Ok(PositionAmbiguityPolicy::NoMatch),
-        "error" => Ok(PositionAmbiguityPolicy::Error),
+    let variant = value.0.variant.0.as_str();
+    let args = &value.0.args;
+    let no_args = || {
+        if args.is_empty() {
+            Ok(())
+        } else {
+            Err(Error {
+                span,
+                msg: format!("position policy `{variant}` does not accept arguments"),
+            })
+        }
+    };
+
+    match variant {
+        "leftmost" | "best" => {
+            no_args()?;
+            // Every matcher first minimizes distance. `best` makes that
+            // invariant explicit and uses the deterministic leftmost
+            // placement only to resolve a remaining equal-best tie.
+            Ok(PositionAmbiguityPolicy::Leftmost)
+        }
+        "rightmost" => {
+            no_args()?;
+            Ok(PositionAmbiguityPolicy::Rightmost)
+        }
+        "quality" => {
+            let min_delta = if args.is_empty() {
+                1
+            } else if args.len() == 1 {
+                let arg = &args[0].0;
+                if let Some(name) = &arg.name {
+                    if name.0 != "min_delta" {
+                        return Err(Error {
+                            span,
+                            msg: format!(
+                                "unknown `{}` argument for position policy `quality`; expected `min_delta`",
+                                name.0
+                            ),
+                        });
+                    }
+                }
+                let value = arg.value.0.parse::<u64>().map_err(|_| Error {
+                    span,
+                    msg: "`min_delta` for position policy `quality` must be a non-negative integer"
+                        .to_string(),
+                })?;
+                u8::try_from(value).map_err(|_| Error {
+                    span,
+                    msg: "`min_delta` for position policy `quality` must be between 0 and 255"
+                        .to_string(),
+                })?
+            } else {
+                return Err(Error {
+                    span,
+                    msg: "position policy `quality` accepts at most one `min_delta` argument"
+                        .to_string(),
+                });
+            };
+            Ok(PositionAmbiguityPolicy::Quality { min_delta })
+        }
+        "no_match" => {
+            no_args()?;
+            Ok(PositionAmbiguityPolicy::NoMatch)
+        }
+        "error" => {
+            no_args()?;
+            Ok(PositionAmbiguityPolicy::Error)
+        }
         variant => Err(Error {
             span,
             msg: format!(
-                "unknown position policy `{variant}`; expected leftmost, rightmost, no_match, or error"
+                "unknown position policy `{variant}`; expected best, leftmost, rightmost, quality, no_match, or error"
             ),
         }),
     }
@@ -372,13 +435,25 @@ fn validate_ambiguity_policy_target(
     };
 
     if matches!(policies[0], AmbiguityPolicy::Quality { .. })
-        && matches!(target, "map_with_edit" | "map" | "anchor_set")
+        && matches!(target, "map_with_edit" | "map")
     {
         return Err(Error {
             span,
             msg: format!(
                 "quality ambiguity resolution on `{target}` is not supported; use equal-length Hamming matching"
             ),
+        });
+    }
+    if matches!(policies[0], AmbiguityPolicy::Quality { .. })
+        && target == "anchor_set"
+        && stack
+            .iter()
+            .any(|S(function, _)| matches!(function, CompiledFunction::Edit(_)))
+    {
+        return Err(Error {
+            span,
+            msg: "quality ambiguity resolution on `anchor_set` requires exact or Hamming search; edit-distance gap qualities are not defined"
+                .to_string(),
         });
     }
     Ok(())
@@ -410,6 +485,22 @@ fn validate_position_policy_target(
             span,
             msg: format!(
                 "#[position_policy = ...] on definition `{definition}` requires #[search(relative)]"
+            ),
+        });
+    }
+    if stack.iter().any(|S(function, _)| {
+        matches!(
+            function,
+            CompiledFunction::PositionAmbiguityPolicy(PositionAmbiguityPolicy::Quality { .. })
+        )
+    }) && stack
+        .iter()
+        .any(|S(function, _)| matches!(function, CompiledFunction::Edit(_)))
+    {
+        return Err(Error {
+            span,
+            msg: format!(
+                "position quality resolution on definition `{definition}` requires exact or Hamming search; edit-distance gap qualities are not defined"
             ),
         });
     }

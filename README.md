@@ -77,7 +77,8 @@ EFGDL 2 input reads also support bounded layout algebra: ordered choice (`|`),
 optional structure (`?`), fixed repetition (`*N`), and grouping. Alternatives
 are normalized and validated at compile time, then retried through copy-on-write
 graphs. See the [layout algebra guide](https://combine-lab.github.io/seqproc/efgdl/layout-algebra/)
-for expansion limits and capture compatibility.
+for expansion limits, capture compatibility, and zero-runtime-overhead indexed
+references such as `<round[2]>` for repeated named captures.
 
 EFGDL 2 output layouts can construct fixed sequence with `f[...]`; for example,
 `-> 1{f[ACGT]<bc><umi>}` prefixes those bases and assigns them `I` quality

@@ -179,6 +179,7 @@ pub fn normalize_layout(
 mod tests {
     use super::*;
     use crate::parser::{IntervalKind, IntervalShape};
+    use proptest::prelude::*;
 
     fn span() -> crate::Span {
         (0..1).into()
@@ -190,6 +191,21 @@ mod tests {
                 IntervalKind::Barcode,
                 IntervalShape::FixedLen(S(length, span())),
             ),
+            span(),
+        )
+    }
+
+    fn choice(arms: Vec<S<Expr>>) -> S<Expr> {
+        S(Expr::LayoutChoice(arms), span())
+    }
+
+    fn optional(inner: S<Expr>) -> S<Expr> {
+        S(Expr::LayoutOptional(S(Box::new(inner.0), inner.1)), span())
+    }
+
+    fn repeat(inner: S<Expr>, count: usize) -> S<Expr> {
+        S(
+            Expr::LayoutRepeat(S(Box::new(inner.0), inner.1), S(count, span())),
             span(),
         )
     }
@@ -227,5 +243,54 @@ mod tests {
         );
         let error = normalize_layout(vec![optional], 2).unwrap_err();
         assert!(error.msg.contains("cannot be empty"));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 64, .. ProptestConfig::default() })]
+
+        #[test]
+        fn nested_choice_repeat_and_optional_have_exact_bounded_cardinality(
+            inner_arms in 1usize..=2,
+            repetitions in 0usize..=2,
+        ) {
+            let inner = choice((0..inner_arms).map(|index| fixed(index + 1)).collect());
+            let nested = choice(vec![inner, fixed(inner_arms + 1)]);
+            let expression = repeat(optional(nested), repetitions);
+            let normalized = normalize_layout(vec![fixed(99), expression], 2).unwrap();
+            let alternatives_per_repetition = inner_arms + 2;
+            let expected = alternatives_per_repetition.pow(repetitions as u32);
+            prop_assert_eq!(normalized.alternatives.len(), expected);
+            let lengths_are_bounded = normalized.alternatives.iter().all(|alternative| {
+                (1..=1 + repetitions).contains(&alternative.len())
+            });
+            prop_assert!(lengths_are_bounded);
+        }
+
+        #[test]
+        fn alternative_limit_is_enforced_without_partial_normalization(
+            arms in 1usize..=(MAX_LAYOUT_ALTERNATIVES + 8),
+        ) {
+            let expression = choice((0..arms).map(|index| fixed(index + 1)).collect());
+            let normalized = normalize_layout(vec![expression], 2);
+            if arms <= MAX_LAYOUT_ALTERNATIVES {
+                prop_assert_eq!(normalized.unwrap().alternatives.len(), arms);
+            } else {
+                prop_assert!(normalized.unwrap_err().msg.contains("limit is 64"));
+            }
+        }
+
+        #[test]
+        fn repeat_limit_is_enforced_at_the_declared_bound(
+            repetitions in 0usize..=(MAX_LAYOUT_REPEAT + 8),
+        ) {
+            let normalized = normalize_layout(vec![fixed(99), repeat(fixed(1), repetitions)], 2);
+            if repetitions <= MAX_LAYOUT_REPEAT {
+                let normalized = normalized.unwrap();
+                prop_assert_eq!(normalized.alternatives.len(), 1);
+                prop_assert_eq!(normalized.alternatives[0].len(), repetitions + 1);
+            } else {
+                prop_assert!(normalized.unwrap_err().msg.contains("exceeds the limit"));
+            }
+        }
     }
 }

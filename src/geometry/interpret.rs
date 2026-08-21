@@ -238,8 +238,6 @@ impl<'a> CompiledData {
         // different transformations based on a runtime attribute value.
         // Otherwise, apply the single transformation unconditionally.
         if let Some(match_block) = &self.match_block {
-            let attr_name = format!("seq{}.*.{}", match_block.read_ref, match_block.attr);
-
             // Helper: build a subgraph for one arm's transformation.
             // For each label in the arm's transformation, check if the arm's
             // compiled map has extra functions compared to the base geometry.
@@ -299,9 +297,14 @@ impl<'a> CompiledData {
             let fw_graph = build_arm_graph(&match_block.fw_transformation, &match_block.fw_map);
             let rc_graph = build_arm_graph(&match_block.rc_transformation, &match_block.rc_map);
 
-            // Route once before either terminal arm can discard `ori`.
-            let fw_selector = Expr::from(antisequence::expr::attr(&attr_name)).eq(b"fw".to_vec());
-            let rc_selector = Expr::from(antisequence::expr::attr(&attr_name)).eq(b"rc".to_vec());
+            // Route from explicit lane metadata, which remains live across
+            // interval projection in nested arm graphs.
+            let route = antisequence::expr::lane_attr(
+                u8::try_from(match_block.read_ref).expect("validated read index"),
+                match_block.attr.as_bytes(),
+            );
+            let fw_selector = Expr::from(route.clone()).eq(b"fw".to_vec());
+            let rc_selector = Expr::from(route).eq(b"rc".to_vec());
             graph.add(SwitchOp::new([
                 (fw_selector, fw_graph),
                 (rc_selector, rc_graph),
