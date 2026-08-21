@@ -9,7 +9,7 @@ whole protocol file. Four operators form a small, bounded algebra:
 | Syntax | Meaning |
 | --- | --- |
 | `A B` | concatenate adjacent terms: match `A`, then immediately match `B` |
-| `A | B` | try `A`, then try `B` if `A` rejects the read |
+| `A \| B` | try `A`, then try `B` if `A` rejects the read |
 | `(A)?` | prefer `A`, but allow it to be absent |
 | `(A)*N` | repeat `A` exactly `N` times |
 
