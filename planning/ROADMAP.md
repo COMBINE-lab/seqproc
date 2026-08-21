@@ -57,7 +57,7 @@ Every milestone must satisfy these requirements:
 | 3 | stdin/stdout | Complete | Input/output target model |
 | 4 | Interleaved input | Complete | Stream targets and geometry arity |
 | 5 | Three or more input segments | Complete | Generalized bounded lane model |
-| 6 | Fully typed `SeqprocError` | Partial foundations only | Public I/O and resource contracts |
+| 6 | Fully typed `SeqprocError` | Complete | Public I/O and resource contracts |
 | 7 | Remaining optimizer passes | Foundation exists | Effects, scoped metadata, recursive liveness |
 | 8 | Dynamic batch-size planning | Planned | Stable execution and lane-cost model |
 | 9 | Continuous fuzzing and full-language reference interpreter | Partial matcher oracle only | Stable language and I/O contracts |
@@ -528,6 +528,27 @@ At minimum, errors distinguish:
   contents unless explicitly requested.
 - A source audit documents every remaining intentional panic as an internal
   invariant.
+
+### Completion record
+
+- **Implementation:** seqproc commit `76fa2a8` (`Introduce typed seqproc error
+  contract`); ANTISEQUENCE commits `231f958` (`Make graph errors thread-safe`)
+  and `1389ccf` (`Preserve typed errors across graph workers`).
+- **Contract:** `compile_geom_typed` distinguishes owned lexing, parsing, and
+  semantic diagnostics; `run` returns `Result<RunReport, SeqprocError>` with
+  typed resource, topology, FASTQ, output, execution-configuration, planning,
+  graph, demultiplexing, I/O, broken-pipe, and unsupported-feature variants.
+  Deprecated unit-returning wrappers remain for one compatibility cycle.
+- **Tests:** ANTISEQUENCE `cargo test --lib` (363 passed); seqproc `cargo test
+  --lib` (276 passed), typed error contracts (6 passed), CLI workflows (20
+  passed), and regression tests (19 passed). Tests cover source-located
+  geometry stages, matchable configuration/resource/topology failures,
+  malformed demultiplex labels, malformed runtime FASTQ, and stable nonzero CLI
+  classification.
+- **Audit and documentation:** `planning/PANIC_AUDIT.md` records the public
+  boundary and each remaining invariant family. README and Rust API and
+  troubleshooting guides use the typed API and document CLI status classes;
+  the Astro production build passed.
 
 ---
 
