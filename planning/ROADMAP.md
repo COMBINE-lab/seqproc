@@ -53,7 +53,7 @@ Every milestone must satisfy these requirements:
 | Order | Capability | Current status | Principal dependency |
 | ---: | --- | --- | --- |
 | 1 | Named resource bindings | Complete | EFGDL 2 document model |
-| 2 | Lists of FASTQ files per lane | Planned | Grouped input-source model |
+| 2 | Lists of FASTQ files per lane | Complete | Grouped input-source model |
 | 3 | stdin/stdout | Foundation exists in ANTISEQUENCE | Input/output target model |
 | 4 | Interleaved input | Foundation exists in ANTISEQUENCE | Stream targets and geometry arity |
 | 5 | Three or more input segments | Foundation exists in compiler/backend | Generalized bounded lane model |
@@ -208,6 +208,29 @@ four paths into four biological read lanes.
 - Peak memory is independent of the number and aggregate size of shards.
 - Opening the next shard does not leak descriptors or retain completed
   decompressor pools.
+
+### Completion record
+
+- **Implementation:** seqproc commit `271e117` (`Add grouped FASTQ shard
+  inputs`) and ANTISEQUENCE commit `7f5a588` (`Add synchronized grouped FASTQ
+  shard input`).
+- **Compatibility:** `--file1` and `--file2` remain single-file aliases. A run
+  in which every lane has one shard is dispatched to the pre-existing
+  `InputFastqOp`; only grouped runs instantiate `GroupedInputFastqOp`.
+- **Tests:** ANTISEQUENCE `cargo test` (357 passed); seqproc `cargo test --lib`
+  (276 passed), `cargo test --test cli_workflow_tests` (16 passed), and `cargo
+  test --test bench_regression` (19 passed). Coverage includes repeated and
+  comma-separated arguments, mixed plain/gzip shards, empty shards, unequal
+  lane/shard records, per-shard statistics, and byte identity with explicitly
+  concatenated logical lanes.
+- **Performance gate:** readers are opened one shard per lane at a time and
+  completed readers are dropped at each boundary. The one-file compatibility
+  path retains the existing operator and adds no per-record branch,
+  allocation, or synchronization; the existing SE/PE regression benchmark
+  passed.
+- **Documentation:** the README, command-line and Rust API guides, summary
+  guide, and summary schema 1.8.0 describe shard ordering, equality rules,
+  compression mixing, compatibility aliases, and per-shard counts.
 
 ---
 
