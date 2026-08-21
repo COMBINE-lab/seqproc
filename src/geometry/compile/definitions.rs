@@ -236,6 +236,7 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
         }
     }
 
+    let expr_span = expr.1;
     let gp = if let S(Expr::GeomPiece(type_, size), span) = expr {
         S(
             GeometryPiece {
@@ -246,7 +247,13 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
             span,
         )
     } else {
-        unreachable!()
+        return Err(Error {
+            span: expr_span,
+            msg: format!(
+                "definition `{label}` must be a geometry piece, optionally wrapped in \
+                 functions; indexed or compound references are not valid here"
+            ),
+        });
     };
 
     let gp = GeometryMeta { expr: gp, stack }; // Now we have the geometry piece and the stack of functions

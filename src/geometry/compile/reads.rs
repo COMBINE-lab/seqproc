@@ -438,6 +438,7 @@ fn compile_linear_reads(
             }
 
             // if spanned geom piece is set then expr should not matter
+            let expr_span = expr.1;
             let spanned_gp = if let Some(spanned_gp) = spanned_geom_piece {
                 spanned_gp
             } else if let S(Expr::GeomPiece(type_, size), span) = expr {
@@ -450,7 +451,14 @@ fn compile_linear_reads(
                     span,
                 )
             } else {
-                unreachable!()
+                err = Some(Error {
+                    span: expr_span,
+                    msg: "this expression cannot appear directly in a read; expected a \
+                          geometry piece, label, or function application"
+                        .to_string(),
+                });
+
+                break 'outer;
             };
 
             let gm = GeometryMeta {

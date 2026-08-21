@@ -318,7 +318,9 @@ impl CompiledData {
                             TransformSegment::Label(label) => {
                                 let key =
                                     label.split_once('.').map(|(_, key)| key).unwrap_or(&label);
-                                map.get(key).unwrap().clone()
+                                // Labels whose simplified description is empty (fixed
+                                // sequences and anchors) are normalized away entirely.
+                                map.get(key).cloned().unwrap_or_default()
                             }
                             TransformSegment::Literal(bytes) => format!(
                                 "f[{}]",

@@ -669,3 +669,57 @@ fn test_dual_anchor_with_edit() {
 
     assert!(res.is_ok());
 }
+
+#[test]
+fn hamming_distance_cannot_exceed_sequence_length() {
+    let res = compile_geom(String::from("1{hamming(f[ACG], 10)r:}2{r:}"));
+    assert!(res.is_err());
+
+    // A distance equal to the sequence length is degenerate but defined.
+    let res = compile_geom(String::from("1{hamming(f[ACG], 3)r:}2{r:}"));
+    assert!(res.is_ok());
+}
+
+#[test]
+fn edit_distance_cannot_exceed_sequence_length() {
+    let res = compile_geom(String::from(
+        "#[edit(10)]\nl1 = f[ACG]\n1{<l1>r:}2{r:}",
+    ));
+    assert!(res.is_err());
+}
+
+#[test]
+fn map_mismatch_cannot_exceed_interval_length() {
+    let res = compile_geom(String::from(
+        "1{map_with_mismatch(b[8], \"wl.txt\", self, 100)r:}2{r:}",
+    ));
+    assert!(res.is_err());
+}
+
+#[test]
+fn inverted_range_is_a_compile_error() {
+    let res = compile_geom(String::from("1{b[12-8]f[ACGT]r:}2{r:}"));
+    assert!(res.is_err());
+}
+
+#[test]
+fn bare_self_in_read_is_a_compile_error_not_a_panic() {
+    let res = compile_geom(String::from("1{self}2{r:}"));
+    assert!(res.is_err());
+}
+
+#[test]
+fn indexed_capture_in_definition_is_a_compile_error_not_a_panic() {
+    let res = compile_geom(String::from("foo = <bar[2]>\n1{b[4]r:}2{r:}"));
+    assert!(res.is_err());
+}
+
+#[test]
+fn simplified_description_tolerates_fixed_seq_labels_in_transform() {
+    let compiled = compile_geom(String::from(
+        "1{b<bc>[4]f<link>[ACGT]r<rd>:}\n-> 1{<bc><link><rd>}",
+    ))
+    .unwrap();
+    // Fixed sequences are normalized away; this must not panic.
+    let _ = compiled.get_simplified_description_string();
+}

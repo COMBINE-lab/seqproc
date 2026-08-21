@@ -38,7 +38,10 @@ fn anchor_set_and_both_ambiguity_axes_compile_independently() {
         )
     }));
     assert!(linker.stack.iter().any(|function| {
-        matches!(function.0, CompiledFunction::AnchorSet(ref path) if path == "0")
+        matches!(
+            function.0,
+            CompiledFunction::AnchorSet(seqproc::parser::ResourceRef::Positional(0))
+        )
     }));
     assert!(linker
         .stack

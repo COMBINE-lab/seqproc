@@ -534,7 +534,7 @@ pub fn parser<'tokens>(
     let label = select! { Token::Label(x) => x.clone() };
     let num = select! {Token::Num(n) => n };
     let file = select! {Token::File(f) => f.clone() };
-    let argument = select! {Token::Arg(n) => n.to_string() };
+    let argument = select! {Token::Arg(n) => format!("${n}") };
     let resource_ref = choice((
         select! { Token::File(path) => ResourceRef::Literal(path.clone()) },
         select! { Token::Arg(index) => ResourceRef::Positional(index) },
