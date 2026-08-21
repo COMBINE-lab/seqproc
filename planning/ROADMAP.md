@@ -59,7 +59,7 @@ Every milestone must satisfy these requirements:
 | 5 | Three or more input segments | Complete | Generalized bounded lane model |
 | 6 | Fully typed `SeqprocError` | Complete | Public I/O and resource contracts |
 | 7 | Remaining optimizer passes | Complete | Effects, scoped metadata, recursive liveness |
-| 8 | Dynamic batch-size planning | Planned | Stable execution and lane-cost model |
+| 8 | Dynamic batch-size planning | Complete | Stable execution and lane-cost model |
 | 9 | Continuous fuzzing and full-language reference interpreter | Partial matcher oracle only | Stable language and I/O contracts |
 | 10 | Dry-run support | Planned | Resources, inputs, errors, and planning |
 | 11 | Protocol registry | Planned | Dry-run and named resources |
@@ -670,6 +670,39 @@ controls and reproducibility.
 - Peak live memory stays within the reported bound under delayed workers and
   output backpressure.
 - Plans and output are deterministic across repeated runs.
+
+### Completion record
+
+- **Implementation:** ANTISEQUENCE commit `baa4bc2` (`Add deterministic batch
+  planning`) and seqproc commit `0a5ff38` (`Add deterministic dynamic batch
+  planning`). `ExecutionRequest` carries explicit planning hints and every
+  `ExecutionPlan` serializes the inputs, automatic/override decisions,
+  selected bounds, estimated bytes, budget, and stable reason codes. seqproc
+  derives those hints from its compiled geometry, bounded lane topology,
+  compression configuration, and exact CLI/Rust overrides.
+- **Determinism and bounds:** planning is a pure static calculation and never
+  samples or consumes an input stream. Automatic sizes are bounded powers of
+  two; one maximum in-flight batch per worker and the reported codec buffers
+  are included in the live-byte estimate. A zero dynamic-planning budget is a
+  typed configuration error. Exact batch, queue, and in-flight values remain
+  authoritative, and `--no-dynamic-batch-planning` restores fixed defaults.
+- **Tests:** ANTISEQUENCE `cargo test` (370 passed); seqproc CLI workflows
+  (20 passed), typed error contract (6 passed), and regression suite (19
+  passed). The matrix covers one/two/three lanes, short and long records,
+  simple and alignment-heavy graphs, compression buffers, exact overrides,
+  determinism, and memory bounds. Existing CLI output-equivalence workflows
+  passed with planning enabled.
+- **Performance gate:** over 5,000 synthetic 10,000-nt records with four
+  workers, automatic batch 16 averaged 6.793 ms versus 7.911 ms for fixed
+  batch 256 (14.1% faster), while estimated peak batch memory fell from
+  21,135,360 to 1,320,960 bytes (16x). The 100,000-record 100-nt passthrough
+  control retained batch 256 and measured 10.978 ms, structurally identical
+  to the fixed control. These are focused backend measurements rather than
+  end-to-end FASTQ throughput claims.
+- **Documentation:** ANTISEQUENCE's batch-planning guide documents the model,
+  formulas, invariants, and benchmark. seqproc's README, CLI, performance,
+  summaries, Rust API, and versioned summary schema 1.12.0 document the public
+  controls and report. The Astro production build passed with Node 22.
 
 ---
 
