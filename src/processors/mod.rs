@@ -18,8 +18,54 @@ use antisequence::{
 use expr::Expr;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
+use thiserror::Error;
 
 use crate::Nucleotide;
+
+#[derive(Debug, Error)]
+pub enum ProcessorError {
+    #[error("could not open {kind} resource `{path}`: {source}")]
+    OpenResource {
+        kind: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("could not read line {line} from {kind} resource `{path}`: {source}")]
+    ReadResource {
+        kind: &'static str,
+        path: PathBuf,
+        line: usize,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("anchor-set resource `{path}` contains no patterns")]
+    EmptyAnchorSet { path: PathBuf },
+    #[error("could not parse mapping resource `{path}` at row {row}: {source}")]
+    InvalidMappingRow {
+        path: PathBuf,
+        row: usize,
+        #[source]
+        source: csv::Error,
+    },
+    #[error("conflicting mapping for barcode `{barcode}` in `{path}`: row {first_row} maps to `{first_value}`, but row {second_row} maps to `{second_value}`")]
+    ConflictingMapping {
+        path: PathBuf,
+        barcode: String,
+        first_row: usize,
+        first_value: String,
+        second_row: usize,
+        second_value: String,
+    },
+    #[error("anchor-set pattern length {observed} does not match placeholder anchor length {expected} in `{path}`")]
+    AnchorLength {
+        path: PathBuf,
+        expected: usize,
+        observed: usize,
+    },
+    #[error("compiled function `{function}` is invalid without a fixed sequence")]
+    InvalidFunctionPlacement { function: &'static str },
+}
 
 impl CompiledFunction {
     pub fn to_expr(
@@ -174,24 +220,26 @@ pub fn match_node(
     MatchAnyOp::new(tr_expr, patterns, match_type)
 }
 
-pub fn parse_file_filter(path: PathBuf, ambiguity_policy: AmbiguityPolicy) -> Patterns {
-    let file = File::open(path.clone()).unwrap_or_else(|_| {
-        panic!(
-            "Expected file -- could not open {:?}",
-            path.file_name().unwrap()
-        )
-    });
+pub fn parse_file_filter(
+    path: PathBuf,
+    ambiguity_policy: AmbiguityPolicy,
+) -> Result<Patterns, ProcessorError> {
+    let file = File::open(&path).map_err(|source| ProcessorError::OpenResource {
+        kind: "whitelist",
+        path: path.clone(),
+        source,
+    })?;
     let reader = BufReader::new(file);
     let mut contents = vec![];
     let mut seen = FxHashSet::default();
     let mut duplicate_count = 0usize;
     for (i, line) in reader.lines().enumerate() {
-        let line = line.unwrap_or_else(|_| {
-            panic!(
-                "Could not read line {i} in file {:?}.",
-                path.file_name().unwrap()
-            )
-        });
+        let line = line.map_err(|source| ProcessorError::ReadResource {
+            kind: "whitelist",
+            path: path.clone(),
+            line: i + 1,
+            source,
+        })?;
         if seen.insert(line.clone()) {
             contents.push(line);
         } else {
@@ -206,9 +254,9 @@ pub fn parse_file_filter(path: PathBuf, ambiguity_policy: AmbiguityPolicy) -> Pa
             "removed duplicate whitelist entries"
         );
     }
-    Patterns::from_strs(contents)
+    Ok(Patterns::from_strs(contents)
         .with_pattern_name(FILTER)
-        .with_ambiguity_policy(ambiguity_policy)
+        .with_ambiguity_policy(ambiguity_policy))
 }
 
 /// Load and normalize a one-pattern-per-line anchor set without attaching
@@ -217,24 +265,23 @@ pub fn parse_file_anchor_set(
     path: PathBuf,
     ambiguity_policy: AmbiguityPolicy,
     position_policy: antisequence::PositionAmbiguityPolicy,
-) -> Patterns {
-    let file = File::open(path.clone()).unwrap_or_else(|_| {
-        panic!(
-            "Expected anchor-set file -- could not open {:?}",
-            path.file_name().unwrap()
-        )
-    });
+) -> Result<Patterns, ProcessorError> {
+    let file = File::open(&path).map_err(|source| ProcessorError::OpenResource {
+        kind: "anchor set",
+        path: path.clone(),
+        source,
+    })?;
     let reader = BufReader::new(file);
     let mut contents = Vec::new();
     let mut seen = FxHashSet::default();
     let mut duplicate_count = 0usize;
     for (line_index, line) in reader.lines().enumerate() {
-        let line = line.unwrap_or_else(|_| {
-            panic!(
-                "Could not read line {line_index} in anchor-set file {:?}.",
-                path.file_name().unwrap()
-            )
-        });
+        let line = line.map_err(|source| ProcessorError::ReadResource {
+            kind: "anchor set",
+            path: path.clone(),
+            line: line_index + 1,
+            source,
+        })?;
         let pattern = line.trim();
         if pattern.is_empty() || pattern.starts_with('#') {
             continue;
@@ -245,11 +292,9 @@ pub fn parse_file_anchor_set(
             duplicate_count += 1;
         }
     }
-    assert!(
-        !contents.is_empty(),
-        "anchor-set file {} contains no patterns",
-        path.display()
-    );
+    if contents.is_empty() {
+        return Err(ProcessorError::EmptyAnchorSet { path });
+    }
     if duplicate_count > 0 {
         tracing::warn!(
             file = %path.display(),
@@ -258,9 +303,9 @@ pub fn parse_file_anchor_set(
             "removed duplicate anchor-set entries"
         );
     }
-    Patterns::from_strs(contents)
+    Ok(Patterns::from_strs(contents)
         .with_ambiguity_policy(ambiguity_policy)
-        .with_position_ambiguity_policy(position_policy)
+        .with_position_ambiguity_policy(position_policy))
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,34 +314,44 @@ struct SeqprocMap {
     match_patt: String,
 }
 
-pub fn parse_file_match(path: PathBuf, ambiguity_policy: AmbiguityPolicy) -> Patterns {
+pub fn parse_file_match(
+    path: PathBuf,
+    ambiguity_policy: AmbiguityPolicy,
+) -> Result<Patterns, ProcessorError> {
     let mut rdr = csv::ReaderBuilder::new()
         .delimiter(b'\t')
         .comment(Some(b'#'))
         .has_headers(false)
         .from_path(&path)
-        .expect("cannot open mapping file");
+        .map_err(|source| ProcessorError::InvalidMappingRow {
+            path: path.clone(),
+            row: 0,
+            source,
+        })?;
 
     let mut mappings = vec![];
     let mut seen: FxHashMap<String, (String, usize)> = FxHashMap::default();
     let mut duplicate_count = 0usize;
     for (row_idx, result) in rdr.deserialize().enumerate() {
-        let mapping: SeqprocMap = result.expect("Could not parse line in map file");
+        let mapping: SeqprocMap = result.map_err(|source| ProcessorError::InvalidMappingRow {
+            path: path.clone(),
+            row: row_idx + 1,
+            source,
+        })?;
 
         if let Some((existing_sub, existing_row)) = seen.get(&mapping.match_patt) {
             if existing_sub == &mapping.sub_patt {
                 duplicate_count += 1;
                 continue;
             }
-            panic!(
-                "Conflicting mapping for barcode {:?} in {}: row {} maps to {:?}, but row {} maps to {:?}",
-                mapping.match_patt,
-                path.display(),
-                existing_row + 1,
-                existing_sub,
-                row_idx + 1,
-                mapping.sub_patt
-            );
+            return Err(ProcessorError::ConflictingMapping {
+                path,
+                barcode: mapping.match_patt,
+                first_row: existing_row + 1,
+                first_value: existing_sub.clone(),
+                second_row: row_idx + 1,
+                second_value: mapping.sub_patt,
+            });
         }
         seen.insert(
             mapping.match_patt.clone(),
@@ -319,10 +374,10 @@ pub fn parse_file_match(path: PathBuf, ambiguity_policy: AmbiguityPolicy) -> Pat
         );
     }
 
-    Patterns::new(mappings, vec![SUB])
+    Ok(Patterns::new(mappings, vec![SUB])
         .with_multimatch_name(AMBIG)
         .with_pattern_name(MAPPED)
-        .with_ambiguity_policy(ambiguity_policy)
+        .with_ambiguity_policy(ambiguity_policy))
 }
 
 #[cfg(test)]
@@ -503,7 +558,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let whitelist = temp.path().join("whitelist.txt");
         writeln!(File::create(&whitelist).unwrap(), "CAAA\nCAAA\nAAAC").unwrap();
-        let patterns = parse_file_filter(whitelist, AmbiguityPolicy::Accept);
+        let patterns = parse_file_filter(whitelist, AmbiguityPolicy::Accept).unwrap();
         assert_eq!(patterns.patterns().len(), 2);
 
         let mapping = temp.path().join("mapping.tsv");
@@ -512,7 +567,7 @@ mod tests {
             "CCCC\tCAAA\nCCCC\tCAAA\nGGGG\tAAAC"
         )
         .unwrap();
-        let patterns = parse_file_match(mapping, AmbiguityPolicy::First);
+        let patterns = parse_file_match(mapping, AmbiguityPolicy::First).unwrap();
         assert_eq!(patterns.patterns().len(), 2);
     }
 
@@ -521,16 +576,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mapping = temp.path().join("mapping.tsv");
         writeln!(File::create(&mapping).unwrap(), "CCCC\tCAAA\nGGGG\tCAAA").unwrap();
-        let panic = std::panic::catch_unwind(|| {
-            parse_file_match(mapping, AmbiguityPolicy::NoMatch);
-        })
-        .unwrap_err();
-        let message = panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic.downcast_ref::<&str>().copied())
-            .unwrap();
-        assert!(message.contains("Conflicting mapping"));
+        let error = match parse_file_match(mapping, AmbiguityPolicy::NoMatch) {
+            Ok(_) => panic!("conflicting mapping should fail"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("conflicting mapping"));
         assert!(message.contains("row 1"));
         assert!(message.contains("row 2"));
     }

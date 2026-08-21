@@ -84,6 +84,9 @@ shards are opened lazily just like separate read lanes.
 The bounded public lane model supports one, two, or three segments, including
 `--read3`, `--out3`, and `--unassigned3` for protocols such as scATAC-seq.
 
+Library callers should use `compile_geom_typed` and `run`; both return the
+matchable `SeqprocError` hierarchy rather than stringly typed `anyhow` errors.
+
 New geometry files should declare EFGDL 2 in the general document header.
 Optional metadata fields accept integers, quoted strings, or bare identifiers
 and are retained for provenance tooling. Headerless files continue to use

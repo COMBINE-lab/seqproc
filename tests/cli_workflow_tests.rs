@@ -1565,3 +1565,29 @@ fn three_segment_scatac_paths_cover_shards_streams_interleaving_and_reports() {
         .failure()
         .stderr(predicates::str::contains("--read3 requires --read2"));
 }
+
+#[test]
+fn typed_configuration_errors_have_stable_nonzero_cli_status() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("simple.geom");
+    let input = directory.path().join("reads.fastq");
+    fs::write(&geometry, "1{r:}\n").unwrap();
+    fs::write(&input, "@r1\nACGT\n+\nIIII\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            input.to_str().unwrap(),
+            "--threads",
+            "0",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "number of threads must be greater than zero",
+        ));
+}

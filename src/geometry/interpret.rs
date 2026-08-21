@@ -23,9 +23,10 @@ use crate::{
         },
         CompiledData, ElementAnnotations, ElementId,
     },
+    error::SeqprocResult,
     parser::{IntervalKind, IntervalShape},
     processors::*,
-    resources::{ResolvedResources, ResourceBindings, ResourceError},
+    resources::{ResolvedResources, ResourceBindings},
     Nucleotide, S,
 };
 
@@ -173,21 +174,20 @@ impl<'a> CompiledData {
         &'a self,
         graph: &'a mut Graph,
         additional_args: &[&str],
-    ) -> Result<(), ResourceError> {
+    ) -> SeqprocResult<()> {
         let positional = additional_args
             .iter()
             .map(|value| (*value).to_owned())
             .collect::<Vec<_>>();
         let resources = self.resolve_resources(&positional, &ResourceBindings::new(), None)?;
-        self.interpret_with_resources(graph, &resources);
-        Ok(())
+        self.interpret_with_resources(graph, &resources)
     }
 
     pub(crate) fn interpret_with_resources<'b: 'a>(
         &'a self,
         graph: &'a mut Graph,
         resources: &ResolvedResources,
-    ) {
+    ) -> SeqprocResult<()> {
         let Self {
             geometry,
             layout_alternatives,
@@ -209,7 +209,7 @@ impl<'a> CompiledData {
                     })
             });
 
-            let build_alternative_graphs = || {
+            let build_alternative_graphs = || -> Result<Vec<Graph>, ProcessorError> {
                 alternatives
                     .iter()
                     .map(|alternative| {
@@ -221,10 +221,10 @@ impl<'a> CompiledData {
                             resources,
                             element_annotations,
                             read_idx,
-                        );
-                        alternative_graph
+                        )?;
+                        Ok(alternative_graph)
                     })
-                    .collect::<Vec<_>>()
+                    .collect()
             };
             let collapse_alternatives = |mut alternative_graphs: Vec<Graph>| {
                 let mut fallback = alternative_graphs
@@ -242,12 +242,12 @@ impl<'a> CompiledData {
                 // Build geometry into a separate inner graph, then wrap it in
                 // TryOrientationOp. Ordered layout alternatives are resolved
                 // independently in each orientation.
-                let inner = collapse_alternatives(build_alternative_graphs());
+                let inner = collapse_alternatives(build_alternative_graphs()?);
                 let read_idx_u8 = u8::try_from(read_idx)
                     .expect("read index must fit in u8 (validated at compile time)");
                 graph.add(TryOrientationOp::new(inner, read_idx_u8, b"ori"));
             } else if alternatives.len() > 1 {
-                let mut alternative_graphs = build_alternative_graphs();
+                let mut alternative_graphs = build_alternative_graphs()?;
                 let preferred = alternative_graphs.remove(0);
                 let fallback = collapse_alternatives(alternative_graphs);
                 graph.add(TryOp::new(preferred, fallback).return_catch_output());
@@ -259,7 +259,7 @@ impl<'a> CompiledData {
                     resources,
                     element_annotations,
                     read_idx,
-                );
+                )?;
             }
         }
 
@@ -342,6 +342,7 @@ impl<'a> CompiledData {
         } else if let Some(transformation) = transformation {
             add_output_transformations(graph, transformation, true);
         };
+        Ok(())
     }
 }
 
@@ -352,7 +353,7 @@ fn interpret_geometry(
     resources: &ResolvedResources,
     _element_annotations: &[ElementAnnotations],
     _read_idx: usize,
-) {
+) -> Result<(), ProcessorError> {
     let mut geometry_iter = geometry.iter();
 
     let mut label: Vec<&str> = vec![init_label];
@@ -370,7 +371,7 @@ fn interpret_geometry(
                     IntervalKind::Discard => (),
                     _ => min_start_idx += v.len(),
                 }
-                gp.interpret(&label, resources, graph);
+                gp.interpret(&label, resources, graph)?;
             }
             IntervalShape::FixedLen(S(len, _)) => {
                 // Check if an anchor FixedSeq follows - if so, collect intermediate pieces
@@ -432,7 +433,7 @@ fn interpret_geometry(
                         };
                         let prev_label = format!("{cur_label}{NEXT_LEFT}");
                         let next_label_str = format!("{cur_label}{NEXT_RIGHT}");
-                        let patterns = anchor_patterns(&seq, &mut anchor_stack, resources);
+                        let patterns = anchor_patterns(&seq, &mut anchor_stack, resources)?;
 
                         // Get Hamming or Edit distance if specified
                         let match_type = match take_anchor_distance(&mut anchor_stack) {
@@ -463,7 +464,7 @@ fn interpret_geometry(
                             &anchor_size,
                             resources,
                             graph,
-                        );
+                        )?;
 
                         // Now slice intermediate_fixed from the prev_label region (RIGHT side)
                         let total_fixed_len: usize = intermediate_fixed
@@ -524,7 +525,7 @@ fn interpret_geometry(
                                 if piece_type == IntervalKind::Discard {
                                     stack.push(S(CompiledFunction::Remove, (0..1).into()));
                                 }
-                                execute_stack(stack, &this_label, &piece_size, resources, graph);
+                                execute_stack(stack, &this_label, &piece_size, resources, graph)?;
 
                                 slice_label = next_slice_label;
                             }
@@ -545,7 +546,7 @@ fn interpret_geometry(
                         IntervalKind::Discard => (),
                         _ => min_start_idx += len,
                     }
-                    gp.interpret(&label, resources, graph);
+                    gp.interpret(&label, resources, graph)?;
                 }
             }
             // in the case of a ranged length we add the minimum of the range to the min_idx
@@ -554,9 +555,9 @@ fn interpret_geometry(
                 min_start_idx += from;
                 // by rules of geometry this should either be None or a sequence
                 if let Some(next) = geometry_iter.next() {
-                    next.interpret_dual(gp, &mut label, resources, graph, &mut min_start_idx);
+                    next.interpret_dual(gp, &mut label, resources, graph, &mut min_start_idx)?;
                 } else {
-                    gp.interpret(&label, resources, graph);
+                    gp.interpret(&label, resources, graph)?;
                 }
             }
             IntervalShape::UnboundedLen => {
@@ -594,7 +595,13 @@ fn interpret_geometry(
 
                     // Use interpret_dual to search for the anchor and create
                     // the 3-way split: prev_label (before anchor), anchor, next_label (after).
-                    anchor_gp.interpret_dual(gp, &mut label, resources, graph, &mut min_start_idx);
+                    anchor_gp.interpret_dual(
+                        gp,
+                        &mut label,
+                        resources,
+                        graph,
+                        &mut min_start_idx,
+                    )?;
 
                     // Now slice the prev_label region into the intermediate FixedLen pieces.
                     // After interpret_dual, the "before anchor" region is labeled as either
@@ -673,7 +680,7 @@ fn interpret_geometry(
                                 if piece_type == IntervalKind::Discard {
                                     stack.push(S(CompiledFunction::Remove, (0..1).into()));
                                 }
-                                execute_stack(stack, &this_label, &piece_size, resources, graph);
+                                execute_stack(stack, &this_label, &piece_size, resources, graph)?;
 
                                 slice_label = next_slice_label;
                             }
@@ -681,20 +688,21 @@ fn interpret_geometry(
                     }
                 } else {
                     // No FixedSeq anchor found; treat as a normal unbounded segment.
-                    gp.interpret(&label, resources, graph);
+                    gp.interpret(&label, resources, graph)?;
                 }
             }
         };
 
         label.push(NEXT_RIGHT);
     }
+    Ok(())
 }
 
 fn anchor_patterns(
     sequence: &[Nucleotide],
     stack: &mut Vec<S<CompiledFunction>>,
     resources: &ResolvedResources,
-) -> Patterns {
+) -> Result<Patterns, ProcessorError> {
     let ambiguity_policy = stack
         .iter()
         .position(|S(function, _)| matches!(function, CompiledFunction::AmbiguityPolicy(_)))
@@ -720,23 +728,24 @@ fn anchor_patterns(
         });
 
     if let Some(path) = anchor_set {
-        let patterns = parse_file_anchor_set(
-            resources.path(&path).to_owned(),
-            ambiguity_policy,
-            position_policy,
-        );
-        assert!(
-            patterns
-                .iter_literals()
-                .all(|(_, pattern)| pattern.len() == sequence.len()),
-            "anchor_set patterns must all have the placeholder anchor length ({})",
-            sequence.len()
-        );
-        patterns
+        let resource_path = resources.path(&path).to_owned();
+        let patterns =
+            parse_file_anchor_set(resource_path.clone(), ambiguity_policy, position_policy)?;
+        if let Some((_, pattern)) = patterns
+            .iter_literals()
+            .find(|(_, pattern)| pattern.len() != sequence.len())
+        {
+            return Err(ProcessorError::AnchorLength {
+                path: resource_path,
+                expected: sequence.len(),
+                observed: pattern.len(),
+            });
+        }
+        Ok(patterns)
     } else {
-        Patterns::from_strs([Nucleotide::as_str(sequence)])
+        Ok(Patterns::from_strs([Nucleotide::as_str(sequence)])
             .with_ambiguity_policy(ambiguity_policy)
-            .with_position_ambiguity_policy(position_policy)
+            .with_position_ambiguity_policy(position_policy))
     }
 }
 
@@ -746,7 +755,7 @@ fn execute_stack(
     size: &IntervalShape,
     resources: &ResolvedResources,
     graph: &mut Graph,
-) {
+) -> Result<(), ProcessorError> {
     let mut ambiguity_policy = None;
     let range = if let IntervalShape::RangedLen(S((a, b), _)) = size {
         Some(*a..=*b)
@@ -778,22 +787,24 @@ fn execute_stack(
                 graph.add(trim_node([antisequence::expr::label(label)]));
             }
             CompiledFunction::Hamming(_) => {
-                panic!("Hamming requires to be bound to a sequence cannot operate in isolation")
+                return Err(ProcessorError::InvalidFunctionPlacement {
+                    function: "hamming",
+                });
             }
             CompiledFunction::Edit(_) => {
-                panic!("Edit requires to be bound to a sequence cannot operate in isolation")
+                return Err(ProcessorError::InvalidFunctionPlacement { function: "edit" });
             }
             CompiledFunction::Map(file, fns) => {
                 let file_path = resources.path(&file).to_owned();
                 let patterns = parse_file_match(
                     file_path,
                     ambiguity_policy.take().unwrap_or(AmbiguityPolicy::NoMatch),
-                );
+                )?;
 
                 map(label, patterns, Exact, graph);
 
                 let mut fallback_graph = Graph::new();
-                execute_stack(fns, label, size, resources, &mut fallback_graph);
+                execute_stack(fns, label, size, resources, &mut fallback_graph)?;
 
                 graph.add(SelectOp::new(
                     Expr::from(expr::attr(format!("{label}.{MAPPED}"))).not(),
@@ -805,7 +816,7 @@ fn execute_stack(
                 let patterns = parse_file_match(
                     file_path,
                     ambiguity_policy.take().unwrap_or(AmbiguityPolicy::NoMatch),
-                );
+                )?;
 
                 map(
                     label,
@@ -815,7 +826,7 @@ fn execute_stack(
                 );
 
                 let mut fallback_graph = Graph::new();
-                execute_stack(fns, label, size, resources, &mut fallback_graph);
+                execute_stack(fns, label, size, resources, &mut fallback_graph)?;
 
                 graph.add(SelectOp::new(
                     Expr::from(expr::attr(format!("{label}.{MAPPED}"))).not(),
@@ -827,12 +838,12 @@ fn execute_stack(
                 let patterns = parse_file_match(
                     file_path,
                     ambiguity_policy.take().unwrap_or(AmbiguityPolicy::NoMatch),
-                );
+                )?;
 
                 map(label, patterns, Edit(Threshold::Count(edit_dist)), graph);
 
                 let mut fallback_graph = Graph::new();
-                execute_stack(fns, label, size, resources, &mut fallback_graph);
+                execute_stack(fns, label, size, resources, &mut fallback_graph)?;
 
                 graph.add(SelectOp::new(
                     Expr::from(expr::attr(format!("{label}.{MAPPED}"))).not(),
@@ -844,7 +855,7 @@ fn execute_stack(
                 let patterns = parse_file_filter(
                     file_path,
                     ambiguity_policy.take().unwrap_or(AmbiguityPolicy::Accept),
-                );
+                )?;
 
                 graph.add(
                     match_node(
@@ -865,6 +876,7 @@ fn execute_stack(
             }
         };
     }
+    Ok(())
 }
 
 impl<'a> GeometryMeta {
@@ -888,7 +900,12 @@ impl<'a> GeometryMeta {
         }
     }
 
-    fn interpret_no_cut(&self, label: &[&str], resources: &ResolvedResources, graph: &mut Graph) {
+    fn interpret_no_cut(
+        &self,
+        label: &[&str],
+        resources: &ResolvedResources,
+        graph: &mut Graph,
+    ) -> Result<(), ProcessorError> {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -919,10 +936,15 @@ impl<'a> GeometryMeta {
             _ => unreachable!(),
         };
 
-        execute_stack(stack, &this_label, &size, resources, graph);
+        execute_stack(stack, &this_label, &size, resources, graph)
     }
 
-    fn interpret<'c: 'a>(&self, label: &[&str], resources: &ResolvedResources, graph: &mut Graph) {
+    fn interpret<'c: 'a>(
+        &self,
+        label: &[&str],
+        resources: &ResolvedResources,
+        graph: &mut Graph,
+    ) -> Result<(), ProcessorError> {
         let (type_, size, self_label, mut stack) = self.unpack();
 
         let (init_label, cur_label) = labels(label);
@@ -955,7 +977,7 @@ impl<'a> GeometryMeta {
                     // This allows extracting preceding elements relative to the anchor position
                     let prev_label = format!("{cur_label}{NEXT_LEFT}");
                     let labels = vec![prev_label.as_str(), this_label.as_str(), &next_label];
-                    let patterns = anchor_patterns(&seq, &mut stack, resources);
+                    let patterns = anchor_patterns(&seq, &mut stack, resources)?;
 
                     // Determine match type based on what's on stack
                     let match_type = match take_anchor_distance(&mut stack) {
@@ -973,7 +995,7 @@ impl<'a> GeometryMeta {
                 } else {
                     // Original prefix matching behavior
                     let labels = vec![this_label.as_str(), &next_label];
-                    let patterns = anchor_patterns(&seq, &mut stack, resources);
+                    let patterns = anchor_patterns(&seq, &mut stack, resources)?;
 
                     // Determine how we should perform the prefix match based on the top of the stack:
                     let match_type = match take_anchor_distance(&mut stack) {
@@ -1021,7 +1043,7 @@ impl<'a> GeometryMeta {
             }
         };
 
-        execute_stack(stack, this_label.as_str(), &size, resources, graph);
+        execute_stack(stack, this_label.as_str(), &size, resources, graph)
     }
 
     fn interpret_dual(
@@ -1031,7 +1053,7 @@ impl<'a> GeometryMeta {
         resources: &ResolvedResources,
         graph: &mut Graph,
         range_start: &mut usize,
-    ) {
+    ) -> Result<(), ProcessorError> {
         // unpack label for self
         let (_, size, this_label, mut stack) = self.unpack();
         let (_, prev_shape, prev_label, _) = prev.unpack();
@@ -1065,7 +1087,7 @@ impl<'a> GeometryMeta {
         match size.clone() {
             IntervalShape::FixedSeq(S(seq, _)) => {
                 let seq_len = seq.len();
-                let patterns = anchor_patterns(&seq, &mut stack, resources);
+                let patterns = anchor_patterns(&seq, &mut stack, resources)?;
                 // check if the first function on the stack is a hamming search
                 // else do an exact match
                 let match_type = get_match_type(prev_len_offset, &mut stack, seq_len, range_start);
@@ -1080,7 +1102,7 @@ impl<'a> GeometryMeta {
                     .retain_label_present(&this_label),
                 );
 
-                execute_stack(stack, &this_label, &size, resources, graph);
+                execute_stack(stack, &this_label, &size, resources, graph)?;
 
                 // update range_start
                 // TODO: this needs to be tested for unbounded beginning segments
@@ -1091,7 +1113,7 @@ impl<'a> GeometryMeta {
 
         // call interpret for self
         // this is just an unbounded or ranged segment. No cut just set or validate
-        prev.interpret_no_cut(&left_label, resources, graph);
+        prev.interpret_no_cut(&left_label, resources, graph)
     }
 }
 

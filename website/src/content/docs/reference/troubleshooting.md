@@ -20,6 +20,11 @@ For ambiguity policies, use property syntax such as
 `#[ambig_policy = quality(min_delta = 2)]`. Call syntax is reserved for
 operation annotations such as `#[edit(2)]`.
 
+The CLI uses broad stable exit classes: status 2 for geometry/configuration,
+status 3 for malformed runtime FASTQ input, and status 1 for graph or output
+execution failures. Library callers receive the corresponding structured
+`SeqprocError` variant and source chain.
+
 ## A whitelist or map cannot be loaded
 
 Relative paths are resolved from the process's working directory. Either run

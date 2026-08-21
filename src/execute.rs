@@ -1,7 +1,6 @@
 use std::{
     fs::File,
     io::{self, BufWriter, Write},
-    panic,
     path::{Path, PathBuf},
     thread,
 };
@@ -9,7 +8,7 @@ use std::{
 use antisequence::expr::fmt_expr;
 use antisequence::graph::TryOp;
 use antisequence::graph::*;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Result as AnyResult};
 use chumsky::{error::Rich, input::Input, Parser};
 use flate2::{write::GzEncoder, Compression};
 use nix::sys::stat;
@@ -21,6 +20,10 @@ use tracing::info;
 use crate::{
     compile::{compile, CompiledData},
     demux::DemuxConfig,
+    error::{
+        ExecutionConfigError, GeometryDiagnostic, GeometryStage, InputTopologyError,
+        OutputTopologyError, SeqprocError, SeqprocResult,
+    },
     io_config::{InputLane, InputSource, OutputTarget, MAX_INPUT_LANES},
     lexer,
     parser::parser,
@@ -29,14 +32,55 @@ use crate::{
 
 const MIN_PARALLEL_GZIP_BLOCK_SIZE: usize = 32 * 1024;
 
+fn graph_error_contains(
+    error: &antisequence::errors::Error,
+    predicate: &impl Fn(&antisequence::errors::Error) -> bool,
+) -> bool {
+    predicate(error)
+        || match error {
+            antisequence::errors::Error::WorkerFailures { errors, .. } => errors
+                .iter()
+                .any(|error| graph_error_contains(error, predicate)),
+            _ => false,
+        }
+}
+
+fn is_fastq_input_error(error: &antisequence::errors::Error) -> bool {
+    graph_error_contains(error, &|error| {
+        matches!(
+            error,
+            antisequence::errors::Error::ParseRecord { .. }
+                | antisequence::errors::Error::UnpairedRead(_)
+                | antisequence::errors::Error::ShardCountMismatch { .. }
+                | antisequence::errors::Error::ShardRecordCountMismatch { .. }
+                | antisequence::errors::Error::IncompleteInterleavedFragment { .. }
+        )
+    })
+}
+
+fn is_broken_pipe_error(error: &antisequence::errors::Error) -> bool {
+    graph_error_contains(error, &|error| {
+        let antisequence::errors::Error::BytesIo(source) = error else {
+            return false;
+        };
+        source
+            .downcast_ref::<io::Error>()
+            .is_some_and(|error| error.kind() == io::ErrorKind::BrokenPipe)
+    })
+}
+
 fn configure_fastq_output(
     output: OutputFastqFileOp,
     config: &RunConfig,
     gzip_threads: usize,
-) -> Result<OutputFastqFileOp> {
-    let output = output.try_with_gzip_level(config.gzip_level)?;
+) -> SeqprocResult<OutputFastqFileOp> {
+    let output = output
+        .try_with_gzip_level(config.gzip_level)
+        .map_err(|source| SeqprocError::FastqOutput { source })?;
     if config.parallel_gzip_stream {
-        Ok(output.try_with_parallel_gzip_stream(gzip_threads, config.gzip_block_size)?)
+        output
+            .try_with_parallel_gzip_stream(gzip_threads, config.gzip_block_size)
+            .map_err(|source| SeqprocError::FastqOutput { source })
     } else {
         Ok(output.with_parallel_gzip_members(config.parallel_gzip))
     }
@@ -87,11 +131,14 @@ fn writer_for_target(
     target: &OutputTarget,
     stdout_gzip: bool,
     gzip_level: u32,
-) -> Result<Box<dyn Write + Send>> {
+) -> SeqprocResult<Box<dyn Write + Send>> {
     match target {
         OutputTarget::Path(path) => {
-            let file = File::create(path)
-                .map_err(|error| anyhow!("failed to create output {:?}: {error}", path))?;
+            let file = File::create(path).map_err(|source| SeqprocError::Io {
+                operation: "create FASTQ output",
+                target: path.clone(),
+                source,
+            })?;
             let writer = BufWriter::new(file);
             if path.to_string_lossy().ends_with(".gz") {
                 Ok(Box::new(GzEncoder::new(
@@ -122,7 +169,7 @@ fn add_fastq_targets(
     targets: &[OutputTarget],
     config: &RunConfig,
     gzip_threads: usize,
-) -> Result<()> {
+) -> SeqprocResult<()> {
     if targets.is_empty() {
         return Ok(());
     }
@@ -142,12 +189,12 @@ fn add_fastq_targets(
         return Ok(());
     }
     if config.parallel_gzip || config.parallel_gzip_stream {
-        bail!("parallel gzip output is not supported when a lane targets stdout");
+        return Err(OutputTopologyError::ParallelGzipStdout.into());
     }
     let writers = targets
         .iter()
         .map(|target| writer_for_target(target, config.stdout_gzip, config.gzip_level))
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<SeqprocResult<Vec<_>>>()?;
     graph.add(OutputFastqOp::from_writers(writers));
     Ok(())
 }
@@ -156,7 +203,7 @@ fn add_fastq_targets(
 pub struct FifoSeqprocData {
     pub r1_fifo: PathBuf,
     pub r2_fifo: PathBuf,
-    pub join_handle: thread::JoinHandle<Result<SeqprocStats>>,
+    pub join_handle: thread::JoinHandle<AnyResult<SeqprocStats>>,
 }
 
 #[derive(Debug, Clone)]
@@ -302,7 +349,7 @@ impl RunConfig {
         self
     }
 
-    fn effective_input_lanes(&self) -> Result<Vec<InputLane>> {
+    fn effective_input_lanes(&self) -> SeqprocResult<Vec<InputLane>> {
         let lanes = self.input_lanes.clone().unwrap_or_else(|| {
             let mut lanes = vec![InputLane::single(self.input1.clone())];
             if let Some(input2) = &self.input2 {
@@ -311,30 +358,30 @@ impl RunConfig {
             lanes
         });
         if lanes.is_empty() {
-            bail!("at least one FASTQ input lane is required");
+            return Err(InputTopologyError::MissingLanes.into());
         }
         if lanes.len() > MAX_INPUT_LANES {
-            bail!(
-                "this release supports at most {} FASTQ input lanes; got {}",
-                MAX_INPUT_LANES,
-                lanes.len()
-            );
+            return Err(InputTopologyError::TooManyLanes {
+                maximum: MAX_INPUT_LANES,
+                observed: lanes.len(),
+            }
+            .into());
         }
         let expected_shards = lanes[0].shards.len();
         if expected_shards == 0 {
-            bail!("FASTQ input lane 1 has no shards");
+            return Err(InputTopologyError::EmptyLane { lane: 1 }.into());
         }
         for (lane, input) in lanes.iter().enumerate() {
             if input.shards.is_empty() {
-                bail!("FASTQ input lane {} has no shards", lane + 1);
+                return Err(InputTopologyError::EmptyLane { lane: lane + 1 }.into());
             }
             if input.shards.len() != expected_shards {
-                bail!(
-                    "FASTQ input lane {} has {} shards; expected {}",
-                    lane + 1,
-                    input.shards.len(),
-                    expected_shards
-                );
+                return Err(InputTopologyError::ShardCountMismatch {
+                    lane: lane + 1,
+                    expected: expected_shards,
+                    observed: input.shards.len(),
+                }
+                .into());
             }
         }
         Ok(lanes)
@@ -452,47 +499,44 @@ pub struct RejectionReasonCount {
 
 /// Execute a compiled geometry through one pipeline for normal, summary,
 /// demultiplexed, and unassigned-read runs.
-pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> {
+pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunReport> {
     if config.threads == 0 {
-        bail!("number of threads must be greater than zero");
+        return Err(ExecutionConfigError::ThreadCount(config.threads).into());
     }
     if config.gzip_level > 9 {
-        bail!(
-            "gzip compression level must be between 0 and 9, got {}",
-            config.gzip_level
-        );
+        return Err(ExecutionConfigError::GzipLevel(config.gzip_level).into());
     }
     if config.parallel_gzip && config.parallel_gzip_stream {
-        bail!("--parallel-gzip and --parallel-gzip-stream are mutually exclusive");
+        return Err(ExecutionConfigError::ConflictingGzipModes.into());
     }
     if config.staged_pipeline && config.execution_mode == ExecutionMode::WholeGraph {
-        bail!("staged pipeline execution conflicts with forced whole-graph execution");
+        return Err(ExecutionConfigError::StagedWholeGraphConflict.into());
     }
     if config.preserve_order
         && config.execution_mode == ExecutionMode::WholeGraph
         && config.threads > 1
     {
-        bail!("parallel input-order output requires automatic or pipeline execution");
+        return Err(ExecutionConfigError::OrderedWholeGraph.into());
     }
     // The real-data crossover sweep found that letting the compression pool
     // grow to every transform worker oversubscribed short-read workloads.
     // Four is the best balanced default; explicit settings remain available.
     let gzip_threads = config.gzip_threads.unwrap_or(config.threads.min(4));
     if config.parallel_gzip_stream && gzip_threads == 0 {
-        bail!("number of gzip compression threads must be greater than zero");
+        return Err(ExecutionConfigError::GzipThreadCount.into());
     }
     if config.accelerated_gzip_input && config.gzip_input_threads == 0 {
-        bail!("number of gzip input threads must be greater than zero");
+        return Err(ExecutionConfigError::GzipInputThreadCount.into());
     }
     if config.accelerated_gzip_input && config.gzip_input_chunk_size == 0 {
-        bail!("gzip input chunk size must be greater than zero");
+        return Err(ExecutionConfigError::GzipInputChunkSize.into());
     }
     if config.parallel_gzip_stream && config.gzip_block_size < MIN_PARALLEL_GZIP_BLOCK_SIZE {
-        bail!(
-            "parallel gzip block size must be at least {}, got {}",
-            MIN_PARALLEL_GZIP_BLOCK_SIZE,
-            config.gzip_block_size
-        );
+        return Err(ExecutionConfigError::GzipBlockSize {
+            minimum: MIN_PARALLEL_GZIP_BLOCK_SIZE,
+            observed: config.gzip_block_size,
+        }
+        .into());
     }
     if config.parallel_gzip_stream
         && (config.demux.is_some()
@@ -500,9 +544,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
             || config.unassigned1.is_some()
             || config.unassigned2.is_some())
     {
-        bail!(
-            "parallel single-stream gzip currently supports fixed primary outputs only; demultiplexed and unassigned outputs would create an unbounded number of compression pools"
-        );
+        return Err(OutputTopologyError::ParallelStreamVariableOutputs.into());
     }
     let effective_gzip_threads = if config.parallel_gzip_stream {
         gzip_threads
@@ -513,7 +555,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
     };
 
     if config.interleaved_input.is_some() && config.input_lanes.is_some() {
-        bail!("interleaved input and separate input lanes are mutually exclusive");
+        return Err(InputTopologyError::ConflictingLayouts.into());
     }
     let interleaved_sources = config.interleaved_input.clone();
     let input_lanes = if interleaved_sources.is_some() {
@@ -527,22 +569,22 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         input_lanes.len()
     };
     if interleaved_sources.is_none() && compiled_data.geometry.len() != input_lane_count {
-        bail!(
-            "geometry requires {} input lanes, but {} were supplied",
-            compiled_data.geometry.len(),
-            input_lane_count
-        );
+        return Err(InputTopologyError::GeometryArityMismatch {
+            required: compiled_data.geometry.len(),
+            supplied: input_lane_count,
+        }
+        .into());
     }
     if let Some(sources) = &interleaved_sources {
         if sources.is_empty() {
-            bail!("interleaved input requires at least one FASTQ source");
+            return Err(InputTopologyError::EmptyInterleavedInput.into());
         }
         if !(1..=MAX_INPUT_LANES).contains(&input_lane_count) {
-            bail!(
-                "interleaved input supports geometry arities 1 through {}; got {}",
-                MAX_INPUT_LANES,
-                input_lane_count
-            );
+            return Err(InputTopologyError::UnsupportedInterleavedArity {
+                maximum: MAX_INPUT_LANES,
+                observed: input_lane_count,
+            }
+            .into());
         }
     }
 
@@ -556,7 +598,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
                 && transformations.len() == 2
                 && (config.output1.is_none() || config.output2.is_none())
             {
-                bail!("geometry transforms into two reads; both output1 and output2 are required");
+                return Err(OutputTopologyError::LegacyPairedOutputRequired.into());
             }
         }
     }
@@ -565,22 +607,22 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         .clone()
         .unwrap_or_else(|| output_targets_from_legacy(&config, output_arity));
     if config.demux.is_none() && primary_targets.len() != output_arity {
-        bail!(
-            "{} primary output targets were supplied, but the geometry emits {} reads",
-            primary_targets.len(),
-            output_arity
-        );
+        return Err(OutputTopologyError::ArityMismatch {
+            required: output_arity,
+            supplied: primary_targets.len(),
+        }
+        .into());
     }
     let unassigned_targets = config
         .unassigned_outputs
         .clone()
         .unwrap_or_else(|| unassigned_targets_from_legacy(&config, input_lane_count));
     if unassigned_targets.len() > input_lane_count {
-        bail!(
-            "{} unassigned output targets were supplied for {} input lanes",
-            unassigned_targets.len(),
-            input_lane_count
-        );
+        return Err(OutputTopologyError::TooManyUnassigned {
+            supplied: unassigned_targets.len(),
+            input_arity: input_lane_count,
+        }
+        .into());
     }
     let stdout_targets = primary_targets
         .iter()
@@ -588,10 +630,10 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         .filter(|target| matches!(target, OutputTarget::Stdout))
         .count();
     if stdout_targets > 1 {
-        bail!("at most one FASTQ output target may use stdout");
+        return Err(OutputTopologyError::MultipleStdout.into());
     }
     if config.stdout_gzip && stdout_targets == 0 {
-        bail!("stdout gzip compression was requested, but no output target uses stdout");
+        return Err(OutputTopologyError::StdoutGzipWithoutStdout.into());
     }
 
     let stdin_sources = input_lanes
@@ -601,10 +643,10 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         .filter(|source| matches!(source, InputSource::Stdin))
         .count();
     if stdin_sources > 1 {
-        bail!("at most one FASTQ input source may use stdin");
+        return Err(InputTopologyError::MultipleStdin.into());
     }
     if stdin_sources > 0 && config.accelerated_gzip_input {
-        bail!("accelerated gzip input is not available for stdin; gzip stdin is auto-detected");
+        return Err(InputTopologyError::AcceleratedGzipStdin.into());
     }
 
     let resolved_resources = compiled_data.resolve_resources(
@@ -647,11 +689,15 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
     if let Some(sources) = &interleaved_sources {
         if stdin_sources > 0 {
             if sources.len() != 1 {
-                bail!("interleaved stdin must be the only shard in its input stream");
+                return Err(InputTopologyError::InterleavedStdinWithShards.into());
             }
             graph.add(
-                InputFastqOp::from_interleaved_reader(io::stdin(), input_lane_count)
-                    .map_err(|error| anyhow!("failed to parse interleaved stdin: {error}"))?,
+                InputFastqOp::from_interleaved_reader(io::stdin(), input_lane_count).map_err(
+                    |source| SeqprocError::FastqInput {
+                        context: "interleaved stdin",
+                        source,
+                    },
+                )?,
             );
         } else {
             let files = sources
@@ -669,27 +715,34 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
             } else {
                 GroupedInputFastqOp::from_interleaved_files(files, input_lane_count)
             };
-            graph.add(input.map_err(|error| {
-                anyhow!("failed to configure interleaved FASTQ input: {error}")
+            graph.add(input.map_err(|source| SeqprocError::FastqInput {
+                context: "interleaved",
+                source,
             })?);
         }
     } else if stdin_sources > 0 {
         if input_lanes.iter().any(|lane| lane.shards.len() != 1) {
-            bail!("stdin currently represents a complete logical lane and cannot be combined with file shards");
+            return Err(InputTopologyError::StdinWithShards.into());
         }
         let readers = input_lanes
             .iter()
             .map(|lane| match &lane.shards[0] {
                 InputSource::Path(path) => File::open(path)
                     .map(|file| Box::new(file) as Box<dyn io::Read + Send>)
-                    .map_err(|error| anyhow!("failed to open input FASTQ {:?}: {error}", path)),
+                    .map_err(|source| SeqprocError::Io {
+                        operation: "open FASTQ input",
+                        target: path.clone(),
+                        source,
+                    }),
                 InputSource::Stdin => Ok(Box::new(io::stdin()) as Box<dyn io::Read + Send>),
             })
-            .collect::<Result<Vec<_>>>()?;
-        graph.add(
-            InputFastqOp::from_readers(readers)
-                .map_err(|error| anyhow!("failed to parse streamed FASTQ input: {error}"))?,
-        );
+            .collect::<SeqprocResult<Vec<_>>>()?;
+        graph.add(InputFastqOp::from_readers(readers).map_err(|source| {
+            SeqprocError::FastqInput {
+                context: "streamed",
+                source,
+            }
+        })?);
     } else if grouped_files.iter().all(|lane| lane.len() == 1) {
         let files = grouped_files
             .iter()
@@ -704,7 +757,10 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         } else {
             InputFastqOp::from_files(files)
         };
-        graph.add(input.map_err(|error| anyhow!("failed to open input FASTQ: {error}"))?);
+        graph.add(input.map_err(|source| SeqprocError::FastqInput {
+            context: "file-backed",
+            source,
+        })?);
     } else {
         let input = if config.accelerated_gzip_input {
             GroupedInputFastqOp::from_files_accelerated_gzip(
@@ -715,28 +771,31 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         } else {
             GroupedInputFastqOp::from_files(grouped_files)
         };
-        graph.add(
-            input.map_err(|error| anyhow!("failed to configure grouped FASTQ input: {error}"))?,
-        );
+        graph.add(input.map_err(|source| SeqprocError::FastqInput {
+            context: "grouped",
+            source,
+        })?);
     }
 
     let has_unassigned = !unassigned_targets.is_empty();
     if has_unassigned {
         let mut try_graph = Graph::new();
-        compiled_data.interpret_with_resources(&mut try_graph, &resolved_resources);
+        compiled_data.interpret_with_resources(&mut try_graph, &resolved_resources)?;
 
         let mut catch_graph = Graph::new();
         add_fastq_targets(&mut catch_graph, &unassigned_targets, &config, gzip_threads)?;
         graph.add(TryOp::new(try_graph, catch_graph));
     } else {
-        compiled_data.interpret_with_resources(&mut graph, &resolved_resources);
+        compiled_data.interpret_with_resources(&mut graph, &resolved_resources)?;
     }
 
     if let Some(demux) = &config.demux {
-        demux
-            .add_lookup_op(&mut graph)
-            .map_err(|error| anyhow!(error))?;
-        std::fs::create_dir_all(&demux.output_dir)?;
+        demux.add_lookup_op(&mut graph)?;
+        std::fs::create_dir_all(&demux.output_dir).map_err(|source| SeqprocError::Io {
+            operation: "create demultiplexing output directory",
+            target: demux.output_dir.clone(),
+            source,
+        })?;
 
         let out_dir = demux.output_dir.to_string_lossy();
         let sample_attr_path = format!("{}.{}", demux.barcode_label, demux.sample_attr);
@@ -767,7 +826,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         .compile_with(GraphOptimizationConfig {
             enabled: config.graph_optimization,
         })
-        .map_err(|error| anyhow!("failed to compile processing graph: {error}"))?;
+        .map_err(|source| SeqprocError::GraphCompilation { source })?;
     let optimization = graph.optimization_report().clone();
     let mut execution_request = ExecutionRequest::new(config.threads);
     execution_request.mode =
@@ -788,9 +847,27 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
     if let Some(batch_size) = config.batch_size {
         execution_request.pipeline.batch_size = batch_size;
     }
-    let planned = graph
-        .try_run_planned(execution_request)
-        .map_err(|error| anyhow!(error.to_string()))?;
+    let planned = graph.try_run_planned(execution_request).map_err(|source| {
+        if is_fastq_input_error(&source) {
+            return SeqprocError::FastqInput {
+                context: "runtime",
+                source,
+            };
+        }
+        if matches!(
+            &source,
+            antisequence::errors::Error::InvalidPipelineConfig(_)
+                | antisequence::errors::Error::InvalidPipelineGraph(_)
+        ) {
+            return SeqprocError::ExecutionPlanning { source };
+        }
+        if is_broken_pipe_error(&source) {
+            return SeqprocError::BrokenPipe {
+                operation: "FASTQ output",
+            };
+        }
+        SeqprocError::GraphExecution { source }
+    })?;
     let execution_plan = planned.plan;
     let pipeline = planned.pipeline;
 
@@ -1064,6 +1141,8 @@ fn statistics_from_graph(
     }
 }
 
+#[deprecated(note = "use run(RunConfig, CompiledData) for structured errors")]
+#[allow(deprecated)]
 pub fn interpret(
     file1: &Path,
     file2: Option<&Path>,
@@ -1089,6 +1168,7 @@ pub fn interpret(
 
 /// Interpret geometry with optional unassigned output and demultiplexing support.
 #[allow(clippy::too_many_arguments)]
+#[deprecated(note = "use run(RunConfig, CompiledData) for structured errors")]
 pub fn interpret_with_unassigned(
     file1: &Path,
     file2: Option<&Path>,
@@ -1135,10 +1215,14 @@ pub fn interpret_with_unassigned(
         input_files.push(f2.to_str().unwrap_or(""));
     }
 
-    graph.add(
-        antisequence::graph::InputFastqOp::from_files(input_files)
-            .unwrap_or_else(|e| panic!("{e}")),
-    );
+    let input = match antisequence::graph::InputFastqOp::from_files(input_files) {
+        Ok(input) => input,
+        Err(error) => {
+            tracing::error!("Failed to configure FASTQ input: {error}");
+            return;
+        }
+    };
+    graph.add(input);
 
     if has_unassigned {
         // Build catch graph for unassigned reads
@@ -1238,6 +1322,7 @@ pub fn interpret_with_unassigned(
 
 /// Interpret geometry with optional demultiplexing support.
 #[allow(clippy::too_many_arguments)]
+#[deprecated(note = "use run(RunConfig, CompiledData) for structured errors")]
 pub fn interpret_with_demux(
     file1: &Path,
     file2: Option<&Path>,
@@ -1272,10 +1357,14 @@ pub fn interpret_with_demux(
         input_files.push(f2.to_str().unwrap_or(""));
     }
 
-    graph.add(
-        antisequence::graph::InputFastqOp::from_files(input_files)
-            .unwrap_or_else(|e| panic!("{e}")),
-    );
+    let input = match antisequence::graph::InputFastqOp::from_files(input_files) {
+        Ok(input) => input,
+        Err(error) => {
+            tracing::error!("Failed to configure FASTQ input: {error}");
+            return;
+        }
+    };
+    graph.add(input);
 
     if let Err(error) = compiled_data.try_interpret(&mut graph, &additional_args) {
         tracing::error!("Failed to resolve geometry resources: {error}");
@@ -1361,7 +1450,7 @@ fn interpret_to_pipes(
     threads: usize,
     additional_args: Vec<&str>,
     compiled_data: CompiledData,
-) -> Result<SeqprocStats> {
+) -> AnyResult<SeqprocStats> {
     let f1 = File::create(out1)?;
 
     // Handle second output stream optionally if files2 is present?
@@ -1595,17 +1684,30 @@ fn interpret_to_pipes(
     })
 }
 
-pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, String>>> {
-    // lex input
-    let tokens = lexer::lexer()
-        .parse(&geom)
-        .into_result()
-        .map_err(|errors| {
-            errors
-                .into_iter()
-                .map(|error| Rich::<String>::custom(*error.span(), error.to_string()).into_owned())
-                .collect::<Vec<_>>()
-        })?;
+fn diagnostic_from_rich(error: Rich<'_, impl std::fmt::Display>) -> GeometryDiagnostic {
+    GeometryDiagnostic {
+        message: error.to_string(),
+        reason: error.reason().to_string(),
+        span: error.span().into_range(),
+        contexts: error
+            .contexts()
+            .map(|(label, span)| (format!("while parsing this {label}"), span.into_range()))
+            .collect(),
+    }
+}
+
+/// Parse and semantically compile EFGDL with structured, stage-specific
+/// diagnostics. This is the primary library compilation API.
+pub fn compile_geom_typed(geom: impl AsRef<str>) -> SeqprocResult<CompiledData> {
+    let geom = geom.as_ref();
+    let tokens =
+        lexer::lexer()
+            .parse(geom)
+            .into_result()
+            .map_err(|errors| SeqprocError::Geometry {
+                stage: GeometryStage::Lexing,
+                diagnostics: errors.into_iter().map(diagnostic_from_rich).collect(),
+            })?;
 
     let tokens = tokens
         .into_iter()
@@ -1613,21 +1715,43 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, Stri
         .collect::<Vec<_>>();
     let input = tokens[..].split_spanned((0..geom.len()).into());
 
-    // parse token
-    let description = parser().parse(input).into_result().map_err(|errors| {
-        errors
-            .into_iter()
-            .map(|error| Rich::<String>::custom(*error.span(), error.to_string()).into_owned())
+    let description =
+        parser()
+            .parse(input)
+            .into_result()
+            .map_err(|errors| SeqprocError::Geometry {
+                stage: GeometryStage::Parsing,
+                diagnostics: errors.into_iter().map(diagnostic_from_rich).collect(),
+            })?;
+
+    compile(description).map_err(|error| SeqprocError::Geometry {
+        stage: GeometryStage::SemanticCompilation,
+        diagnostics: vec![GeometryDiagnostic {
+            message: error.msg.clone(),
+            reason: error.msg,
+            span: error.span.into_range(),
+            contexts: Vec::new(),
+        }],
+    })
+}
+
+/// Compatibility API returning Chumsky diagnostics. New callers should use
+/// [`compile_geom_typed`].
+pub fn compile_geom(geom: String) -> std::result::Result<CompiledData, Vec<Rich<'static, String>>> {
+    let compiled = compile_geom_typed(&geom).map_err(|error| {
+        let Some((_, diagnostics)) = error.geometry_diagnostics() else {
+            unreachable!("geometry compilation only returns geometry diagnostics")
+        };
+        diagnostics
+            .iter()
+            .map(|diagnostic| {
+                Rich::<String>::custom(diagnostic.span.clone().into(), diagnostic.message.clone())
+                    .into_owned()
+            })
             .collect::<Vec<_>>()
     })?;
 
-    // compile ast
-    let compiled = compile(description).map_err(|e| {
-        let rich = Rich::<String>::custom(e.span, e.msg);
-        vec![rich.into_owned()]
-    })?;
-
-    // LANG-DEPRECATE: Print deprecation warnings to stderr.
+    // LANG-DEPRECATE: Preserve compatibility diagnostics on the old API.
     for warning in &compiled.warnings {
         eprintln!("Warning: {}", warning);
     }
@@ -1643,7 +1767,7 @@ pub fn read_pairs_to_file(
     out2: &Path,
     threads: usize,
     additional_args: Vec<&str>,
-) -> Result<SeqprocStats> {
+) -> AnyResult<SeqprocStats> {
     let files1 = vec![in1.to_str().unwrap_or("").to_owned()];
     let files2 = if let Some(i2) = in2 {
         vec![i2.to_str().unwrap_or("").to_owned()]
@@ -1669,7 +1793,7 @@ pub fn read_pairs_to_fifo<'a: 'static>(
     r1: Vec<String>,
     r2: Vec<String>,
     additional_args: Vec<&'a str>,
-) -> Result<FifoSeqprocData> {
+) -> AnyResult<FifoSeqprocData> {
     if !r2.is_empty() && r1.len() != r2.len() {
         bail!(
             "The number of R1 files ({}) must match the number of R2 files ({})",
@@ -1687,7 +1811,9 @@ pub fn read_pairs_to_fifo<'a: 'static>(
     match unistd::mkfifo(&r1_fifo, stat::Mode::S_IRWXU) {
         Ok(_) => {
             info!("created {:?}", r1_fifo);
-            assert!(std::path::Path::new(&r1_fifo).exists());
+            if !std::path::Path::new(&r1_fifo).exists() {
+                bail!("read 1 fifo was not created at {:?}", r1_fifo);
+            }
         }
         Err(err) => bail!("Error creating read 1 fifo: {}", err),
     }
@@ -1695,7 +1821,9 @@ pub fn read_pairs_to_fifo<'a: 'static>(
     match unistd::mkfifo(&r2_fifo, stat::Mode::S_IRWXU) {
         Ok(_) => {
             info!("created {:?}", r2_fifo);
-            assert!(std::path::Path::new(&r2_fifo).exists());
+            if !std::path::Path::new(&r2_fifo).exists() {
+                bail!("read 2 fifo was not created at {:?}", r2_fifo);
+            }
         }
         Err(err) => bail!("Error creating read 2 fifo: {}", err),
     }
@@ -1707,7 +1835,7 @@ pub fn read_pairs_to_fifo<'a: 'static>(
     let r1_fifo_clone = r1_fifo.clone();
     let r2_fifo_clone = r2_fifo.clone();
 
-    let join_handle: thread::JoinHandle<Result<SeqprocStats>> = thread::spawn(move || {
+    let join_handle: thread::JoinHandle<AnyResult<SeqprocStats>> = thread::spawn(move || {
         let seqproc_stats = interpret_to_pipes(
             r1,
             r2,

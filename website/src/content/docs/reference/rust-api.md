@@ -18,11 +18,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use antisequence::graph::ExecutionMode;
-use seqproc::execute::{compile_geom, run, RunConfig};
+use seqproc::execute::{compile_geom_typed, run, RunConfig};
 use seqproc::io_config::{InputLane, InputSource, OutputTarget};
 
 let source = fs::read_to_string("protocol.geom")?;
-let compiled = compile_geom(source).expect("geometry must compile");
+let compiled = compile_geom_typed(&source)?;
 
 let mut config = RunConfig::new("reads_R1.part1.fastq.gz").with_input_lanes([
     InputLane::new(["reads_R1.part1.fastq.gz", "reads_R1.part2.fastq.gz"]),
@@ -36,7 +36,7 @@ config.graph_optimization = true;
 
 let report = run(config, compiled)?;
 println!("effective transform threads: {}", report.effective_threads);
-# Ok::<(), anyhow::Error>(())
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 For streams, construct typed targets rather than using a sentinel path:
@@ -104,10 +104,17 @@ from requested options.
 
 ## Error handling
 
-`run` is fallible and returns an error for invalid thread counts, unsupported
-option combinations, FASTQ opening/parsing failures, graph execution failures,
-and output failures. Applications should propagate or report the error and exit
-nonzero; do not discard it.
+`compile_geom_typed` and `run` return `SeqprocError`. Its variants distinguish
+source-located geometry lexing, parsing, and semantic diagnostics; resource
+bindings; input and output topology; FASTQ parsing; execution planning; graph
+construction, compilation, and execution; demultiplexing; I/O; and broken
+pipes. Applications can match these variants directly without parsing display
+text. `SeqprocError::exit_code` exposes the same broad status classes used by
+the CLI.
+
+The older `compile_geom` Chumsky-diagnostic form remains as a compatibility API.
+Unit-returning `interpret*` wrappers are deprecated because they cannot return
+structured failures.
 
 The Rust API is still pre-1.0. Pin the exact seqproc and ANTISEQUENCE revisions
 for applications that need API stability.

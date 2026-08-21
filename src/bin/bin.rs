@@ -8,7 +8,8 @@ use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 use antisequence::graph::{ExecutionMode, PipelineInputMode, StatisticsLevel};
 use seqproc::{
     demux::DemuxConfig,
-    execute::{compile_geom, run, RunConfig},
+    error::{render_geometry_diagnostics, SeqprocError},
+    execute::{compile_geom_typed, run, RunConfig},
     io_config::{InputLane, InputSource, OutputTarget},
     resources::ResourceBindings,
 };
@@ -280,10 +281,9 @@ pub struct RunArgs {
 }
 
 fn cli_output_targets(paths: [Option<PathBuf>; 3]) -> Vec<OutputTarget> {
-    let last = paths
-        .iter()
-        .rposition(Option::is_some)
-        .expect("output target conversion requires one supplied path");
+    let Some(last) = paths.iter().rposition(Option::is_some) else {
+        return Vec::new();
+    };
     paths
         .into_iter()
         .take(last + 1)
@@ -312,21 +312,23 @@ fn main() {
     let args = match cli.command {
         Some(Command::Validate { geometry }) => {
             let source = read_geometry(&geometry);
-            match compile_geom(source.clone()) {
-                Ok(_) => {
+            match compile_geom_typed(&source) {
+                Ok(compiled) => {
+                    report_warnings(&compiled.warnings);
                     println!("valid: {}", geometry.display());
                     return;
                 }
-                Err(errors) => {
-                    report_geometry_errors(&source, &errors);
-                    exit(1);
+                Err(error) => {
+                    report_seqproc_error(Some(&source), &error);
+                    exit(error.exit_code());
                 }
             }
         }
         Some(Command::Explain { geometry }) => {
             let source = read_geometry(&geometry);
-            match compile_geom(source.clone()) {
+            match compile_geom_typed(&source) {
                 Ok(compiled) => {
+                    report_warnings(&compiled.warnings);
                     let representation = format!("{compiled:#?}");
                     let normalized = compiled.get_simplified_description_string();
                     println!(
@@ -334,9 +336,9 @@ fn main() {
                     );
                     return;
                 }
-                Err(errors) => {
-                    report_geometry_errors(&source, &errors);
-                    exit(1);
+                Err(error) => {
+                    report_seqproc_error(Some(&source), &error);
+                    exit(error.exit_code());
                 }
             }
         }
@@ -373,11 +375,10 @@ fn main() {
         eprintln!("error: --read3 requires --read2; input lane indices must be contiguous");
         exit(2);
     }
-    let file1 = interleaved_input
-        .first()
-        .or_else(|| read1.first())
-        .expect("a FASTQ input was validated")
-        .clone();
+    let Some(file1) = interleaved_input.first().or_else(|| read1.first()).cloned() else {
+        eprintln!("error: no FASTQ input remained after CLI validation");
+        exit(2);
+    };
 
     let geom = read_geometry(&geom_path);
     let geometry_digest = format!("blake3:{}", blake3::hash(geom.as_bytes()).to_hex());
@@ -401,7 +402,7 @@ fn main() {
         }
     }
 
-    let compiled_efgdl = compile_geom(geom.clone());
+    let compiled_efgdl = compile_geom_typed(&geom);
 
     let threads = args.threads;
 
@@ -434,6 +435,7 @@ fn main() {
 
     match compiled_efgdl {
         Ok(geom) => {
+            report_warnings(&geom.warnings);
             let mut config = RunConfig::new(file1.clone());
             config.input2 = read2.first().cloned();
             if interleaved_input.is_empty() {
@@ -520,8 +522,8 @@ fn main() {
             let report = match run(config, geom) {
                 Ok(report) => report,
                 Err(error) => {
-                    eprintln!("error: seqproc execution failed: {error}");
-                    exit(1);
+                    report_seqproc_error(None, &error);
+                    exit(error.exit_code());
                 }
             };
 
@@ -548,9 +550,9 @@ fn main() {
                 }
             }
         }
-        Err(errs) => {
-            report_geometry_errors(&geom, &errs);
-            exit(1);
+        Err(error) => {
+            report_seqproc_error(Some(&geom), &error);
+            exit(error.exit_code());
         }
     }
 }
@@ -562,19 +564,18 @@ fn read_geometry(path: &PathBuf) -> String {
     })
 }
 
-fn report_geometry_errors(source: &str, errors: &[chumsky::error::Rich<'static, String>]) {
-    use ariadne::{Color, Label, Report, ReportKind, Source};
-    for error in errors {
-        Report::build(ReportKind::Error, ((), error.span().into_range()))
-            .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
-            .with_message(error.to_string())
-            .with_label(
-                Label::new(((), error.span().into_range()))
-                    .with_message(error.reason().to_string())
-                    .with_color(Color::Red),
-            )
-            .finish()
-            .print(Source::from(source))
-            .unwrap();
+fn report_seqproc_error(source: Option<&str>, error: &SeqprocError) {
+    if let (Some(source), Some((_, diagnostics))) = (source, error.geometry_diagnostics()) {
+        if let Err(render_error) = render_geometry_diagnostics(source, diagnostics) {
+            eprintln!("error: could not render geometry diagnostics: {render_error}");
+        }
+    } else {
+        eprintln!("error: {error}");
+    }
+}
+
+fn report_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("warning: {warning}");
     }
 }
