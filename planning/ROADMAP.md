@@ -52,7 +52,7 @@ Every milestone must satisfy these requirements:
 
 | Order | Capability | Current status | Principal dependency |
 | ---: | --- | --- | --- |
-| 1 | Named resource bindings | Planned | EFGDL 2 document model |
+| 1 | Named resource bindings | Complete | EFGDL 2 document model |
 | 2 | Lists of FASTQ files per lane | Planned | Grouped input-source model |
 | 3 | stdin/stdout | Foundation exists in ANTISEQUENCE | Input/output target model |
 | 4 | Interleaved input | Foundation exists in ANTISEQUENCE | Stream targets and geometry arity |
@@ -130,6 +130,29 @@ encoded as ordinary strings.
 - Geometry and resource digests identify both the declaration and resolved
   resource content without reading resources per record.
 - Named bindings add no measurable steady-state processing overhead.
+
+### Completion record
+
+- **Implementation:** seqproc commit `6a43b18` (`Add named EFGDL resource
+  bindings`). No ANTISEQUENCE change was required.
+- **Compatibility:** quoted literals and `$0`/`--additional` remain supported.
+  `CompiledData::interpret` retains its unit-returning compatibility behavior;
+  `try_interpret` is the fallible positional API. EFGDL 2 relative literals
+  and named defaults are geometry-relative, while explicit bindings retain
+  invocation-relative semantics.
+- **Tests:** `cargo test --lib` (276 passed), `cargo test --test
+  cli_workflow_tests` (15 passed), and `cargo test --test bench_regression` (19
+  passed). Named, positional, defaulted, missing, duplicate, unknown, and
+  provenance paths are covered; named and positional output is asserted byte
+  identical.
+- **Performance gate:** resources are resolved, validated, and BLAKE3-digested
+  once before graph construction. The compiled per-record graph is identical
+  for named and positional references, so the feature adds no per-record
+  allocation, lookup, synchronization, or branch. The existing SE/PE
+  regression benchmark passed.
+- **Documentation:** EFGDL overview, command-line guide, summaries guide, and
+  summary schema 1.7.0 document declarations, bindings, defaults, resolution,
+  and content digests.
 
 ---
 
