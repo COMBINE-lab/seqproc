@@ -58,6 +58,21 @@ The normal whole-graph worker remains the one-thread default: it is faster than
 the staged pipeline on very cheap graphs even after direct rendering. Direct
 rendering therefore does not silently change backend selection.
 
+## Long-read branching
+
+Either-orientation matching and conditional retry must preserve the original
+record while evaluating another graph path. The ANTISEQUENCE backend uses a
+size-dispatched copy-on-write representation for these branch points: long
+records initially share immutable FASTQ storage, while short records retain
+the faster ordinary-copy path. The first mutation remains branch-local, and
+records that never branch continue to use recycled owned buffers.
+
+This is automatic and does not change EFGDL syntax or output. Synthetic
+branch-isolation measurements are maintained in the
+[ANTISEQUENCE graph API guide](https://github.com/COMBINE-lab/ANTISEQUENCE/blob/dev/docs/graph-api.md#copy-on-write-graph-branches);
+protocol throughput should still be measured end to end because matching,
+decompression, and output can dominate the saved copy.
+
 ## Statistics
 
 No `--summary` means statistics collection is off. For manuscript-quality
