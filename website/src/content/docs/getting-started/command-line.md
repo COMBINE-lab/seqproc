@@ -22,12 +22,27 @@ workflows should use `seqproc run`.
 
 ## Required run inputs
 
-`--geom` and `--file1` are required. Supply `--file2` for paired-end input.
+`--geom` and `--read1` are required. Supply `--read2` for paired-end input.
+Each read lane accepts repeated options and comma-separated ordered shards.
+Corresponding shards are processed together without temporary concatenation:
+
+```console
+seqproc run --geom protocol.geom \
+  --read1 lane1_R1.fastq.gz,lane2_R1.fastq.gz \
+  --read2 lane1_R2.fastq.gz,lane2_R2.fastq.gz \
+  --out1 clean_R1.fastq.gz --out2 clean_R2.fastq.gz
+```
+
+All lanes must have the same shard count, and every corresponding shard must
+contain the same number of records. Plain and gzip shards may be mixed. Empty
+shards are valid when they occur in every lane. `--file1` and `--file2` remain
+single-path compatibility aliases.
+
 Output arguments are optional syntactically, but an omitted primary output is
 discarded. Use `--out1` and, for two-output geometries, `--out2` explicitly.
 
 ```console
-seqproc run --geom protocol.geom --file1 R1.fastq --out1 clean_R1.fastq
+seqproc run --geom protocol.geom --read1 R1.fastq --out1 clean_R1.fastq
 ```
 
 ## Parallel execution and ordering

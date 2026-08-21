@@ -19,12 +19,15 @@ use std::path::PathBuf;
 
 use antisequence::graph::ExecutionMode;
 use seqproc::execute::{compile_geom, run, RunConfig};
+use seqproc::io_config::InputLane;
 
 let source = fs::read_to_string("protocol.geom")?;
 let compiled = compile_geom(source).expect("geometry must compile");
 
-let mut config = RunConfig::new("reads_R1.fastq.gz");
-config.input2 = Some(PathBuf::from("reads_R2.fastq.gz"));
+let mut config = RunConfig::new("reads_R1.part1.fastq.gz").with_input_lanes([
+    InputLane::new(["reads_R1.part1.fastq.gz", "reads_R1.part2.fastq.gz"]),
+    InputLane::new(["reads_R2.part1.fastq.gz", "reads_R2.part2.fastq.gz"]),
+]);
 config.output1 = Some(PathBuf::from("processed_R1.fastq.gz"));
 config.output2 = Some(PathBuf::from("processed_R2.fastq.gz"));
 config.threads = 8;
@@ -50,7 +53,9 @@ println!("effective transform threads: {}", report.effective_threads);
 - default `needletail` input decoding;
 - statistics off.
 
-Fields are public for explicit configuration of second input/output paths,
+`with_input_lanes` supplies ordered shards for each biological read lane.
+`input1` and `input2` remain the one-path compatibility representation when
+`input_lanes` is `None`. Fields are public for explicit configuration of output paths,
 ordering, execution mode, graph optimization, pipeline input mode and bounds, gzip
 backends, additional geometry arguments, demultiplexing, direct terminal
 rendering, and statistics.

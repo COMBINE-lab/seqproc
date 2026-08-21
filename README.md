@@ -57,7 +57,7 @@ run it:
 seqproc validate 10x-v2.geom
 seqproc explain 10x-v2.geom
 seqproc run --geom 10x-v2.geom \
-  --file1 reads_R1.fastq.gz --file2 reads_R2.fastq.gz \
+  --read1 reads_R1.fastq.gz --read2 reads_R2.fastq.gz \
   --out1 processed_R1.fastq.gz --out2 processed_R2.fastq.gz \
   --threads 8
 ```
@@ -67,6 +67,10 @@ discarded rather than written to standard output. See the
 [quick start](https://combine-lab.github.io/seqproc/getting-started/quick-start/)
 and [command-line reference](https://combine-lab.github.io/seqproc/getting-started/command-line/)
 for paired-end, compressed-I/O, demultiplexing, and reporting examples.
+
+Logical read lanes may be split across files without pre-concatenation. Repeat
+`--read1`/`--read2` or use comma-separated paths; seqproc opens corresponding
+shards lazily and verifies their record counts at every shard boundary.
 
 New geometry files should declare EFGDL 2 in the general document header.
 Optional metadata fields accept integers, quoted strings, or bare identifiers

@@ -22,6 +22,7 @@ pub mod demux;
 pub mod error;
 pub mod execute;
 mod geometry;
+pub mod io_config;
 mod processors;
 pub mod resources;
 

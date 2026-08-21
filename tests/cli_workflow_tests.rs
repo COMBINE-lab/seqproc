@@ -20,7 +20,7 @@ fn gzip_copy(source: &str, destination: &std::path::Path) {
 
 fn assert_current_summary_shape(report: &Value) {
     let schema: Value =
-        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.7.0.schema.json")).unwrap();
+        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.8.0.schema.json")).unwrap();
     assert_eq!(
         report["schema_version"],
         schema["properties"]["schema_version"]["const"]
@@ -29,7 +29,7 @@ fn assert_current_summary_shape(report: &Value) {
     for key in report.as_object().unwrap().keys() {
         assert!(
             properties.contains_key(key),
-            "summary field {key:?} is absent from schema 1.7.0"
+            "summary field {key:?} is absent from schema 1.8.0"
         );
     }
     for required in schema["required"].as_array().unwrap() {
@@ -234,6 +234,110 @@ fn named_resource_defaults_and_binding_errors_are_deterministic() {
 }
 
 #[test]
+fn grouped_fastq_shards_match_logical_lane_concatenation() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("paired.geom");
+    fs::write(&geometry, "1{r:}2{r:}\n").unwrap();
+
+    let r1a = directory.path().join("r1-a.fastq");
+    let r1b_plain = directory.path().join("r1-b.fastq");
+    let r1b = directory.path().join("r1-b.fastq.gz");
+    let r2a = directory.path().join("r2-a.fastq");
+    let r2b_plain = directory.path().join("r2-b.fastq");
+    let r2b = directory.path().join("r2-b.fastq.gz");
+    fs::write(&r1a, "@a/1\nAAAA\n+\nIIII\n").unwrap();
+    fs::write(&r1b_plain, "@b/1\nCCCC\n+\nJJJJ\n").unwrap();
+    fs::write(&r2a, "@a/2\nTT\n+\nKK\n").unwrap();
+    fs::write(&r2b_plain, "@b/2\nGG\n+\nLL\n").unwrap();
+    gzip_copy(r1b_plain.to_str().unwrap(), &r1b);
+    gzip_copy(r2b_plain.to_str().unwrap(), &r2b);
+
+    let grouped1 = directory.path().join("grouped-r1.fastq");
+    let grouped2 = directory.path().join("grouped-r2.fastq");
+    let summary = directory.path().join("grouped-summary.json");
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            &format!("{},{}", r1a.display(), r1b.display()),
+            "--read2",
+            r2a.to_str().unwrap(),
+            "--read2",
+            r2b.to_str().unwrap(),
+            "--out1",
+            grouped1.to_str().unwrap(),
+            "--out2",
+            grouped2.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+            "--preserve-order",
+        ])
+        .assert()
+        .success();
+
+    let concatenated1 = directory.path().join("r1-concatenated.fastq");
+    let concatenated2 = directory.path().join("r2-concatenated.fastq");
+    fs::write(
+        &concatenated1,
+        [fs::read(&r1a).unwrap(), fs::read(&r1b_plain).unwrap()].concat(),
+    )
+    .unwrap();
+    fs::write(
+        &concatenated2,
+        [fs::read(&r2a).unwrap(), fs::read(&r2b_plain).unwrap()].concat(),
+    )
+    .unwrap();
+    let baseline1 = directory.path().join("baseline-r1.fastq");
+    let baseline2 = directory.path().join("baseline-r2.fastq");
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--file1",
+            concatenated1.to_str().unwrap(),
+            "--file2",
+            concatenated2.to_str().unwrap(),
+            "--out1",
+            baseline1.to_str().unwrap(),
+            "--out2",
+            baseline2.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(grouped1).unwrap(), fs::read(baseline1).unwrap());
+    assert_eq!(fs::read(grouped2).unwrap(), fs::read(baseline2).unwrap());
+
+    let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
+    assert_current_summary_shape(&report);
+    assert_eq!(
+        report["shard_read_counts"],
+        serde_json::json!([[1, 1], [1, 1]])
+    );
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            r1a.to_str().unwrap(),
+            "--read1",
+            r1b.to_str().unwrap(),
+            "--read2",
+            r2a.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("has 1 shards; expected 2"));
+}
+
+#[test]
 fn summary_mode_uses_the_same_processing_pipeline() {
     let directory = tempdir().unwrap();
     let geometry = fixture("fgdl/match.geom");
@@ -309,7 +413,7 @@ fn summary_mode_uses_the_same_processing_pipeline() {
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.7.0");
+    assert_eq!(report["schema_version"], "1.8.0");
     assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
@@ -879,7 +983,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.7.0");
+    assert_eq!(report["schema_version"], "1.8.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);

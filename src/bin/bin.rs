@@ -9,6 +9,7 @@ use antisequence::graph::{ExecutionMode, PipelineInputMode, StatisticsLevel};
 use seqproc::{
     demux::DemuxConfig,
     execute::{compile_geom, run, RunConfig},
+    io_config::InputLane,
     resources::ResourceBindings,
 };
 
@@ -97,12 +98,20 @@ pub struct RunArgs {
     geom: Option<PathBuf>,
 
     /// r1 fastq file
-    #[arg(short = '1', long)]
+    #[arg(short = '1', long, conflicts_with = "read1")]
     file1: Option<PathBuf>,
 
+    /// Ordered R1 FASTQ shards; repeat the option or separate paths with commas.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read1: Vec<PathBuf>,
+
     /// r2 fastq file
-    #[arg(short = '2', long)]
+    #[arg(short = '2', long, conflicts_with = "read2")]
     file2: Option<PathBuf>,
+
+    /// Ordered R2 FASTQ shards; repeat the option or separate paths with commas.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read2: Vec<PathBuf>,
 
     /// r1 out fastq file
     #[arg(short = 'o', long)]
@@ -303,10 +312,21 @@ fn main() {
         eprintln!("error: --geom is required for a run");
         exit(2);
     });
-    let file1 = args.file1.unwrap_or_else(|| {
-        eprintln!("error: --file1 is required for a run");
+    let read1 = if args.read1.is_empty() {
+        args.file1.clone().into_iter().collect::<Vec<_>>()
+    } else {
+        args.read1.clone()
+    };
+    if read1.is_empty() {
+        eprintln!("error: --read1 (or legacy --file1) is required for a run");
         exit(2);
-    });
+    }
+    let read2 = if args.read2.is_empty() {
+        args.file2.clone().into_iter().collect::<Vec<_>>()
+    } else {
+        args.read2.clone()
+    };
+    let file1 = read1[0].clone();
 
     let geom = read_geometry(&geom_path);
     let geometry_digest = format!("blake3:{}", blake3::hash(geom.as_bytes()).to_hex());
@@ -317,7 +337,7 @@ fn main() {
 
     // Validate input FASTQ paths up front so a missing file surfaces as a clean
     // error instead of a panic from deep inside the read-processing engine.
-    for f in std::iter::once(&file1).chain(args.file2.iter()) {
+    for f in read1.iter().chain(&read2) {
         if !f.exists() {
             eprintln!("error: input FASTQ not found: {:?}", f);
             std::process::exit(1);
@@ -358,7 +378,12 @@ fn main() {
     match compiled_efgdl {
         Ok(geom) => {
             let mut config = RunConfig::new(file1.clone());
-            config.input2 = args.file2.clone();
+            config.input2 = read2.first().cloned();
+            let mut input_lanes = vec![InputLane::new(read1.clone())];
+            if !read2.is_empty() {
+                input_lanes.push(InputLane::new(read2.clone()));
+            }
+            config.input_lanes = Some(input_lanes);
             config.output1 = args.out1.clone();
             config.output2 = args.out2.clone();
             config.unassigned1 = args.unassigned1.clone();

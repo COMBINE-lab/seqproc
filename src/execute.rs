@@ -20,6 +20,7 @@ use tracing::info;
 use crate::{
     compile::{compile, CompiledData},
     demux::DemuxConfig,
+    io_config::{InputLane, InputSource},
     lexer,
     parser::parser,
     resources::{ResourceBindings, ResourceResolutionReport},
@@ -51,6 +52,9 @@ pub struct FifoSeqprocData {
 pub struct RunConfig {
     pub input1: PathBuf,
     pub input2: Option<PathBuf>,
+    /// Primary grouped input representation. `None` uses the legacy
+    /// `input1`/`input2` fields.
+    pub input_lanes: Option<Vec<InputLane>>,
     pub output1: Option<PathBuf>,
     pub output2: Option<PathBuf>,
     pub unassigned1: Option<PathBuf>,
@@ -110,6 +114,7 @@ impl RunConfig {
         Self {
             input1: input1.into(),
             input2: None,
+            input_lanes: None,
             output1: None,
             output2: None,
             unassigned1: None,
@@ -153,6 +158,45 @@ impl RunConfig {
         } else {
             StatisticsLevel::Off
         }
+    }
+
+    pub fn with_input_lanes(mut self, lanes: impl IntoIterator<Item = InputLane>) -> Self {
+        self.input_lanes = Some(lanes.into_iter().collect());
+        self
+    }
+
+    fn effective_input_lanes(&self) -> Result<Vec<InputLane>> {
+        let lanes = self.input_lanes.clone().unwrap_or_else(|| {
+            let mut lanes = vec![InputLane::single(self.input1.clone())];
+            if let Some(input2) = &self.input2 {
+                lanes.push(InputLane::single(input2.clone()));
+            }
+            lanes
+        });
+        if lanes.is_empty() {
+            bail!("at least one FASTQ input lane is required");
+        }
+        if lanes.len() > 2 {
+            bail!("this release supports one or two FASTQ input lanes; three-lane support is milestone 5");
+        }
+        let expected_shards = lanes[0].shards.len();
+        if expected_shards == 0 {
+            bail!("FASTQ input lane 1 has no shards");
+        }
+        for (lane, input) in lanes.iter().enumerate() {
+            if input.shards.is_empty() {
+                bail!("FASTQ input lane {} has no shards", lane + 1);
+            }
+            if input.shards.len() != expected_shards {
+                bail!(
+                    "FASTQ input lane {} has {} shards; expected {}",
+                    lane + 1,
+                    input.shards.len(),
+                    expected_shards
+                );
+            }
+        }
+        Ok(lanes)
     }
 }
 
@@ -213,6 +257,7 @@ pub struct SeqprocStats {
     pub read_length_mean: Vec<f64>,
     pub read_length_min: Vec<u64>,
     pub read_length_max: Vec<u64>,
+    pub shard_read_counts: Vec<Vec<u64>>,
     pub match_distance_stats: Vec<MatchDistanceStats>,
 }
 
@@ -313,6 +358,16 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         1
     };
 
+    let input_lanes = config.effective_input_lanes()?;
+    let input_lane_count = input_lanes.len();
+    if compiled_data.geometry.len() != input_lane_count {
+        bail!(
+            "geometry requires {} input lanes, but {} were supplied",
+            compiled_data.geometry.len(),
+            input_lane_count
+        );
+    }
+
     if config.demux.is_none() {
         if let Some(transformations) = &compiled_data.transformation {
             if transformations.len() == 2 && (config.output1.is_none() || config.output2.is_none())
@@ -328,20 +383,46 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         config.geometry_base.as_deref(),
     )?;
     let mut graph = Graph::new();
-    let mut input_files = vec![config.input1.to_string_lossy().into_owned()];
-    if let Some(input2) = &config.input2 {
-        input_files.push(input2.to_string_lossy().into_owned());
-    }
-    let input = if config.accelerated_gzip_input {
-        InputFastqOp::from_files_accelerated_gzip(
-            input_files,
-            config.gzip_input_threads,
-            config.gzip_input_chunk_size,
-        )
+    let grouped_files = input_lanes
+        .iter()
+        .map(|lane| {
+            lane.shards
+                .iter()
+                .map(|source| match source {
+                    InputSource::Path(path) => path.to_string_lossy().into_owned(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    if grouped_files.iter().all(|lane| lane.len() == 1) {
+        let files = grouped_files
+            .iter()
+            .map(|lane| lane[0].clone())
+            .collect::<Vec<_>>();
+        let input = if config.accelerated_gzip_input {
+            InputFastqOp::from_files_accelerated_gzip(
+                files,
+                config.gzip_input_threads,
+                config.gzip_input_chunk_size,
+            )
+        } else {
+            InputFastqOp::from_files(files)
+        };
+        graph.add(input.map_err(|error| anyhow!("failed to open input FASTQ: {error}"))?);
     } else {
-        InputFastqOp::from_files(input_files)
-    };
-    graph.add(input.map_err(|error| anyhow!("failed to open input FASTQ: {error}"))?);
+        let input = if config.accelerated_gzip_input {
+            GroupedInputFastqOp::from_files_accelerated_gzip(
+                grouped_files,
+                config.gzip_input_threads,
+                config.gzip_input_chunk_size,
+            )
+        } else {
+            GroupedInputFastqOp::from_files(grouped_files)
+        };
+        graph.add(
+            input.map_err(|error| anyhow!("failed to configure grouped FASTQ input: {error}"))?,
+        );
+    }
 
     let has_unassigned = config.unassigned1.is_some() || config.unassigned2.is_some();
     if has_unassigned {
@@ -353,7 +434,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         if let Some(path) = &config.unassigned1 {
             unassigned_files.push(path.to_string_lossy().into_owned());
         }
-        if config.input2.is_some() {
+        if input_lane_count > 1 {
             if let Some(path) = &config.unassigned2 {
                 unassigned_files.push(path.to_string_lossy().into_owned());
             }
@@ -382,7 +463,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
             "{}/{{{}}}_R1.fastq",
             out_dir, sample_attr_path
         ))];
-        if config.input2.is_some() {
+        if input_lane_count > 1 {
             expressions.push(fmt_expr(format!(
                 "{}/{{{}}}_R2.fastq",
                 out_dir, sample_attr_path
@@ -400,8 +481,8 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
             .unwrap_or_else(|| Path::new("/dev/null"))
             .to_string_lossy()
             .into_owned();
-        match (&config.input2, &config.output2) {
-            (Some(_), Some(output2)) => {
+        match (input_lane_count > 1, &config.output2) {
+            (true, Some(output2)) => {
                 graph.add(configure_fastq_output(
                     OutputFastqFileOp::from_files([
                         output1,
@@ -528,41 +609,62 @@ fn statistics_from_graph(
         resources,
     } = provenance;
     let input_stats = graph.input_stats();
-    let (n_fastqs, n_processed, n_reads_max, read_length_min, read_length_max, read_length_mean) =
-        if let Some(stats) = input_stats {
-            let mut read_length_min = Vec::with_capacity(stats.n_fastqs);
-            let mut read_length_max = Vec::with_capacity(stats.n_fastqs);
-            let mut read_length_mean = Vec::with_capacity(stats.n_fastqs);
-            let mut max_count = 0usize;
+    let (
+        n_fastqs,
+        n_processed,
+        n_reads_max,
+        read_length_min,
+        read_length_max,
+        read_length_mean,
+        shard_read_counts,
+    ) = if let Some(stats) = input_stats {
+        let mut read_length_min = Vec::with_capacity(stats.n_fastqs);
+        let mut read_length_max = Vec::with_capacity(stats.n_fastqs);
+        let mut read_length_mean = Vec::with_capacity(stats.n_fastqs);
+        let mut max_count = 0usize;
 
-            for index in 0..stats.n_fastqs {
-                let count = *stats.read_counts.get(index).unwrap_or(&0);
-                max_count = max_count.max(count);
-                if stats.lengths_collected {
-                    let min = *stats.read_length_min.get(index).unwrap_or(&0);
-                    let max = *stats.read_length_max.get(index).unwrap_or(&0);
-                    let sum = *stats.read_length_sum.get(index).unwrap_or(&0);
-                    read_length_min.push(min as u64);
-                    read_length_max.push(max as u64);
-                    read_length_mean.push(if count == 0 {
-                        0.0
-                    } else {
-                        sum as f64 / count as f64
-                    });
-                }
+        for index in 0..stats.n_fastqs {
+            let count = *stats.read_counts.get(index).unwrap_or(&0);
+            max_count = max_count.max(count);
+            if stats.lengths_collected {
+                let min = *stats.read_length_min.get(index).unwrap_or(&0);
+                let max = *stats.read_length_max.get(index).unwrap_or(&0);
+                let sum = *stats.read_length_sum.get(index).unwrap_or(&0);
+                read_length_min.push(min as u64);
+                read_length_max.push(max as u64);
+                read_length_mean.push(if count == 0 {
+                    0.0
+                } else {
+                    sum as f64 / count as f64
+                });
             }
+        }
 
-            (
-                stats.n_fastqs as u32,
-                max_count as u64,
-                max_count as u64,
-                read_length_min,
-                read_length_max,
-                read_length_mean,
-            )
+        let shard_read_counts = if stats.shard_read_counts.is_empty() {
+            stats
+                .read_counts
+                .iter()
+                .map(|count| vec![*count as u64])
+                .collect()
         } else {
-            (0, 0, 0, Vec::new(), Vec::new(), Vec::new())
+            stats
+                .shard_read_counts
+                .iter()
+                .map(|lane| lane.iter().map(|count| *count as u64).collect())
+                .collect()
         };
+        (
+            stats.n_fastqs as u32,
+            max_count as u64,
+            max_count as u64,
+            read_length_min,
+            read_length_max,
+            read_length_mean,
+            shard_read_counts,
+        )
+    } else {
+        (0, 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    };
 
     let match_distance_stats = graph
         .match_distance_counts()
@@ -626,7 +728,7 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.7.0".to_owned(),
+        schema_version: "1.8.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
         statistics_level,
         call,
@@ -671,6 +773,7 @@ fn statistics_from_graph(
         read_length_mean,
         read_length_min,
         read_length_max,
+        shard_read_counts,
         match_distance_stats,
     }
 }
@@ -1026,51 +1129,70 @@ fn interpret_to_pipes(
 
     let input_stats = graph.input_stats();
 
-    let (n_fastqs, n_processed, n_reads_max, read_length_min, read_length_max, read_length_mean) =
-        if let Some(s) = input_stats {
-            let n_fastqs = s.n_fastqs as u32;
+    let (
+        n_fastqs,
+        n_processed,
+        n_reads_max,
+        read_length_min,
+        read_length_max,
+        read_length_mean,
+        shard_read_counts,
+    ) = if let Some(s) = input_stats {
+        let n_fastqs = s.n_fastqs as u32;
 
-            let mut read_length_min_u64 = Vec::with_capacity(s.n_fastqs);
-            let mut read_length_max_u64 = Vec::with_capacity(s.n_fastqs);
-            let mut read_length_mean_f64 = Vec::with_capacity(s.n_fastqs);
+        let mut read_length_min_u64 = Vec::with_capacity(s.n_fastqs);
+        let mut read_length_max_u64 = Vec::with_capacity(s.n_fastqs);
+        let mut read_length_mean_f64 = Vec::with_capacity(s.n_fastqs);
 
-            let mut max_count = 0usize;
+        let mut max_count = 0usize;
 
-            for i in 0..s.n_fastqs {
-                let count = *s.read_counts.get(i).unwrap_or(&0);
-                if count > max_count {
-                    max_count = count;
-                }
-
-                let min = *s.read_length_min.get(i).unwrap_or(&0);
-                let max = *s.read_length_max.get(i).unwrap_or(&0);
-                let sum = *s.read_length_sum.get(i).unwrap_or(&0);
-
-                read_length_min_u64.push(min as u64);
-                read_length_max_u64.push(max as u64);
-
-                let mean = if count > 0 {
-                    sum as f64 / (count as f64)
-                } else {
-                    0.0
-                };
-                read_length_mean_f64.push(mean);
+        for i in 0..s.n_fastqs {
+            let count = *s.read_counts.get(i).unwrap_or(&0);
+            if count > max_count {
+                max_count = count;
             }
 
-            let n_processed = max_count as u64;
-            let n_reads_max = n_processed;
+            let min = *s.read_length_min.get(i).unwrap_or(&0);
+            let max = *s.read_length_max.get(i).unwrap_or(&0);
+            let sum = *s.read_length_sum.get(i).unwrap_or(&0);
 
-            (
-                n_fastqs,
-                n_processed,
-                n_reads_max,
-                read_length_min_u64,
-                read_length_max_u64,
-                read_length_mean_f64,
-            )
+            read_length_min_u64.push(min as u64);
+            read_length_max_u64.push(max as u64);
+
+            let mean = if count > 0 {
+                sum as f64 / (count as f64)
+            } else {
+                0.0
+            };
+            read_length_mean_f64.push(mean);
+        }
+
+        let n_processed = max_count as u64;
+        let n_reads_max = n_processed;
+        let shard_read_counts = if s.shard_read_counts.is_empty() {
+            s.read_counts
+                .iter()
+                .map(|count| vec![*count as u64])
+                .collect()
         } else {
-            (0, 0, 0, Vec::new(), Vec::new(), Vec::new())
+            s.shard_read_counts
+                .iter()
+                .map(|lane| lane.iter().map(|count| *count as u64).collect())
+                .collect()
         };
+
+        (
+            n_fastqs,
+            n_processed,
+            n_reads_max,
+            read_length_min_u64,
+            read_length_max_u64,
+            read_length_mean_f64,
+            shard_read_counts,
+        )
+    } else {
+        (0, 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    };
 
     let match_distance_stats = graph
         .match_distance_counts()
@@ -1142,7 +1264,7 @@ fn interpret_to_pipes(
     }
 
     Ok(SeqprocStats {
-        schema_version: "1.7.0".to_string(),
+        schema_version: "1.8.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
@@ -1177,6 +1299,7 @@ fn interpret_to_pipes(
         read_length_mean,
         read_length_min,
         read_length_max,
+        shard_read_counts,
         match_distance_stats,
     })
 }
@@ -1517,7 +1640,7 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.7.0".to_string(),
+            schema_version: "1.8.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
@@ -1549,6 +1672,7 @@ mod tests {
             read_length_mean: vec![150.0, 150.0],
             read_length_min: vec![100, 100],
             read_length_max: vec![200, 200],
+            shard_read_counts: vec![vec![100], vec![100]],
             match_distance_stats: vec![],
         };
         let json = serde_json::to_string(&stats).unwrap();
