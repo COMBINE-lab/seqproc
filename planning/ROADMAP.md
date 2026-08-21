@@ -1,5 +1,11 @@
 # seqproc development roadmap
 
+> The proposed first public release is frozen after Milestone 8 pending
+> independent review. See
+> [FIRST_RELEASE_REVIEW_HANDOFF.md](FIRST_RELEASE_REVIEW_HANDOFF.md) for the
+> preprint-to-release change inventory, design rationale, source map, deferred
+> scope, and release acceptance gates.
+
 ## Purpose and scope
 
 This is the canonical post-release engineering roadmap for seqproc and its
