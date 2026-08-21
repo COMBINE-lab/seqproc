@@ -18,6 +18,29 @@ fn gzip_copy(source: &str, destination: &std::path::Path) {
     encoder.finish().unwrap();
 }
 
+fn assert_current_summary_shape(report: &Value) {
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.4.0.schema.json")).unwrap();
+    assert_eq!(
+        report["schema_version"],
+        schema["properties"]["schema_version"]["const"]
+    );
+    let properties = schema["properties"].as_object().unwrap();
+    for key in report.as_object().unwrap().keys() {
+        assert!(
+            properties.contains_key(key),
+            "summary field {key:?} is absent from schema 1.4.0"
+        );
+    }
+    for required in schema["required"].as_array().unwrap() {
+        let required = required.as_str().unwrap();
+        assert!(
+            report.get(required).is_some(),
+            "required summary field {required:?} is absent"
+        );
+    }
+}
+
 #[test]
 fn validate_and_explain_commands_report_compiled_geometry() {
     let geometry = fixture("fgdl/match.geom");
@@ -107,6 +130,8 @@ fn summary_mode_uses_the_same_processing_pipeline() {
             "--threads",
             "2",
             "--preserve-order",
+            "--pipeline-input-mode",
+            "dedicated-reader",
             "--queue-capacity",
             "1",
             "--max-in-flight-batches",
@@ -132,6 +157,8 @@ fn summary_mode_uses_the_same_processing_pipeline() {
             "--threads",
             "2",
             "--preserve-order",
+            "--pipeline-input-mode",
+            "dedicated-reader",
             "--queue-capacity",
             "1",
             "--max-in-flight-batches",
@@ -146,7 +173,8 @@ fn summary_mode_uses_the_same_processing_pipeline() {
     assert_eq!(fs::read(&normal2).unwrap(), fs::read(summary2).unwrap());
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.3.0");
+    assert_current_summary_shape(&report);
+    assert_eq!(report["schema_version"], "1.4.0");
     assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
@@ -158,6 +186,20 @@ fn summary_mode_uses_the_same_processing_pipeline() {
     assert_eq!(report["gzip_input_chunk_size"], 0);
     assert_eq!(report["effective_threads"], 2);
     assert_eq!(report["ordering_mode"], "input-order");
+    assert_eq!(report["graph_optimization"]["enabled"], true);
+    assert_eq!(report["execution_plan"]["requested_mode"], "auto");
+    assert_eq!(
+        report["execution_plan"]["backend"],
+        "dedicated_reader_pipeline"
+    );
+    assert_eq!(
+        report["execution_plan"]["pipeline"]["input_mode"],
+        "dedicated_reader"
+    );
+    assert_eq!(
+        report["execution_plan"]["reason_codes"][0],
+        "ordered_output_requires_pipeline"
+    );
     let geometry_digest = report["geometry_digest"].as_str().unwrap();
     assert!(geometry_digest.starts_with("blake3:"));
     assert_eq!(geometry_digest.len(), "blake3:".len() + 64);
@@ -526,6 +568,87 @@ fn direct_terminal_rendering_matches_materialized_fastq() {
 }
 
 #[test]
+fn optimized_and_unoptimized_graphs_emit_identical_fastq() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("optimized.geom");
+    let input = directory.path().join("input.fastq");
+    let optimized = directory.path().join("optimized.fastq");
+    let unoptimized = directory.path().join("unoptimized.fastq");
+    let optimized_summary = directory.path().join("optimized.json");
+    let unoptimized_summary = directory.path().join("unoptimized.json");
+    fs::write(
+        &geometry,
+        concat!(
+            "header { efgdl = 2 }\n",
+            "1{b<bc>[4]r<read>:}\n",
+            "-> #[header = append(\" CB:Z:\", <bc>)] ",
+            "1{f[AC]<bc><read>}\n",
+        ),
+    )
+    .unwrap();
+    fs::write(&input, b"@one\nAAAATGCA\n+\n12345678\n").unwrap();
+
+    let common = [
+        "run",
+        "--geom",
+        geometry.to_str().unwrap(),
+        "--file1",
+        input.to_str().unwrap(),
+        "--threads",
+        "1",
+        "--execution-mode",
+        "pipeline",
+    ];
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args(common)
+        .args([
+            "--out1",
+            optimized.to_str().unwrap(),
+            "--summary",
+            optimized_summary.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args(common)
+        .args([
+            "--out1",
+            unoptimized.to_str().unwrap(),
+            "--summary",
+            unoptimized_summary.to_str().unwrap(),
+            "--no-graph-optimization",
+            "--no-direct-output-rendering",
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(&optimized).unwrap(),
+        fs::read(&unoptimized).unwrap()
+    );
+    let optimized_report: Value =
+        serde_json::from_slice(&fs::read(optimized_summary).unwrap()).unwrap();
+    let unoptimized_report: Value =
+        serde_json::from_slice(&fs::read(unoptimized_summary).unwrap()).unwrap();
+    assert_eq!(optimized_report["graph_optimization"]["enabled"], true);
+    assert_eq!(unoptimized_report["graph_optimization"]["enabled"], false);
+    assert_eq!(
+        optimized_report["execution_plan"]["backend"],
+        "worker_local_pipeline"
+    );
+    assert_eq!(
+        optimized_report["execution_plan"]["requested_mode"],
+        "pipeline"
+    );
+    assert_eq!(
+        unoptimized_report["execution_plan"]["direct_output_rendering"],
+        false
+    );
+}
+
+#[test]
 fn gzip_level_is_validated_and_preserves_fastq_bytes() {
     let directory = tempdir().unwrap();
     let geometry = fixture("fgdl/match.geom");
@@ -621,7 +744,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.3.0");
+    assert_eq!(report["schema_version"], "1.4.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);

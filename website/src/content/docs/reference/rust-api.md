@@ -17,6 +17,7 @@ The current EFGDL compiler explicitly selects ANTISEQUENCE's compatibility
 use std::fs;
 use std::path::PathBuf;
 
+use antisequence::graph::ExecutionMode;
 use seqproc::execute::{compile_geom, run, RunConfig};
 
 let source = fs::read_to_string("protocol.geom")?;
@@ -27,6 +28,8 @@ config.input2 = Some(PathBuf::from("reads_R2.fastq.gz"));
 config.output1 = Some(PathBuf::from("processed_R1.fastq.gz"));
 config.output2 = Some(PathBuf::from("processed_R2.fastq.gz"));
 config.threads = 8;
+config.execution_mode = ExecutionMode::Auto;
+config.graph_optimization = true;
 
 let report = run(config, compiled)?;
 println!("effective transform threads: {}", report.effective_threads);
@@ -39,15 +42,18 @@ println!("effective transform threads: {}", report.effective_threads);
 
 - one transform thread;
 - unordered output;
-- the normal worker path;
+- automatic execution planning (currently the normal whole-graph path unless
+  ordering requires a pipeline);
+- conservative graph optimization;
 - gzip level 3;
 - serial output compression;
 - default `needletail` input decoding;
 - statistics off.
 
 Fields are public for explicit configuration of second input/output paths,
-ordering, staged-pipeline bounds, gzip backends, additional geometry arguments,
-demultiplexing, direct terminal rendering, and statistics.
+ordering, execution mode, graph optimization, pipeline input mode and bounds, gzip
+backends, additional geometry arguments, demultiplexing, direct terminal
+rendering, and statistics.
 
 If a compiled geometry transforms into two reads, both primary output paths are
 required unless demultiplexing handles output routing.
@@ -57,6 +63,10 @@ required unless demultiplexing handles output routing.
 The report describes effective execution choices even when statistics are off:
 
 - effective threads and ordering;
+- the compile-time optimization report, including pass-level node changes and
+  opaque semantic barriers;
+- the selected execution backend, graph-cost summary, effective bounds, and
+  stable planner reason codes;
 - selected pipeline and bounded-stage information, including whether direct
   terminal rendering was selected, when applicable;
 - compression and decompression backends;

@@ -147,11 +147,15 @@ headline performance measurements do not silently include instrumentation.
 Geometry provenance uses an algorithm-tagged BLAKE3 digest of the complete
 geometry text, including its EFGDL header.
 
-The bounded staged backend can render a proven-safe terminal FASTQ projection
-directly into recycled output buffers, avoiding intermediate record
-materialization while preserving byte-identical output. The optimization is
-currently selected for one-worker staged runs; the faster whole-graph backend
-remains the default for ordinary one-thread execution. See the
+Compilation now emits an inspectable optimization report, and the execution
+planner records why it selected the whole-graph or bounded-pipeline backend.
+`--execution-mode` forces either backend for controlled comparisons, while
+`--no-graph-optimization` provides a structural-optimization oracle. The
+bounded pipeline can render a proven-safe terminal FASTQ projection directly
+into recycled output buffers, avoiding intermediate record materialization
+while preserving byte-identical output. The automatic planner keeps the
+measured low-overhead whole-graph default unless ordered output requires the
+pipeline. See the
 [performance guide](https://combine-lab.github.io/seqproc/guides/performance/)
 for selection rules and the validation escape hatch.
 

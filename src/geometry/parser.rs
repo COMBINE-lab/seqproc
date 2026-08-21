@@ -749,11 +749,9 @@ pub fn parser<'tokens>(
     }
     .map_with(|mode, state| S(mode, state.span()));
     let output_header_part = choice((
-        file.clone()
-            .map(OutputHeaderPart::Literal)
+        file.map(OutputHeaderPart::Literal)
             .map_with(|part, state| S(part, state.span())),
         label
-            .clone()
             .map_with(|name, state| S(name, state.span()))
             .delimited_by(just(Token::LAngle), just(Token::RAngle))
             .map(OutputHeaderPart::Label)

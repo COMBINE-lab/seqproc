@@ -5,7 +5,7 @@ use std::io;
 use std::path::PathBuf;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
-use antisequence::graph::StatisticsLevel;
+use antisequence::graph::{ExecutionMode, PipelineInputMode, StatisticsLevel};
 use seqproc::{
     demux::DemuxConfig,
     execute::{compile_geom, run, RunConfig},
@@ -22,6 +22,40 @@ impl From<StatisticsLevelArg> for StatisticsLevel {
         match value {
             StatisticsLevelArg::Basic => Self::Basic,
             StatisticsLevelArg::Detailed => Self::Detailed,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, clap::ValueEnum)]
+enum ExecutionModeArg {
+    #[default]
+    Auto,
+    WholeGraph,
+    Pipeline,
+}
+
+impl From<ExecutionModeArg> for ExecutionMode {
+    fn from(value: ExecutionModeArg) -> Self {
+        match value {
+            ExecutionModeArg::Auto => Self::Auto,
+            ExecutionModeArg::WholeGraph => Self::WholeGraph,
+            ExecutionModeArg::Pipeline => Self::Pipeline,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, clap::ValueEnum)]
+enum PipelineInputModeArg {
+    #[default]
+    WorkerLocal,
+    DedicatedReader,
+}
+
+impl From<PipelineInputModeArg> for PipelineInputMode {
+    fn from(value: PipelineInputModeArg) -> Self {
+        match value {
+            PipelineInputModeArg::WorkerLocal => Self::WorkerLocal,
+            PipelineInputModeArg::DedicatedReader => Self::DedicatedReader,
         }
     }
 }
@@ -94,6 +128,20 @@ pub struct RunArgs {
     /// but the legacy worker path is faster for very cheap transformations.
     #[arg(long)]
     staged_pipeline: bool,
+
+    /// Select execution planning explicitly. `auto` preserves the measured
+    /// low-overhead whole-graph default unless ordering requires a pipeline.
+    #[arg(long, value_enum, default_value = "auto")]
+    execution_mode: ExecutionModeArg,
+
+    /// Disable conservative compile-time graph optimization. Intended for
+    /// byte-equivalence tests and controlled performance comparisons.
+    #[arg(long)]
+    no_graph_optimization: bool,
+
+    /// Select where FASTQ parsing occurs when the pipeline backend is used.
+    #[arg(long, value_enum, default_value = "worker-local")]
+    pipeline_input_mode: PipelineInputModeArg,
 
     /// Materialize terminal projected reads instead of rendering them directly.
     /// Intended for validation and performance comparisons; direct rendering is
@@ -294,6 +342,9 @@ fn main() {
             config.threads = threads;
             config.preserve_order = args.preserve_order;
             config.staged_pipeline = args.staged_pipeline;
+            config.execution_mode = args.execution_mode.into();
+            config.graph_optimization = !args.no_graph_optimization;
+            config.pipeline_input_mode = args.pipeline_input_mode.into();
             config.direct_output_rendering = !args.no_direct_output_rendering;
             config.queue_capacity = args.queue_capacity;
             config.max_in_flight_batches = args.max_in_flight_batches;

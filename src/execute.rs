@@ -57,6 +57,13 @@ pub struct RunConfig {
     pub threads: usize,
     pub preserve_order: bool,
     pub staged_pipeline: bool,
+    /// Automatic, whole-graph, or bounded-pipeline execution selection.
+    pub execution_mode: ExecutionMode,
+    /// Apply conservative compile-time graph optimization passes.
+    pub graph_optimization: bool,
+    /// Select whether pipeline workers parse their own batches or receive
+    /// batches from a dedicated reader thread.
+    pub pipeline_input_mode: PipelineInputMode,
     /// Render a safe terminal FASTQ projection directly into output buffers
     /// when staged execution can prove that intermediate records are dead.
     pub direct_output_rendering: bool,
@@ -105,6 +112,9 @@ impl RunConfig {
             threads: 1,
             preserve_order: false,
             staged_pipeline: false,
+            execution_mode: ExecutionMode::Auto,
+            graph_optimization: true,
+            pipeline_input_mode: PipelineInputMode::WorkerLocal,
             direct_output_rendering: true,
             queue_capacity: None,
             max_in_flight_batches: None,
@@ -152,6 +162,8 @@ pub struct RunReport {
     pub gzip_input_backend: String,
     pub gzip_input_threads: usize,
     pub gzip_input_chunk_size: usize,
+    pub graph_optimization: GraphOptimizationReport,
+    pub execution_plan: ExecutionPlan,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<PipelineReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,6 +187,10 @@ pub struct SeqprocStats {
     pub gzip_input_backend: String,
     pub gzip_input_threads: usize,
     pub gzip_input_chunk_size: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_optimization: Option<GraphOptimizationReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_plan: Option<ExecutionPlan>,
 
     pub n_fastqs: u32,
     pub n_processed: u64,
@@ -238,6 +254,15 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
     }
     if config.parallel_gzip && config.parallel_gzip_stream {
         bail!("--parallel-gzip and --parallel-gzip-stream are mutually exclusive");
+    }
+    if config.staged_pipeline && config.execution_mode == ExecutionMode::WholeGraph {
+        bail!("staged pipeline execution conflicts with forced whole-graph execution");
+    }
+    if config.preserve_order
+        && config.execution_mode == ExecutionMode::WholeGraph
+        && config.threads > 1
+    {
+        bail!("parallel input-order output requires automatic or pipeline execution");
     }
     // The real-data crossover sweep found that letting the compression pool
     // grow to every transform worker oversubscribed short-read workloads.
@@ -389,33 +414,35 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
     let statistics_level = config.effective_statistics_level();
     graph.set_statistics_level(statistics_level);
     let graph = graph
-        .compile()
+        .compile_with(GraphOptimizationConfig {
+            enabled: config.graph_optimization,
+        })
         .map_err(|error| anyhow!("failed to compile processing graph: {error}"))?;
-    let use_pipeline = config.preserve_order || config.staged_pipeline;
-    let pipeline = if use_pipeline {
-        let mut pipeline_config = PipelineConfig::new(config.threads);
-        pipeline_config.preserve_order = config.preserve_order;
-        pipeline_config.direct_output_rendering = config.direct_output_rendering;
-        if let Some(queue_capacity) = config.queue_capacity {
-            pipeline_config.queue_capacity = queue_capacity;
-        }
-        if let Some(max_in_flight_batches) = config.max_in_flight_batches {
-            pipeline_config.max_in_flight_batches = max_in_flight_batches;
-        }
-        if let Some(batch_size) = config.batch_size {
-            pipeline_config.batch_size = batch_size;
-        }
-        Some(
-            graph
-                .try_run_pipeline(pipeline_config)
-                .map_err(|error| anyhow!(error.to_string()))?,
-        )
-    } else {
-        graph
-            .try_run_with_threads(config.threads)
-            .map_err(|error| anyhow!(error.to_string()))?;
-        None
-    };
+    let optimization = graph.optimization_report().clone();
+    let mut execution_request = ExecutionRequest::new(config.threads);
+    execution_request.mode =
+        if config.staged_pipeline && config.execution_mode == ExecutionMode::Auto {
+            ExecutionMode::Pipeline
+        } else {
+            config.execution_mode
+        };
+    execution_request.pipeline.preserve_order = config.preserve_order;
+    execution_request.pipeline.direct_output_rendering = config.direct_output_rendering;
+    execution_request.pipeline.input_mode = config.pipeline_input_mode;
+    if let Some(queue_capacity) = config.queue_capacity {
+        execution_request.pipeline.queue_capacity = queue_capacity;
+    }
+    if let Some(max_in_flight_batches) = config.max_in_flight_batches {
+        execution_request.pipeline.max_in_flight_batches = max_in_flight_batches;
+    }
+    if let Some(batch_size) = config.batch_size {
+        execution_request.pipeline.batch_size = batch_size;
+    }
+    let planned = graph
+        .try_run_planned(execution_request)
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let execution_plan = planned.plan;
+    let pipeline = planned.pipeline;
 
     let statistics = statistics_level.is_enabled().then(|| {
         statistics_from_graph(
@@ -423,8 +450,12 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
             statistics_level,
             config.call.clone(),
             config.geometry_digest.clone(),
-            &config,
-            effective_gzip_threads,
+            RuntimeProvenance {
+                config: &config,
+                gzip_compression_threads: effective_gzip_threads,
+                optimization: &optimization,
+                execution_plan: &execution_plan,
+            },
         )
     });
     Ok(RunReport {
@@ -451,9 +482,18 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         } else {
             0
         },
+        graph_optimization: optimization,
+        execution_plan,
         pipeline,
         statistics,
     })
+}
+
+struct RuntimeProvenance<'a> {
+    config: &'a RunConfig,
+    gzip_compression_threads: usize,
+    optimization: &'a GraphOptimizationReport,
+    execution_plan: &'a ExecutionPlan,
 }
 
 fn statistics_from_graph(
@@ -461,9 +501,14 @@ fn statistics_from_graph(
     statistics_level: StatisticsLevel,
     call: Option<String>,
     geometry_digest: Option<String>,
-    config: &RunConfig,
-    gzip_compression_threads: usize,
+    provenance: RuntimeProvenance<'_>,
 ) -> SeqprocStats {
+    let RuntimeProvenance {
+        config,
+        gzip_compression_threads,
+        optimization,
+        execution_plan,
+    } = provenance;
     let input_stats = graph.input_stats();
     let (n_fastqs, n_processed, n_reads_max, read_length_min, read_length_max, read_length_mean) =
         if let Some(stats) = input_stats {
@@ -557,7 +602,7 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.3.0".to_owned(),
+        schema_version: "1.4.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
         statistics_level,
         call,
@@ -588,6 +633,8 @@ fn statistics_from_graph(
         } else {
             0
         },
+        graph_optimization: Some(optimization.clone()),
+        execution_plan: Some(execution_plan.clone()),
         n_fastqs,
         n_processed,
         n_reads_max,
@@ -1053,7 +1100,7 @@ fn interpret_to_pipes(
     }
 
     SeqprocStats {
-        schema_version: "1.3.0".to_string(),
+        schema_version: "1.4.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
@@ -1072,6 +1119,8 @@ fn interpret_to_pipes(
         gzip_input_backend: "needletail-auto".to_owned(),
         gzip_input_threads: 1,
         gzip_input_chunk_size: 0,
+        graph_optimization: None,
+        execution_plan: None,
 
         n_fastqs,
         n_processed,
@@ -1425,7 +1474,7 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.3.0".to_string(),
+            schema_version: "1.4.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
@@ -1440,6 +1489,8 @@ mod tests {
             gzip_input_backend: "needletail-auto".to_owned(),
             gzip_input_threads: 1,
             gzip_input_chunk_size: 0,
+            graph_optimization: None,
+            execution_plan: None,
             n_fastqs: 2,
             n_processed: 100,
             n_reads_max: 1000,

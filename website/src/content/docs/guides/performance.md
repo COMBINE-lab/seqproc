@@ -35,10 +35,39 @@ it may add synchronization and buffering overhead.
 Use ordered output when downstream consumers require it, and benchmark the
 same semantic mode across revisions.
 
+## Optimization and execution planning
+
+seqproc freezes each operation graph after validation, applies conservative
+compile-time rewrites, and then creates a deterministic execution plan.
+Summaries report the original and optimized operation counts, pass-level
+changes, cost classes, requested mode, selected backend, effective pipeline
+bounds, and stable reason codes.
+
+`--execution-mode auto|whole-graph|pipeline` controls backend selection. The
+current automatic policy is deliberately conservative: it preserves the
+measured low-overhead whole-graph default unless input ordering requires the
+bounded pipeline. Forced modes exist for reproducible crossover measurements,
+not as a promise that one backend wins for every geometry.
+The calibration environment, workloads, and results are archived in the
+[ANTISEQUENCE Milestone 2 crossover report](https://github.com/COMBINE-lab/ANTISEQUENCE/blob/dev/docs/benchmarks/milestone-2-execution-crossover-2026-08-20.md).
+
+For a forced or ordered pipeline,
+`--pipeline-input-mode worker-local|dedicated-reader` controls whether transform
+workers parse their own batches or receive them from a separate reader. The
+worker-local mode is the measured default; the dedicated reader is an explicit
+workload-specific experiment and adds one background thread.
+
+`--no-graph-optimization` disables structural graph rewrites. Compare its
+output byte-for-byte with the default when adding a pass. Direct terminal
+rendering is an independent pipeline optimization, so also use
+`--no-direct-output-rendering` when the oracle must materialize the terminal
+projection.
+
 ## Staged execution
 
 Ordered output enables the bounded reader → worker → writer pipeline
-automatically. `--staged-pipeline` opts unordered runs into the same structure.
+automatically. `--execution-mode pipeline` opts unordered runs into the same
+structure; `--staged-pipeline` is retained as a compatibility alias.
 It can help costly graphs by separating stages, but cheap geometries may be
 faster on the normal worker path.
 

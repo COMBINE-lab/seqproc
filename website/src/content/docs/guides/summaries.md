@@ -21,6 +21,7 @@ data-dependent instrumentation, including:
 - parse failures and categorized rejection reasons;
 - effective transform thread count and ordering mode;
 - gzip input/output backend parameters;
+- compile-time graph optimization and effective execution-plan provenance;
 - seqproc version, command, and geometry digest when available.
 
 ## Detailed statistics
@@ -38,13 +39,22 @@ for a headline performance result and measure summary overhead separately.
 
 ## Schema versioning
 
-The current source tree emits summary schema 1.3.0. Schemas are versioned
+The current source tree emits summary schema 1.4.0. Schemas are versioned
 independently from the binary and are committed under
 [`schemas/`](https://github.com/COMBINE-lab/seqproc/tree/main/schemas).
 
 Consumers should inspect `schema_version` instead of assuming that all seqproc
 revisions emit the same fields. Additive fields require a schema minor version;
 removing fields or changing their meaning requires a major version.
+
+Schema 1.4.0 adds `graph_optimization` and `execution_plan`. The former reports
+the original and optimized operation counts, opaque barriers, terminal
+projection candidates, and pass-level changes. The latter records the
+requested mode, selected backend, effective pipeline bounds, operation cost
+classes, direct-rendering
+decision, and stable reason codes. Normal `seqproc run --summary` reports
+contain both objects; they remain optional only for legacy Rust API report
+constructors that cannot reconstruct the frozen graph decision.
 
 The geometry digest is a content/provenance identifier, not a security
 primitive. Current releases use the algorithm-tagged form `blake3:<hex>` (early

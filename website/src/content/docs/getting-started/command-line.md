@@ -36,19 +36,27 @@ seqproc run --geom protocol.geom --file1 R1.fastq --out1 clean_R1.fastq
 default. `--preserve-order` keeps records in input order with a bounded reorder
 buffer while transformations remain parallel.
 
-The staged pipeline is enabled automatically for ordered output. It can be
-requested for unordered processing with `--staged-pipeline`; this can help
-expensive geometries, while the normal worker path is often better for cheap
-ones. Advanced controls are:
+`--execution-mode auto|whole-graph|pipeline` controls the execution planner.
+Automatic mode preserves the measured low-overhead whole-graph path unless
+ordered output requires the pipeline. `--staged-pipeline` remains a legacy
+alias for requesting pipeline execution in automatic mode. Advanced pipeline
+controls are:
 
 - `--batch-size N`
 - `--queue-capacity N`
 - `--max-in-flight-batches N`
+- `--pipeline-input-mode worker-local|dedicated-reader`
 
 When the staged planner proves that a terminal projection is safe, it can
 render FASTQ directly without materializing the projected records. This is
 enabled by default for the measured one-worker case. Use
 `--no-direct-output-rendering` only to validate or benchmark the fallback.
+
+Compilation applies only conservative, proof-backed graph rewrites. Use
+`--no-graph-optimization` to build a structural-optimization oracle for
+byte-equivalence and performance comparisons. It does not disable independent
+runtime choices such as direct terminal rendering; disable both when testing
+the fully materialized terminal path.
 
 Treat these as workload-specific tuning controls and benchmark before changing
 their defaults.

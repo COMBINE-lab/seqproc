@@ -1,6 +1,6 @@
 # seqproc report schemas
 
-`seqproc-summary-1.3.0.schema.json` is the current versioned schema emitted by
+`seqproc-summary-1.4.0.schema.json` is the current versioned schema emitted by
 `seqproc run --summary`; the 1.0.0 and 1.1.0 files remain immutable for existing
 consumers. Schema versions are independent of the seqproc binary version so
 consumers can negotiate report compatibility explicitly.
@@ -34,6 +34,13 @@ Detailed reports also include counts of ambiguous equal-best matches and the
 outcome of the configured ambiguity policy. Basic reports retain run-level
 input, output, and rejection totals while leaving `match_distance_stats` and
 the three read-length vectors empty.
+
+Schema 1.4.0 adds the conservative graph-optimization report and the effective
+execution plan. These identify the requested mode and selected execution
+backend, bounded-pipeline parameters, graph cost classes, planner reason codes,
+and the compile-time passes that changed the graph. They are optional only for
+legacy Rust API paths that cannot reconstruct the frozen graph decision;
+ordinary `seqproc run --summary` reports include both objects.
 
 Additive fields require a schema minor version. Removing fields, changing their
 meaning, or changing types requires a schema major version and a new file.
