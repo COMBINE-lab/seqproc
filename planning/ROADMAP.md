@@ -55,7 +55,7 @@ Every milestone must satisfy these requirements:
 | 1 | Named resource bindings | Complete | EFGDL 2 document model |
 | 2 | Lists of FASTQ files per lane | Complete | Grouped input-source model |
 | 3 | stdin/stdout | Complete | Input/output target model |
-| 4 | Interleaved input | Foundation exists in ANTISEQUENCE | Stream targets and geometry arity |
+| 4 | Interleaved input | Complete | Stream targets and geometry arity |
 | 5 | Three or more input segments | Foundation exists in compiler/backend | Generalized bounded lane model |
 | 6 | Fully typed `SeqprocError` | Partial foundations only | Public I/O and resource contracts |
 | 7 | Remaining optimizer passes | Foundation exists | Effects, scoped metadata, recursive liveness |
@@ -348,6 +348,31 @@ seqproc run --interleaved-input reads.fastq --geom paired.geom ...
 - Ordering, detailed statistics, and rejected-read routing count fragments and
   lane records consistently.
 - No extra per-record allocation is introduced relative to separate inputs.
+
+### Completion record
+
+- **Implementation:** seqproc commit `f9ce343` (`Add geometry-driven
+  interleaved FASTQ input`) and ANTISEQUENCE commit `cf29232` (`Add grouped
+  interleaved FASTQ input`).
+- **Contract:** repeatable/comma-separated `--interleaved-input` and
+  `RunConfig::with_interleaved_input` accept ordered file shards or singleton
+  stdin. Geometry arity is authoritative; separate-lane options conflict;
+  output remains separate by logical lane.
+- **Tests:** ANTISEQUENCE `cargo test --lib` (363 passed); seqproc all-target
+  check, `cargo test --lib` (276 passed), `cargo test --test
+  cli_workflow_tests` (18 passed), and `cargo test --test bench_regression` (19
+  passed). Coverage includes one-, two-, and three-record backend groups,
+  one/two workers, lazy empty shards, interleaved stdin, mixed plain/gzip
+  accelerated input, byte identity with separate lanes, rejection/unassigned
+  routing, ordered output, detailed per-shard statistics, and explicit
+  expected/observed truncation diagnostics.
+- **Performance gate:** Criterion over 20,000 paired fragments measured
+  separate input at 2.4866 ms and interleaved input at 2.5266 ms (1.6%
+  difference). Both paths reuse bounded read storage; the feature adds no
+  branch or allocation to separate-input record processing.
+- **Reporting and documentation:** summary schema 1.10.0 adds the authoritative
+  `input_layout`; the README and CLI, summary, and Rust API guides document
+  arity, shards, stdin, compression, output separation, and truncation.
 
 ---
 
