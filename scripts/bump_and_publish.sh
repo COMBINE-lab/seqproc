@@ -110,6 +110,10 @@ fi
 ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
 [[ "$ORIGIN_URL" == "https://github.com/COMBINE-lab/seqproc.git" || "$ORIGIN_URL" == "git@github.com:COMBINE-lab/seqproc.git" ]] || \
     die "origin is not the COMBINE-lab/seqproc GitHub repository"
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$CURRENT_BRANCH" != "main" && "$DRY_RUN" == false ]]; then
+    die "releases must be tagged from main (currently on $CURRENT_BRANCH); merge the reviewed branch first, or use --dry-run to validate from here"
+fi
 
 echo "Current version : $CURRENT_VERSION"
 echo "Release version : $VERSION"
