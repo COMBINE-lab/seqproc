@@ -39,7 +39,7 @@ for a headline performance result and measure summary overhead separately.
 
 ## Schema versioning
 
-The current source tree emits summary schema 1.10.0. Schemas are versioned
+The current source tree emits summary schema 1.11.0. Schemas are versioned
 independently from the binary and are committed under
 [`schemas/`](https://github.com/COMBINE-lab/seqproc/tree/main/schemas).
 
@@ -75,6 +75,9 @@ Schema 1.9.0 adds `input_topology` and `output_topology`. These report only the
 target kinds (`path`, `stdin`, `stdout`, or `discard`), not path names.
 
 Schema 1.10.0 adds `input_layout` (`separate` or `interleaved`).
+
+Schema 1.11.0 adds `input_arity` and `output_arity`, each validated in the
+currently supported range 1–3.
 
 The geometry digest is a content/provenance identifier, not a security
 primitive. Current releases use the algorithm-tagged form `blake3:<hex>` (early

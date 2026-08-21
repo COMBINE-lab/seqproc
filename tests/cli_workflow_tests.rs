@@ -20,7 +20,7 @@ fn gzip_copy(source: &str, destination: &std::path::Path) {
 
 fn assert_current_summary_shape(report: &Value) {
     let schema: Value = serde_json::from_str(include_str!(
-        "../schemas/seqproc-summary-1.10.0.schema.json"
+        "../schemas/seqproc-summary-1.11.0.schema.json"
     ))
     .unwrap();
     assert_eq!(
@@ -31,7 +31,7 @@ fn assert_current_summary_shape(report: &Value) {
     for key in report.as_object().unwrap().keys() {
         assert!(
             properties.contains_key(key),
-            "summary field {key:?} is absent from schema 1.10.0"
+            "summary field {key:?} is absent from schema 1.11.0"
         );
     }
     for required in schema["required"].as_array().unwrap() {
@@ -415,7 +415,7 @@ fn summary_mode_uses_the_same_processing_pipeline() {
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.10.0");
+    assert_eq!(report["schema_version"], "1.11.0");
     assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
@@ -985,7 +985,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.10.0");
+    assert_eq!(report["schema_version"], "1.11.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);
@@ -1134,7 +1134,7 @@ fn stdin_stdout_streams_are_clean_typed_and_composable() {
         .success();
     assert_eq!(stdin_to_stdout.get_output().stdout, expected);
     let stderr = String::from_utf8_lossy(&stdin_to_stdout.get_output().stderr);
-    assert!(stderr.contains("\"schema_version\": \"1.10.0\""));
+    assert!(stderr.contains("\"schema_version\": \"1.11.0\""));
     assert!(stderr.contains("\"input_topology\""));
     assert!(stderr.contains("\"stdin\""));
     assert!(stderr.contains("\"stdout\""));
@@ -1327,4 +1327,241 @@ fn interleaved_shards_stdin_and_rejection_routing_match_separate_lanes() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("expected 2 records, observed 1"));
+}
+
+#[test]
+fn three_segment_scatac_paths_cover_shards_streams_interleaving_and_reports() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("scatac.geom");
+    fs::write(
+        &geometry,
+        "anchor = f[AAAA]\n1{b<g1>[4]r:}\n2{<anchor>r:}\n3{b<g2>[4]r:}\n-> 1{<g1>} 2{<anchor>} 3{<g2>}\n",
+    )
+    .unwrap();
+
+    let lane_records = [
+        [
+            b"@accepted/1\nACGT\n+\nIIII\n".as_slice(),
+            b"@rejected/1\nTGCA\n+\nJJJJ\n".as_slice(),
+        ],
+        [
+            b"@accepted/2\nAAAA\n+\nKKKK\n".as_slice(),
+            b"@rejected/2\nCCCC\n+\nLLLL\n".as_slice(),
+        ],
+        [
+            b"@accepted/3\nGGGG\n+\nMMMM\n".as_slice(),
+            b"@rejected/3\nTTTT\n+\nNNNN\n".as_slice(),
+        ],
+    ];
+    let mut separate_args = Vec::new();
+    let mut complete_lanes = Vec::new();
+    for (lane, records) in lane_records.iter().enumerate() {
+        let first = directory.path().join(format!("lane{}-1.fastq", lane + 1));
+        let second_plain = directory.path().join(format!("lane{}-2.fastq", lane + 1));
+        let second = directory
+            .path()
+            .join(format!("lane{}-2.fastq.gz", lane + 1));
+        fs::write(&first, records[0]).unwrap();
+        fs::write(&second_plain, records[1]).unwrap();
+        gzip_copy(second_plain.to_str().unwrap(), &second);
+        separate_args.push(format!("{},{}", first.display(), second.display()));
+        let mut complete = records[0].to_vec();
+        complete.extend_from_slice(records[1]);
+        let complete_path = directory.path().join(format!("lane{}.fastq", lane + 1));
+        fs::write(&complete_path, complete).unwrap();
+        complete_lanes.push(complete_path);
+    }
+
+    let separate_outputs = [
+        directory.path().join("separate-1.fastq"),
+        directory.path().join("separate-2.fastq"),
+        directory.path().join("separate-3.fastq"),
+    ];
+    let separate_rejected = [
+        directory.path().join("separate-rejected-1.fastq"),
+        directory.path().join("separate-rejected-2.fastq"),
+        directory.path().join("separate-rejected-3.fastq"),
+    ];
+    let separate_summary = directory.path().join("separate-summary.json");
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            &separate_args[0],
+            "--read2",
+            &separate_args[1],
+            "--read3",
+            &separate_args[2],
+            "--out1",
+            separate_outputs[0].to_str().unwrap(),
+            "--out2",
+            separate_outputs[1].to_str().unwrap(),
+            "--out3",
+            separate_outputs[2].to_str().unwrap(),
+            "--unassigned1",
+            separate_rejected[0].to_str().unwrap(),
+            "--unassigned2",
+            separate_rejected[1].to_str().unwrap(),
+            "--unassigned3",
+            separate_rejected[2].to_str().unwrap(),
+            "--threads",
+            "2",
+            "--preserve-order",
+            "--summary",
+            separate_summary.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    for (lane, output) in separate_outputs.iter().enumerate() {
+        let text = fs::read_to_string(output).unwrap();
+        assert!(text.contains(&format!("@accepted/{}", lane + 1)));
+        assert!(!text.contains("@rejected"));
+        let rejected = fs::read_to_string(&separate_rejected[lane]).unwrap();
+        assert!(rejected.contains(&format!("@rejected/{}", lane + 1)));
+    }
+    let report: Value = serde_json::from_slice(&fs::read(&separate_summary).unwrap()).unwrap();
+    assert_current_summary_shape(&report);
+    assert_eq!(report["schema_version"], "1.11.0");
+    assert_eq!(report["input_layout"], "separate");
+    assert_eq!(report["input_arity"], 3);
+    assert_eq!(report["output_arity"], 3);
+    assert_eq!(
+        report["shard_read_counts"],
+        serde_json::json!([[1, 1], [1, 1], [1, 1]])
+    );
+
+    let interleaved_first = directory.path().join("interleaved-three-1.fastq");
+    let interleaved_second_plain = directory.path().join("interleaved-three-2.fastq");
+    let interleaved_second = directory.path().join("interleaved-three-2.fastq.gz");
+    let first = [lane_records[0][0], lane_records[1][0], lane_records[2][0]].concat();
+    let second = [lane_records[0][1], lane_records[1][1], lane_records[2][1]].concat();
+    fs::write(&interleaved_first, &first).unwrap();
+    fs::write(&interleaved_second_plain, &second).unwrap();
+    gzip_copy(
+        interleaved_second_plain.to_str().unwrap(),
+        &interleaved_second,
+    );
+    let interleaved_outputs = [
+        directory.path().join("interleaved-three-out-1.fastq"),
+        directory.path().join("interleaved-three-out-2.fastq"),
+        directory.path().join("interleaved-three-out-3.fastq"),
+    ];
+    let interleaved_list = format!(
+        "{},{}",
+        interleaved_first.display(),
+        interleaved_second.display()
+    );
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--interleaved-input",
+            &interleaved_list,
+            "--out1",
+            interleaved_outputs[0].to_str().unwrap(),
+            "--out2",
+            interleaved_outputs[1].to_str().unwrap(),
+            "--out3",
+            interleaved_outputs[2].to_str().unwrap(),
+            "--threads",
+            "2",
+            "--preserve-order",
+        ])
+        .assert()
+        .success();
+    for lane in 0..3 {
+        assert_eq!(
+            fs::read(&interleaved_outputs[lane]).unwrap(),
+            fs::read(&separate_outputs[lane]).unwrap()
+        );
+    }
+
+    let stdin_outputs = [
+        directory.path().join("stdin-three-out-1.fastq"),
+        directory.path().join("stdin-three-out-2.fastq"),
+        directory.path().join("stdin-three-out-3.fastq"),
+    ];
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            "-",
+            "--read2",
+            complete_lanes[1].to_str().unwrap(),
+            "--read3",
+            complete_lanes[2].to_str().unwrap(),
+            "--out1",
+            stdin_outputs[0].to_str().unwrap(),
+            "--out2",
+            stdin_outputs[1].to_str().unwrap(),
+            "--out3",
+            stdin_outputs[2].to_str().unwrap(),
+        ])
+        .write_stdin(fs::read(&complete_lanes[0]).unwrap())
+        .assert()
+        .success();
+    for lane in 0..3 {
+        assert_eq!(
+            fs::read(&stdin_outputs[lane]).unwrap(),
+            fs::read(&separate_outputs[lane]).unwrap()
+        );
+    }
+
+    let stdout_side1 = directory.path().join("stdout-side-1.fastq");
+    let stdout_side2 = directory.path().join("stdout-side-2.fastq");
+    let stdout = Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            complete_lanes[0].to_str().unwrap(),
+            "--read2",
+            complete_lanes[1].to_str().unwrap(),
+            "--read3",
+            complete_lanes[2].to_str().unwrap(),
+            "--out1",
+            stdout_side1.to_str().unwrap(),
+            "--out2",
+            stdout_side2.to_str().unwrap(),
+            "--out3",
+            "-",
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        stdout.get_output().stdout,
+        fs::read(&separate_outputs[2]).unwrap()
+    );
+
+    let four = directory.path().join("four-lane.geom");
+    fs::write(&four, "1{r:}\n2{r:}\n3{r:}\n4{r:}\n").unwrap();
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args(["validate", four.to_str().unwrap()])
+        .assert()
+        .failure();
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            complete_lanes[0].to_str().unwrap(),
+            "--read3",
+            complete_lanes[2].to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--read3 requires --read2"));
 }

@@ -113,13 +113,17 @@ pub struct RunArgs {
     #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
     read2: Vec<PathBuf>,
 
+    /// Ordered R3 FASTQ shards; repeat the option or separate paths with commas.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read3: Vec<PathBuf>,
+
     /// Ordered FASTQ shards containing interleaved complete fragments. The
     /// geometry determines whether each fragment contains 1, 2, or 3 records.
     #[arg(
         long,
         value_delimiter = ',',
         action = clap::ArgAction::Append,
-        conflicts_with_all = ["file1", "read1", "file2", "read2"]
+        conflicts_with_all = ["file1", "read1", "file2", "read2", "read3"]
     )]
     interleaved_input: Vec<PathBuf>,
 
@@ -130,6 +134,10 @@ pub struct RunArgs {
     /// r2 out fastq file
     #[arg(short = 'w', long)]
     out2: Option<PathBuf>,
+
+    /// r3 out fastq file
+    #[arg(long)]
+    out3: Option<PathBuf>,
 
     /// Gzip-compress a FASTQ output lane directed to stdout (`-`).
     #[arg(long)]
@@ -265,6 +273,25 @@ pub struct RunArgs {
     /// R2 output file for reads that failed processing (unassigned)
     #[arg(long = "unassigned2")]
     unassigned2: Option<PathBuf>,
+
+    /// R3 output file for reads that failed processing (unassigned)
+    #[arg(long = "unassigned3")]
+    unassigned3: Option<PathBuf>,
+}
+
+fn cli_output_targets(paths: [Option<PathBuf>; 3]) -> Vec<OutputTarget> {
+    let last = paths
+        .iter()
+        .rposition(Option::is_some)
+        .expect("output target conversion requires one supplied path");
+    paths
+        .into_iter()
+        .take(last + 1)
+        .map(|path| {
+            path.map(OutputTarget::from_cli_path)
+                .unwrap_or(OutputTarget::Discard)
+        })
+        .collect()
 }
 
 fn main() {
@@ -341,6 +368,11 @@ fn main() {
     } else {
         args.read2.clone()
     };
+    let read3 = args.read3.clone();
+    if !read3.is_empty() && read2.is_empty() {
+        eprintln!("error: --read3 requires --read2; input lane indices must be contiguous");
+        exit(2);
+    }
     let file1 = interleaved_input
         .first()
         .or_else(|| read1.first())
@@ -359,6 +391,7 @@ fn main() {
     for f in read1
         .iter()
         .chain(&read2)
+        .chain(&read3)
         .chain(&interleaved_input)
         .filter(|path| *path != std::path::Path::new("-"))
     {
@@ -412,6 +445,11 @@ fn main() {
                         read2.iter().cloned().map(InputSource::from_cli_path),
                     ));
                 }
+                if !read3.is_empty() {
+                    input_lanes.push(InputLane::new(
+                        read3.iter().cloned().map(InputSource::from_cli_path),
+                    ));
+                }
                 config.input_lanes = Some(input_lanes);
             } else {
                 config.interleaved_input = Some(
@@ -426,31 +464,25 @@ fn main() {
             config.output2 = args.out2.clone();
             config.unassigned1 = args.unassigned1.clone();
             config.unassigned2 = args.unassigned2.clone();
-            if args.out1.as_deref() == Some(std::path::Path::new("-"))
+            if args.out3.is_some()
+                || args.out1.as_deref() == Some(std::path::Path::new("-"))
                 || args.out2.as_deref() == Some(std::path::Path::new("-"))
             {
-                let mut outputs = vec![args
-                    .out1
-                    .clone()
-                    .map(OutputTarget::from_cli_path)
-                    .unwrap_or(OutputTarget::Discard)];
-                if let Some(out2) = args.out2.clone() {
-                    outputs.push(OutputTarget::from_cli_path(out2));
-                }
-                config.outputs = Some(outputs);
+                config.outputs = Some(cli_output_targets([
+                    args.out1.clone(),
+                    args.out2.clone(),
+                    args.out3.clone(),
+                ]));
             }
-            if args.unassigned1.as_deref() == Some(std::path::Path::new("-"))
+            if args.unassigned3.is_some()
+                || args.unassigned1.as_deref() == Some(std::path::Path::new("-"))
                 || args.unassigned2.as_deref() == Some(std::path::Path::new("-"))
             {
-                let mut outputs = vec![args
-                    .unassigned1
-                    .clone()
-                    .map(OutputTarget::from_cli_path)
-                    .unwrap_or(OutputTarget::Discard)];
-                if let Some(out2) = args.unassigned2.clone() {
-                    outputs.push(OutputTarget::from_cli_path(out2));
-                }
-                config.unassigned_outputs = Some(outputs);
+                config.unassigned_outputs = Some(cli_output_targets([
+                    args.unassigned1.clone(),
+                    args.unassigned2.clone(),
+                    args.unassigned3.clone(),
+                ]));
             }
             config.stdout_gzip = args.stdout_gzip;
             config.threads = threads;

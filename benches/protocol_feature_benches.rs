@@ -211,6 +211,36 @@ fn bench_interleaved_input(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_bounded_input_arity(c: &mut Criterion) {
+    let n = reads();
+    let lanes = (0..3)
+        .map(|lane| fastq_with_prefix(n, b"ACGTACGT".get(..lane + 4).unwrap()))
+        .collect::<Vec<_>>();
+    let mut group = c.benchmark_group("bounded_input_arity");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(5));
+    for arity in 1..=3 {
+        group.bench_function(format!("lanes_{arity}"), |benchmark| {
+            benchmark.iter_batched(
+                || {
+                    let readers = lanes[..arity]
+                        .iter()
+                        .cloned()
+                        .map(Cursor::new)
+                        .collect::<Vec<_>>();
+                    let mut graph = Graph::<antisequence::trace::NoTrace>::new();
+                    graph.add(InputFastqOp::from_readers(readers).unwrap());
+                    graph.add(NullOutputOp::new());
+                    graph
+                },
+                |graph| graph.try_run_with_threads(1).unwrap(),
+                BatchSize::LargeInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     feature_benches,
     bench_layout_choice_paths,
@@ -218,5 +248,6 @@ criterion_group!(
     bench_indexed_capture_lowering,
     bench_anchor_set_scale,
     bench_interleaved_input,
+    bench_bounded_input_arity,
 );
 criterion_main!(feature_benches);

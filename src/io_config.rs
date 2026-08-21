@@ -2,6 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
+/// Publicly supported logical FASTQ arity. The representation is reserved for
+/// a future small increase without promising unbounded dynamic lanes.
+pub const MAX_INPUT_LANES: usize = 3;
+
 /// One FASTQ source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputSource {

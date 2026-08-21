@@ -1038,6 +1038,7 @@ pub fn parser<'tokens>(
         })
         .repeated()
         .at_least(1)
+        .at_most(3)
         .collect::<Vec<_>>()
         .map_with(|v, span| S(v, span.span()));
 
@@ -1086,6 +1087,7 @@ pub fn parser<'tokens>(
                         .clone()
                         .repeated()
                         .at_least(1)
+                        .at_most(3)
                         .collect::<Vec<_>>(),
                 )
                 .then_ignore(just(Token::Comma))
@@ -1097,6 +1099,7 @@ pub fn parser<'tokens>(
                                 .clone()
                                 .repeated()
                                 .at_least(1)
+                                .at_most(3)
                                 .collect::<Vec<_>>(),
                         ),
                 )
@@ -1120,7 +1123,7 @@ pub fn parser<'tokens>(
                 transform_read
                     .repeated()
                     .at_least(1)
-                    .at_most(2)
+                    .at_most(3)
                     .collect::<Vec<_>>()
                     .then(end())
                     .map(|(val, _)| TransformOutput::Direct(val)),

@@ -21,7 +21,7 @@ use tracing::info;
 use crate::{
     compile::{compile, CompiledData},
     demux::DemuxConfig,
-    io_config::{InputLane, InputSource, OutputTarget},
+    io_config::{InputLane, InputSource, OutputTarget, MAX_INPUT_LANES},
     lexer,
     parser::parser,
     resources::{ResourceBindings, ResourceResolutionReport},
@@ -313,8 +313,12 @@ impl RunConfig {
         if lanes.is_empty() {
             bail!("at least one FASTQ input lane is required");
         }
-        if lanes.len() > 2 {
-            bail!("this release supports one or two FASTQ input lanes; three-lane support is milestone 5");
+        if lanes.len() > MAX_INPUT_LANES {
+            bail!(
+                "this release supports at most {} FASTQ input lanes; got {}",
+                MAX_INPUT_LANES,
+                lanes.len()
+            );
         }
         let expected_shards = lanes[0].shards.len();
         if expected_shards == 0 {
@@ -355,6 +359,8 @@ pub struct RunReport {
     pub resources: ResourceResolutionReport,
     pub input_topology: Vec<Vec<String>>,
     pub input_layout: String,
+    pub input_arity: usize,
+    pub output_arity: usize,
     pub output_topology: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<PipelineReport>,
@@ -386,6 +392,8 @@ pub struct SeqprocStats {
     pub resources: ResourceResolutionReport,
     pub input_topology: Vec<Vec<String>>,
     pub input_layout: String,
+    pub input_arity: usize,
+    pub output_arity: usize,
     pub output_topology: Vec<String>,
 
     pub n_fastqs: u32,
@@ -529,9 +537,10 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         if sources.is_empty() {
             bail!("interleaved input requires at least one FASTQ source");
         }
-        if !(1..=3).contains(&input_lane_count) {
+        if !(1..=MAX_INPUT_LANES).contains(&input_lane_count) {
             bail!(
-                "interleaved input supports geometry arities 1, 2, and 3; got {}",
+                "interleaved input supports geometry arities 1 through {}; got {}",
+                MAX_INPUT_LANES,
                 input_lane_count
             );
         }
@@ -731,16 +740,14 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
 
         let out_dir = demux.output_dir.to_string_lossy();
         let sample_attr_path = format!("{}.{}", demux.barcode_label, demux.sample_attr);
-        let mut expressions = vec![fmt_expr(format!(
-            "{}/{{{}}}_R1.fastq",
-            out_dir, sample_attr_path
-        ))];
-        if input_lane_count > 1 {
-            expressions.push(fmt_expr(format!(
-                "{}/{{{}}}_R2.fastq",
-                out_dir, sample_attr_path
-            )));
-        }
+        let expressions = (1..=output_arity)
+            .map(|lane| {
+                fmt_expr(format!(
+                    "{}/{{{}}}_R{}.fastq",
+                    out_dir, sample_attr_path, lane
+                ))
+            })
+            .collect::<Vec<_>>();
         graph.add(configure_fastq_output(
             OutputFastqFileOp::from_files(expressions),
             &config,
@@ -801,6 +808,8 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
                 resources: resolved_resources.report(),
                 input_topology: &input_topology,
                 input_layout,
+                input_arity: input_lane_count,
+                output_arity,
                 output_topology: &primary_targets,
             },
         )
@@ -834,6 +843,8 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         resources: resolved_resources.report().clone(),
         input_topology,
         input_layout: input_layout.to_owned(),
+        input_arity: input_lane_count,
+        output_arity,
         output_topology: primary_targets
             .iter()
             .map(|target| target.kind().to_owned())
@@ -851,6 +862,8 @@ struct RuntimeProvenance<'a> {
     resources: &'a ResourceResolutionReport,
     input_topology: &'a [Vec<String>],
     input_layout: &'a str,
+    input_arity: usize,
+    output_arity: usize,
     output_topology: &'a [OutputTarget],
 }
 
@@ -869,6 +882,8 @@ fn statistics_from_graph(
         resources,
         input_topology,
         input_layout,
+        input_arity,
+        output_arity,
         output_topology,
     } = provenance;
     let input_stats = graph.input_stats();
@@ -991,7 +1006,7 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.10.0".to_owned(),
+        schema_version: "1.11.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
         statistics_level,
         call,
@@ -1027,6 +1042,8 @@ fn statistics_from_graph(
         resources: resources.clone(),
         input_topology: input_topology.to_vec(),
         input_layout: input_layout.to_owned(),
+        input_arity,
+        output_arity,
         output_topology: output_topology
             .iter()
             .map(|target| target.kind().to_owned())
@@ -1533,7 +1550,7 @@ fn interpret_to_pipes(
     }
 
     Ok(SeqprocStats {
-        schema_version: "1.10.0".to_string(),
+        schema_version: "1.11.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
@@ -1557,6 +1574,8 @@ fn interpret_to_pipes(
         resources: ResourceResolutionReport::default(),
         input_topology: vec![vec!["path".to_owned()]; n_fastqs as usize],
         input_layout: "separate".to_owned(),
+        input_arity: n_fastqs as usize,
+        output_arity: n_fastqs as usize,
         output_topology: vec!["path".to_owned(); n_fastqs as usize],
 
         n_fastqs,
@@ -1912,7 +1931,7 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.10.0".to_string(),
+            schema_version: "1.11.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
@@ -1932,6 +1951,8 @@ mod tests {
             resources: ResourceResolutionReport::default(),
             input_topology: vec![vec!["path".to_owned()], vec!["path".to_owned()]],
             input_layout: "separate".to_owned(),
+            input_arity: 2,
+            output_arity: 2,
             output_topology: vec!["path".to_owned(), "path".to_owned()],
             n_fastqs: 2,
             n_processed: 100,

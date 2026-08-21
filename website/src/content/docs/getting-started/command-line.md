@@ -15,14 +15,15 @@ seqproc run [OPTIONS]
 | --- | --- |
 | `validate` | Parse, compile, and semantically validate a geometry without reading FASTQ data. |
 | `explain` | Print normalized EFGDL and the compiled geometry representation. |
-| `run` | Process one single-end or paired-end FASTQ input. |
+| `run` | Process one, two, or three synchronized FASTQ segments. |
 
 The old flag-only form is accepted for one compatibility cycle, but new
 workflows should use `seqproc run`.
 
 ## Required run inputs
 
-`--geom` and `--read1` are required. Supply `--read2` for paired-end input.
+`--geom` and `--read1` are required. Supply `--read2` and optionally `--read3`
+for synchronized multi-segment input; lane indices must be contiguous.
 Each read lane accepts repeated options and comma-separated ordered shards.
 Corresponding shards are processed together without temporary concatenation:
 
@@ -52,6 +53,21 @@ seqproc run --geom paired.geom \
 Each shard must end on a complete fragment. Interleaved stdin is supported as
 `--interleaved-input -`; output remains one separate target per logical lane.
 Ordinary gzip and `--accelerated-gzip-input` work for interleaved file shards.
+
+Three-segment protocols such as scATAC use the bounded third lane directly:
+
+```console
+seqproc run --geom scatac.geom \
+  --read1 genomic_R1.fastq.gz \
+  --read2 cell_barcode.fastq.gz \
+  --read3 genomic_R2.fastq.gz \
+  --out1 clean_R1.fastq.gz \
+  --out2 clean_barcode.fastq.gz \
+  --out3 clean_R2.fastq.gz
+```
+
+The current public bound is three input and output segments. Geometries with a
+larger arity fail during validation rather than after workers start.
 
 Output arguments are optional syntactically, but an omitted primary output is
 discarded. Use `--out1` and, for two-output geometries, `--out2` explicitly.
@@ -144,7 +160,8 @@ seqproc run --geom protocol.geom --additional barcodes.txt \
 
 ## Output and reporting options
 
-- `--unassigned1` and `--unassigned2` retain records rejected by the main graph.
+- `--unassigned1`, `--unassigned2`, and `--unassigned3` retain records rejected
+  by the main graph.
 - `--demux-map`, `--demux-label`, and `--demux-out-dir` route accepted reads by
   sample barcode.
 - `--summary FILE` writes a versioned JSON run report; `--summary -` writes it
