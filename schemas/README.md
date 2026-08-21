@@ -1,6 +1,6 @@
 # seqproc report schemas
 
-`seqproc-summary-1.8.0.schema.json` is the current versioned schema emitted by
+`seqproc-summary-1.9.0.schema.json` is the current versioned schema emitted by
 `seqproc run --summary`; the 1.0.0 and 1.1.0 files remain immutable for existing
 consumers. Schema versions are independent of the seqproc binary version so
 consumers can negotiate report compatibility explicitly.
@@ -53,6 +53,10 @@ Schema 1.7.0 adds resolved EFGDL resources, their binding source and BLAKE3
 content digest, plus declared resources that were not used by the geometry.
 
 Schema 1.8.0 adds per-lane, per-shard FASTQ record counts.
+
+Schema 1.9.0 adds typed `input_topology` and `output_topology` provenance so
+streamed stdin/stdout runs are distinguishable from path-backed and discarded
+lanes without exposing path names.
 
 Additive fields require a schema minor version. Removing fields, changing their
 meaning, or changing types requires a schema major version and a new file.

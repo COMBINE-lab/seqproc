@@ -45,6 +45,24 @@ discarded. Use `--out1` and, for two-output geometries, `--out2` explicitly.
 seqproc run --geom protocol.geom --read1 R1.fastq --out1 clean_R1.fastq
 ```
 
+Use `-` for one stdin source or one stdout target. Gzip input is detected from
+its magic bytes; use `--stdout-gzip` to compress stdout because it has no file
+suffix. Diagnostics always go to stderr. In a pipeline, `--summary -` also
+writes JSON to stderr so the FASTQ stream remains clean:
+
+```console
+gzip -cd reads.fastq.gz | seqproc run --geom protocol.geom \
+  --read1 - --out1 - --stdout-gzip > clean.fastq.gz
+```
+
+At most one source may consume stdin and at most one FASTQ lane may target
+stdout. The first stream implementation treats stdin as a complete logical
+lane, so it cannot also be one member of a multi-shard lane. Parallel gzip
+output modes are path-only; stdout uses the ordinary bounded writer path.
+If a downstream process closes the pipe, seqproc cancels the remaining graph
+and exits nonzero with the write diagnostic on stderr; it never treats a
+partial FASTQ stream as a successful run.
+
 ## Parallel execution and ordering
 
 `--threads N` selects the transform worker count. Unordered execution is the
@@ -114,7 +132,8 @@ seqproc run --geom protocol.geom --additional barcodes.txt \
 - `--unassigned1` and `--unassigned2` retain records rejected by the main graph.
 - `--demux-map`, `--demux-label`, and `--demux-out-dir` route accepted reads by
   sample barcode.
-- `--summary FILE` writes a versioned JSON run report.
+- `--summary FILE` writes a versioned JSON run report; `--summary -` writes it
+  to stderr.
 - `--statistics-level basic|detailed` controls summary detail.
 
 ## Compression options

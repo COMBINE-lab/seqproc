@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::BufWriter,
+    io::{self, BufWriter, Write},
     panic,
     path::{Path, PathBuf},
     thread,
@@ -11,6 +11,7 @@ use antisequence::graph::TryOp;
 use antisequence::graph::*;
 use anyhow::{anyhow, bail, Result};
 use chumsky::{error::Rich, input::Input, Parser};
+use flate2::{write::GzEncoder, Compression};
 use nix::sys::stat;
 use nix::unistd;
 use serde::Serialize;
@@ -20,7 +21,7 @@ use tracing::info;
 use crate::{
     compile::{compile, CompiledData},
     demux::DemuxConfig,
-    io_config::{InputLane, InputSource},
+    io_config::{InputLane, InputSource, OutputTarget},
     lexer,
     parser::parser,
     resources::{ResourceBindings, ResourceResolutionReport},
@@ -41,6 +42,116 @@ fn configure_fastq_output(
     }
 }
 
+fn output_targets_from_legacy(config: &RunConfig, output_arity: usize) -> Vec<OutputTarget> {
+    let mut targets = vec![config
+        .output1
+        .clone()
+        .map(OutputTarget::Path)
+        .unwrap_or(OutputTarget::Discard)];
+    if output_arity > 1 {
+        if let Some(path) = &config.output2 {
+            targets.push(OutputTarget::Path(path.clone()));
+        }
+    }
+    targets
+}
+
+fn unassigned_targets_from_legacy(config: &RunConfig, input_arity: usize) -> Vec<OutputTarget> {
+    let Some(last) = [config.unassigned1.as_ref(), config.unassigned2.as_ref()]
+        .into_iter()
+        .take(input_arity)
+        .rposition(|path| path.is_some())
+    else {
+        return Vec::new();
+    };
+    [config.unassigned1.as_ref(), config.unassigned2.as_ref()]
+        .into_iter()
+        .take(last + 1)
+        .map(|path| {
+            path.cloned()
+                .map(OutputTarget::Path)
+                .unwrap_or(OutputTarget::Discard)
+        })
+        .collect()
+}
+
+fn target_file_name(target: &OutputTarget) -> Option<String> {
+    match target {
+        OutputTarget::Path(path) => Some(path.to_string_lossy().into_owned()),
+        OutputTarget::Discard => Some("/dev/null".to_owned()),
+        OutputTarget::Stdout => None,
+    }
+}
+
+fn writer_for_target(
+    target: &OutputTarget,
+    stdout_gzip: bool,
+    gzip_level: u32,
+) -> Result<Box<dyn Write + Send>> {
+    match target {
+        OutputTarget::Path(path) => {
+            let file = File::create(path)
+                .map_err(|error| anyhow!("failed to create output {:?}: {error}", path))?;
+            let writer = BufWriter::new(file);
+            if path.to_string_lossy().ends_with(".gz") {
+                Ok(Box::new(GzEncoder::new(
+                    writer,
+                    Compression::new(gzip_level),
+                )))
+            } else {
+                Ok(Box::new(writer))
+            }
+        }
+        OutputTarget::Stdout => {
+            let writer = BufWriter::new(io::stdout());
+            if stdout_gzip {
+                Ok(Box::new(GzEncoder::new(
+                    writer,
+                    Compression::new(gzip_level),
+                )))
+            } else {
+                Ok(Box::new(writer))
+            }
+        }
+        OutputTarget::Discard => Ok(Box::new(io::sink())),
+    }
+}
+
+fn add_fastq_targets(
+    graph: &mut Graph,
+    targets: &[OutputTarget],
+    config: &RunConfig,
+    gzip_threads: usize,
+) -> Result<()> {
+    if targets.is_empty() {
+        return Ok(());
+    }
+    if targets
+        .iter()
+        .all(|target| !matches!(target, OutputTarget::Stdout))
+    {
+        let files = targets
+            .iter()
+            .filter_map(target_file_name)
+            .collect::<Vec<_>>();
+        graph.add(configure_fastq_output(
+            OutputFastqFileOp::from_files(files),
+            config,
+            gzip_threads,
+        )?);
+        return Ok(());
+    }
+    if config.parallel_gzip || config.parallel_gzip_stream {
+        bail!("parallel gzip output is not supported when a lane targets stdout");
+    }
+    let writers = targets
+        .iter()
+        .map(|target| writer_for_target(target, config.stdout_gzip, config.gzip_level))
+        .collect::<Result<Vec<_>>>()?;
+    graph.add(OutputFastqOp::from_writers(writers));
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct FifoSeqprocData {
     pub r1_fifo: PathBuf,
@@ -57,8 +168,14 @@ pub struct RunConfig {
     pub input_lanes: Option<Vec<InputLane>>,
     pub output1: Option<PathBuf>,
     pub output2: Option<PathBuf>,
+    /// Primary output representation. `None` uses `output1`/`output2`.
+    pub outputs: Option<Vec<OutputTarget>>,
     pub unassigned1: Option<PathBuf>,
     pub unassigned2: Option<PathBuf>,
+    /// Unassigned output representation. `None` uses the legacy fields.
+    pub unassigned_outputs: Option<Vec<OutputTarget>>,
+    /// Compress the stdout FASTQ stream. Required because stdout has no suffix.
+    pub stdout_gzip: bool,
     pub threads: usize,
     pub preserve_order: bool,
     pub staged_pipeline: bool,
@@ -117,8 +234,11 @@ impl RunConfig {
             input_lanes: None,
             output1: None,
             output2: None,
+            outputs: None,
             unassigned1: None,
             unassigned2: None,
+            unassigned_outputs: None,
+            stdout_gzip: false,
             threads: 1,
             preserve_order: false,
             staged_pipeline: false,
@@ -162,6 +282,11 @@ impl RunConfig {
 
     pub fn with_input_lanes(mut self, lanes: impl IntoIterator<Item = InputLane>) -> Self {
         self.input_lanes = Some(lanes.into_iter().collect());
+        self
+    }
+
+    pub fn with_outputs(mut self, outputs: impl IntoIterator<Item = OutputTarget>) -> Self {
+        self.outputs = Some(outputs.into_iter().collect());
         self
     }
 
@@ -216,6 +341,8 @@ pub struct RunReport {
     pub graph_optimization: GraphOptimizationReport,
     pub execution_plan: ExecutionPlan,
     pub resources: ResourceResolutionReport,
+    pub input_topology: Vec<Vec<String>>,
+    pub output_topology: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<PipelineReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -244,6 +371,8 @@ pub struct SeqprocStats {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_plan: Option<ExecutionPlan>,
     pub resources: ResourceResolutionReport,
+    pub input_topology: Vec<Vec<String>>,
+    pub output_topology: Vec<String>,
 
     pub n_fastqs: u32,
     pub n_processed: u64,
@@ -344,7 +473,10 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         );
     }
     if config.parallel_gzip_stream
-        && (config.demux.is_some() || config.unassigned1.is_some() || config.unassigned2.is_some())
+        && (config.demux.is_some()
+            || config.unassigned_outputs.is_some()
+            || config.unassigned1.is_some()
+            || config.unassigned2.is_some())
     {
         bail!(
             "parallel single-stream gzip currently supports fixed primary outputs only; demultiplexed and unassigned outputs would create an unbounded number of compression pools"
@@ -368,13 +500,64 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         );
     }
 
+    let output_arity = compiled_data
+        .transformation
+        .as_ref()
+        .map_or(input_lane_count, Vec::len);
     if config.demux.is_none() {
         if let Some(transformations) = &compiled_data.transformation {
-            if transformations.len() == 2 && (config.output1.is_none() || config.output2.is_none())
+            if config.outputs.is_none()
+                && transformations.len() == 2
+                && (config.output1.is_none() || config.output2.is_none())
             {
                 bail!("geometry transforms into two reads; both output1 and output2 are required");
             }
         }
+    }
+    let primary_targets = config
+        .outputs
+        .clone()
+        .unwrap_or_else(|| output_targets_from_legacy(&config, output_arity));
+    if config.demux.is_none() && primary_targets.len() != output_arity {
+        bail!(
+            "{} primary output targets were supplied, but the geometry emits {} reads",
+            primary_targets.len(),
+            output_arity
+        );
+    }
+    let unassigned_targets = config
+        .unassigned_outputs
+        .clone()
+        .unwrap_or_else(|| unassigned_targets_from_legacy(&config, input_lane_count));
+    if unassigned_targets.len() > input_lane_count {
+        bail!(
+            "{} unassigned output targets were supplied for {} input lanes",
+            unassigned_targets.len(),
+            input_lane_count
+        );
+    }
+    let stdout_targets = primary_targets
+        .iter()
+        .chain(&unassigned_targets)
+        .filter(|target| matches!(target, OutputTarget::Stdout))
+        .count();
+    if stdout_targets > 1 {
+        bail!("at most one FASTQ output target may use stdout");
+    }
+    if config.stdout_gzip && stdout_targets == 0 {
+        bail!("stdout gzip compression was requested, but no output target uses stdout");
+    }
+
+    let stdin_sources = input_lanes
+        .iter()
+        .flat_map(|lane| &lane.shards)
+        .filter(|source| matches!(source, InputSource::Stdin))
+        .count();
+    if stdin_sources > 1 {
+        bail!("at most one FASTQ input source may use stdin");
+    }
+    if stdin_sources > 0 && config.accelerated_gzip_input {
+        bail!("accelerated gzip input is not available for stdin; gzip stdin is auto-detected");
     }
 
     let resolved_resources = compiled_data.resolve_resources(
@@ -383,18 +566,43 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         config.geometry_base.as_deref(),
     )?;
     let mut graph = Graph::new();
+    let input_topology = input_lanes
+        .iter()
+        .map(|lane| {
+            lane.shards
+                .iter()
+                .map(|source| source.kind().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
     let grouped_files = input_lanes
         .iter()
         .map(|lane| {
             lane.shards
                 .iter()
-                .map(|source| match source {
-                    InputSource::Path(path) => path.to_string_lossy().into_owned(),
-                })
+                .filter_map(|source| source.path())
+                .map(|path| path.to_string_lossy().into_owned())
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    if grouped_files.iter().all(|lane| lane.len() == 1) {
+    if stdin_sources > 0 {
+        if input_lanes.iter().any(|lane| lane.shards.len() != 1) {
+            bail!("stdin currently represents a complete logical lane and cannot be combined with file shards");
+        }
+        let readers = input_lanes
+            .iter()
+            .map(|lane| match &lane.shards[0] {
+                InputSource::Path(path) => File::open(path)
+                    .map(|file| Box::new(file) as Box<dyn io::Read + Send>)
+                    .map_err(|error| anyhow!("failed to open input FASTQ {:?}: {error}", path)),
+                InputSource::Stdin => Ok(Box::new(io::stdin()) as Box<dyn io::Read + Send>),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        graph.add(
+            InputFastqOp::from_readers(readers)
+                .map_err(|error| anyhow!("failed to parse streamed FASTQ input: {error}"))?,
+        );
+    } else if grouped_files.iter().all(|lane| lane.len() == 1) {
         let files = grouped_files
             .iter()
             .map(|lane| lane[0].clone())
@@ -424,28 +632,13 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         );
     }
 
-    let has_unassigned = config.unassigned1.is_some() || config.unassigned2.is_some();
+    let has_unassigned = !unassigned_targets.is_empty();
     if has_unassigned {
         let mut try_graph = Graph::new();
         compiled_data.interpret_with_resources(&mut try_graph, &resolved_resources);
 
         let mut catch_graph = Graph::new();
-        let mut unassigned_files = Vec::new();
-        if let Some(path) = &config.unassigned1 {
-            unassigned_files.push(path.to_string_lossy().into_owned());
-        }
-        if input_lane_count > 1 {
-            if let Some(path) = &config.unassigned2 {
-                unassigned_files.push(path.to_string_lossy().into_owned());
-            }
-        }
-        if !unassigned_files.is_empty() {
-            catch_graph.add(configure_fastq_output(
-                OutputFastqFileOp::from_files(unassigned_files),
-                &config,
-                gzip_threads,
-            )?);
-        }
+        add_fastq_targets(&mut catch_graph, &unassigned_targets, &config, gzip_threads)?;
         graph.add(TryOp::new(try_graph, catch_graph));
     } else {
         compiled_data.interpret_with_resources(&mut graph, &resolved_resources);
@@ -475,31 +668,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
             effective_gzip_threads,
         )?);
     } else {
-        let output1 = config
-            .output1
-            .as_deref()
-            .unwrap_or_else(|| Path::new("/dev/null"))
-            .to_string_lossy()
-            .into_owned();
-        match (input_lane_count > 1, &config.output2) {
-            (true, Some(output2)) => {
-                graph.add(configure_fastq_output(
-                    OutputFastqFileOp::from_files([
-                        output1,
-                        output2.to_string_lossy().into_owned(),
-                    ]),
-                    &config,
-                    gzip_threads,
-                )?);
-            }
-            _ => {
-                graph.add(configure_fastq_output(
-                    OutputFastqFileOp::from_file(output1),
-                    &config,
-                    gzip_threads,
-                )?);
-            }
-        }
+        add_fastq_targets(&mut graph, &primary_targets, &config, gzip_threads)?;
     }
 
     // Geometry compilation currently relies on the historical conditional
@@ -551,6 +720,8 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
                 optimization: &optimization,
                 execution_plan: &execution_plan,
                 resources: resolved_resources.report(),
+                input_topology: &input_topology,
+                output_topology: &primary_targets,
             },
         )
     });
@@ -581,6 +752,11 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         graph_optimization: optimization,
         execution_plan,
         resources: resolved_resources.report().clone(),
+        input_topology,
+        output_topology: primary_targets
+            .iter()
+            .map(|target| target.kind().to_owned())
+            .collect(),
         pipeline,
         statistics,
     })
@@ -592,6 +768,8 @@ struct RuntimeProvenance<'a> {
     optimization: &'a GraphOptimizationReport,
     execution_plan: &'a ExecutionPlan,
     resources: &'a ResourceResolutionReport,
+    input_topology: &'a [Vec<String>],
+    output_topology: &'a [OutputTarget],
 }
 
 fn statistics_from_graph(
@@ -607,6 +785,8 @@ fn statistics_from_graph(
         optimization,
         execution_plan,
         resources,
+        input_topology,
+        output_topology,
     } = provenance;
     let input_stats = graph.input_stats();
     let (
@@ -728,7 +908,7 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.8.0".to_owned(),
+        schema_version: "1.9.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
         statistics_level,
         call,
@@ -762,6 +942,11 @@ fn statistics_from_graph(
         graph_optimization: Some(optimization.clone()),
         execution_plan: Some(execution_plan.clone()),
         resources: resources.clone(),
+        input_topology: input_topology.to_vec(),
+        output_topology: output_topology
+            .iter()
+            .map(|target| target.kind().to_owned())
+            .collect(),
         n_fastqs,
         n_processed,
         n_reads_max,
@@ -1264,7 +1449,7 @@ fn interpret_to_pipes(
     }
 
     Ok(SeqprocStats {
-        schema_version: "1.8.0".to_string(),
+        schema_version: "1.9.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
@@ -1286,6 +1471,8 @@ fn interpret_to_pipes(
         graph_optimization: None,
         execution_plan: None,
         resources: ResourceResolutionReport::default(),
+        input_topology: vec![vec!["path".to_owned()]; n_fastqs as usize],
+        output_topology: vec!["path".to_owned(); n_fastqs as usize],
 
         n_fastqs,
         n_processed,
@@ -1640,7 +1827,7 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.8.0".to_string(),
+            schema_version: "1.9.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
@@ -1658,6 +1845,8 @@ mod tests {
             graph_optimization: None,
             execution_plan: None,
             resources: ResourceResolutionReport::default(),
+            input_topology: vec![vec!["path".to_owned()], vec!["path".to_owned()]],
+            output_topology: vec!["path".to_owned(), "path".to_owned()],
             n_fastqs: 2,
             n_processed: 100,
             n_reads_max: 1000,

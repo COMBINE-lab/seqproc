@@ -9,7 +9,7 @@ use antisequence::graph::{ExecutionMode, PipelineInputMode, StatisticsLevel};
 use seqproc::{
     demux::DemuxConfig,
     execute::{compile_geom, run, RunConfig},
-    io_config::InputLane,
+    io_config::{InputLane, InputSource, OutputTarget},
     resources::ResourceBindings,
 };
 
@@ -120,6 +120,10 @@ pub struct RunArgs {
     /// r2 out fastq file
     #[arg(short = 'w', long)]
     out2: Option<PathBuf>,
+
+    /// Gzip-compress a FASTQ output lane directed to stdout (`-`).
+    #[arg(long)]
+    stdout_gzip: bool,
 
     /// number of threads to use
     #[arg(short, long, default_value_t = 1)]
@@ -337,7 +341,11 @@ fn main() {
 
     // Validate input FASTQ paths up front so a missing file surfaces as a clean
     // error instead of a panic from deep inside the read-processing engine.
-    for f in read1.iter().chain(&read2) {
+    for f in read1
+        .iter()
+        .chain(&read2)
+        .filter(|path| *path != std::path::Path::new("-"))
+    {
         if !f.exists() {
             eprintln!("error: input FASTQ not found: {:?}", f);
             std::process::exit(1);
@@ -379,15 +387,46 @@ fn main() {
         Ok(geom) => {
             let mut config = RunConfig::new(file1.clone());
             config.input2 = read2.first().cloned();
-            let mut input_lanes = vec![InputLane::new(read1.clone())];
+            let mut input_lanes = vec![InputLane::new(
+                read1.iter().cloned().map(InputSource::from_cli_path),
+            )];
             if !read2.is_empty() {
-                input_lanes.push(InputLane::new(read2.clone()));
+                input_lanes.push(InputLane::new(
+                    read2.iter().cloned().map(InputSource::from_cli_path),
+                ));
             }
             config.input_lanes = Some(input_lanes);
             config.output1 = args.out1.clone();
             config.output2 = args.out2.clone();
             config.unassigned1 = args.unassigned1.clone();
             config.unassigned2 = args.unassigned2.clone();
+            if args.out1.as_deref() == Some(std::path::Path::new("-"))
+                || args.out2.as_deref() == Some(std::path::Path::new("-"))
+            {
+                let mut outputs = vec![args
+                    .out1
+                    .clone()
+                    .map(OutputTarget::from_cli_path)
+                    .unwrap_or(OutputTarget::Discard)];
+                if let Some(out2) = args.out2.clone() {
+                    outputs.push(OutputTarget::from_cli_path(out2));
+                }
+                config.outputs = Some(outputs);
+            }
+            if args.unassigned1.as_deref() == Some(std::path::Path::new("-"))
+                || args.unassigned2.as_deref() == Some(std::path::Path::new("-"))
+            {
+                let mut outputs = vec![args
+                    .unassigned1
+                    .clone()
+                    .map(OutputTarget::from_cli_path)
+                    .unwrap_or(OutputTarget::Discard)];
+                if let Some(out2) = args.unassigned2.clone() {
+                    outputs.push(OutputTarget::from_cli_path(out2));
+                }
+                config.unassigned_outputs = Some(outputs);
+            }
+            config.stdout_gzip = args.stdout_gzip;
             config.threads = threads;
             config.preserve_order = args.preserve_order;
             config.staged_pipeline = args.staged_pipeline;
@@ -433,14 +472,19 @@ fn main() {
                     eprintln!("error: summary statistics were not collected");
                     exit(1);
                 };
-                let file = File::create(&summary_path).unwrap_or_else(|error| {
-                    eprintln!(
-                        "error: failed to create summary {:?}: {error}",
-                        summary_path
-                    );
-                    exit(1);
-                });
-                if let Err(error) = serde_json::to_writer_pretty(file, &statistics) {
+                let result = if summary_path == std::path::Path::new("-") {
+                    serde_json::to_writer_pretty(io::stderr().lock(), &statistics)
+                } else {
+                    let file = File::create(&summary_path).unwrap_or_else(|error| {
+                        eprintln!(
+                            "error: failed to create summary {:?}: {error}",
+                            summary_path
+                        );
+                        exit(1);
+                    });
+                    serde_json::to_writer_pretty(file, &statistics)
+                };
+                if let Err(error) = result {
                     eprintln!("error: failed to write summary {:?}: {error}", summary_path);
                     exit(1);
                 }

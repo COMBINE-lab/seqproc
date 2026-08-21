@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use antisequence::graph::ExecutionMode;
 use seqproc::execute::{compile_geom, run, RunConfig};
-use seqproc::io_config::InputLane;
+use seqproc::io_config::{InputLane, InputSource, OutputTarget};
 
 let source = fs::read_to_string("protocol.geom")?;
 let compiled = compile_geom(source).expect("geometry must compile");
@@ -38,6 +38,19 @@ let report = run(config, compiled)?;
 println!("effective transform threads: {}", report.effective_threads);
 # Ok::<(), anyhow::Error>(())
 ```
+
+For streams, construct typed targets rather than using a sentinel path:
+
+```rust
+# use seqproc::execute::RunConfig;
+# use seqproc::io_config::{InputLane, InputSource, OutputTarget};
+let config = RunConfig::new("unused")
+    .with_input_lanes([InputLane::single(InputSource::Stdin)])
+    .with_outputs([OutputTarget::Stdout]);
+```
+
+Only configurations that contain a stream use the reader/writer-backed graph
+nodes. Path-only configurations retain the existing optimized file operators.
 
 ## `RunConfig`
 

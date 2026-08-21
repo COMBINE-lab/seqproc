@@ -39,7 +39,7 @@ for a headline performance result and measure summary overhead separately.
 
 ## Schema versioning
 
-The current source tree emits summary schema 1.8.0. Schemas are versioned
+The current source tree emits summary schema 1.9.0. Schemas are versioned
 independently from the binary and are committed under
 [`schemas/`](https://github.com/COMBINE-lab/seqproc/tree/main/schemas).
 
@@ -70,6 +70,9 @@ content digest, and any unused named declarations.
 
 Schema 1.8.0 adds `shard_read_counts`, nested first by biological read lane and
 then by the ordered FASTQ shard within that lane.
+
+Schema 1.9.0 adds `input_topology` and `output_topology`. These report only the
+target kinds (`path`, `stdin`, `stdout`, or `discard`), not path names.
 
 The geometry digest is a content/provenance identifier, not a security
 primitive. Current releases use the algorithm-tagged form `blake3:<hex>` (early

@@ -72,6 +72,11 @@ Logical read lanes may be split across files without pre-concatenation. Repeat
 `--read1`/`--read2` or use comma-separated paths; seqproc opens corresponding
 shards lazily and verifies their record counts at every shard boundary.
 
+`-` denotes stdin for one input lane and stdout for one output lane. For
+example, `seqproc run --geom protocol.geom --read1 - --out1 -` is a clean FASTQ
+filter in a Unix pipeline; diagnostics remain on stderr. Add `--stdout-gzip`
+when stdout itself should be gzip-compressed.
+
 New geometry files should declare EFGDL 2 in the general document header.
 Optional metadata fields accept integers, quoted strings, or bare identifiers
 and are retained for provenance tooling. Headerless files continue to use

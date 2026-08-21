@@ -20,7 +20,7 @@ fn gzip_copy(source: &str, destination: &std::path::Path) {
 
 fn assert_current_summary_shape(report: &Value) {
     let schema: Value =
-        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.8.0.schema.json")).unwrap();
+        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.9.0.schema.json")).unwrap();
     assert_eq!(
         report["schema_version"],
         schema["properties"]["schema_version"]["const"]
@@ -29,7 +29,7 @@ fn assert_current_summary_shape(report: &Value) {
     for key in report.as_object().unwrap().keys() {
         assert!(
             properties.contains_key(key),
-            "summary field {key:?} is absent from schema 1.8.0"
+            "summary field {key:?} is absent from schema 1.9.0"
         );
     }
     for required in schema["required"].as_array().unwrap() {
@@ -413,7 +413,7 @@ fn summary_mode_uses_the_same_processing_pipeline() {
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.8.0");
+    assert_eq!(report["schema_version"], "1.9.0");
     assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
@@ -983,7 +983,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.8.0");
+    assert_eq!(report["schema_version"], "1.9.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);
@@ -1034,4 +1034,149 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         .args(["--parallel-gzip", "--parallel-gzip-stream"])
         .assert()
         .failure();
+}
+
+#[test]
+fn stdin_stdout_streams_are_clean_typed_and_composable() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("stream.geom");
+    let input = directory.path().join("input.fastq");
+    let reference = directory.path().join("reference.fastq");
+    let from_stdin = directory.path().join("from-stdin.fastq");
+    let fastq = b"@r1\nACGT\n+\nIIII\n@r2\nTGCA\n+\nJJJJ\n";
+    fs::write(&geometry, "1{r:}\n").unwrap();
+    fs::write(&input, fastq).unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            input.to_str().unwrap(),
+            "--out1",
+            reference.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let expected = fs::read(&reference).unwrap();
+
+    let file_to_stdout = Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            input.to_str().unwrap(),
+            "--out1",
+            "-",
+        ])
+        .assert()
+        .success();
+    assert_eq!(file_to_stdout.get_output().stdout, expected);
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            "-",
+            "--out1",
+            from_stdin.to_str().unwrap(),
+        ])
+        .write_stdin(fastq.as_slice())
+        .assert()
+        .success();
+    assert_eq!(fs::read(&from_stdin).unwrap(), expected);
+
+    let mut gzip_input = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(3));
+    use std::io::Write as _;
+    gzip_input.write_all(fastq).unwrap();
+    let gzip_input = gzip_input.finish().unwrap();
+    let gzip_stdin_output = directory.path().join("gzip-stdin.fastq");
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            "-",
+            "--out1",
+            gzip_stdin_output.to_str().unwrap(),
+        ])
+        .write_stdin(gzip_input)
+        .assert()
+        .success();
+    assert_eq!(fs::read(gzip_stdin_output).unwrap(), expected);
+
+    let stdin_to_stdout = Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            "-",
+            "--out1",
+            "-",
+            "--summary",
+            "-",
+        ])
+        .write_stdin(fastq.as_slice())
+        .assert()
+        .success();
+    assert_eq!(stdin_to_stdout.get_output().stdout, expected);
+    let stderr = String::from_utf8_lossy(&stdin_to_stdout.get_output().stderr);
+    assert!(stderr.contains("\"schema_version\": \"1.9.0\""));
+    assert!(stderr.contains("\"input_topology\""));
+    assert!(stderr.contains("\"stdin\""));
+    assert!(stderr.contains("\"stdout\""));
+    assert!(stderr.contains("\"accepted_fragments\": 2"));
+
+    let compressed = Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            input.to_str().unwrap(),
+            "--out1",
+            "-",
+            "--stdout-gzip",
+        ])
+        .assert()
+        .success();
+    let mut decoded = Vec::new();
+    flate2::read::MultiGzDecoder::new(compressed.get_output().stdout.as_slice())
+        .read_to_end(&mut decoded)
+        .unwrap();
+    assert_eq!(decoded, expected);
+
+    let paired_geometry = directory.path().join("paired.geom");
+    fs::write(&paired_geometry, "1{r:}\n2{r:}\n").unwrap();
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            paired_geometry.to_str().unwrap(),
+            "--read1",
+            "-",
+            "--read2",
+            "-",
+            "--out1",
+            reference.to_str().unwrap(),
+            "--out2",
+            from_stdin.to_str().unwrap(),
+        ])
+        .write_stdin(fastq.as_slice())
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("at most one FASTQ input source"));
 }
