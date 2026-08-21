@@ -77,9 +77,14 @@ structure; `--staged-pipeline` is retained as a compatibility alias.
 It can help costly graphs by separating stages, but cheap geometries may be
 faster on the normal worker path.
 
-`--batch-size`, `--queue-capacity`, and `--max-in-flight-batches` expose tuning
-controls and memory bounds. Retain defaults unless a representative benchmark
-shows a stable improvement.
+`--batch-size`, `--queue-capacity`, and `--max-in-flight-batches` expose exact
+tuning controls. When a control is absent, the deterministic batch planner
+uses graph cost, static geometry length, lane count, compression, worker count,
+and `--batch-memory-budget-mib` (256 MiB by default) to select it. Planning
+does not sample the input, so it cannot consume stdin or make runs
+data-dependent. Summaries report the selected bounds, estimated live bytes,
+and stable reason codes. `--no-dynamic-batch-planning` restores fixed pipeline
+defaults for compatibility and A/B measurements.
 
 For a safe terminal sequence of projections followed by FASTQ output, a
 one-worker staged pipeline writes the projected sequence, quality, and header

@@ -1,6 +1,6 @@
 # seqproc report schemas
 
-`seqproc-summary-1.11.0.schema.json` is the current versioned schema emitted by
+`seqproc-summary-1.12.0.schema.json` is the current versioned schema emitted by
 `seqproc run --summary`; the 1.0.0 and 1.1.0 files remain immutable for existing
 consumers. Schema versions are independent of the seqproc binary version so
 consumers can negotiate report compatibility explicitly.
@@ -63,6 +63,10 @@ one physical interleaved input stream.
 
 Schema 1.11.0 adds the validated `input_arity` and `output_arity` (currently
 bounded to one, two, or three).
+
+Schema 1.12.0 adds `execution_plan.batch_planning`, including static planning
+inputs, exact-override flags, selected batch/queue/in-flight bounds, estimated
+fragment/batch/peak bytes, the memory budget, and stable reason codes.
 
 Additive fields require a schema minor version. Removing fields, changing their
 meaning, or changing types requires a schema major version and a new file.

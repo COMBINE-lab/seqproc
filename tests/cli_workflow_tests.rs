@@ -20,7 +20,7 @@ fn gzip_copy(source: &str, destination: &std::path::Path) {
 
 fn assert_current_summary_shape(report: &Value) {
     let schema: Value = serde_json::from_str(include_str!(
-        "../schemas/seqproc-summary-1.11.0.schema.json"
+        "../schemas/seqproc-summary-1.12.0.schema.json"
     ))
     .unwrap();
     assert_eq!(
@@ -31,7 +31,7 @@ fn assert_current_summary_shape(report: &Value) {
     for key in report.as_object().unwrap().keys() {
         assert!(
             properties.contains_key(key),
-            "summary field {key:?} is absent from schema 1.11.0"
+            "summary field {key:?} is absent from schema 1.12.0"
         );
     }
     for required in schema["required"].as_array().unwrap() {
@@ -415,7 +415,7 @@ fn summary_mode_uses_the_same_processing_pipeline() {
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.11.0");
+    assert_eq!(report["schema_version"], "1.12.0");
     assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
@@ -436,6 +436,31 @@ fn summary_mode_uses_the_same_processing_pipeline() {
     assert_eq!(
         report["execution_plan"]["pipeline"]["input_mode"],
         "dedicated_reader"
+    );
+    assert_eq!(report["execution_plan"]["batch_planning"]["enabled"], true);
+    assert_eq!(
+        report["execution_plan"]["batch_planning"]["automatic_batch_size"],
+        true
+    );
+    assert_eq!(
+        report["execution_plan"]["batch_planning"]["automatic_queue_capacity"],
+        false
+    );
+    assert_eq!(
+        report["execution_plan"]["batch_planning"]["automatic_max_in_flight"],
+        false
+    );
+    assert_eq!(
+        report["execution_plan"]["batch_planning"]["queue_capacity"],
+        1
+    );
+    assert_eq!(
+        report["execution_plan"]["batch_planning"]["max_in_flight_batches"],
+        2
+    );
+    assert_eq!(
+        report["execution_plan"]["batch_planning"]["memory_budget_bytes"],
+        256 * 1024 * 1024
     );
     assert_eq!(
         report["execution_plan"]["reason_codes"][0],
@@ -1016,7 +1041,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.11.0");
+    assert_eq!(report["schema_version"], "1.12.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);
@@ -1165,7 +1190,7 @@ fn stdin_stdout_streams_are_clean_typed_and_composable() {
         .success();
     assert_eq!(stdin_to_stdout.get_output().stdout, expected);
     let stderr = String::from_utf8_lossy(&stdin_to_stdout.get_output().stderr);
-    assert!(stderr.contains("\"schema_version\": \"1.11.0\""));
+    assert!(stderr.contains("\"schema_version\": \"1.12.0\""));
     assert!(stderr.contains("\"input_topology\""));
     assert!(stderr.contains("\"stdin\""));
     assert!(stderr.contains("\"stdout\""));
@@ -1455,7 +1480,7 @@ fn three_segment_scatac_paths_cover_shards_streams_interleaving_and_reports() {
     }
     let report: Value = serde_json::from_slice(&fs::read(&separate_summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.11.0");
+    assert_eq!(report["schema_version"], "1.12.0");
     assert_eq!(report["input_layout"], "separate");
     assert_eq!(report["input_arity"], 3);
     assert_eq!(report["output_arity"], 3);
@@ -1620,5 +1645,22 @@ fn typed_configuration_errors_have_stable_nonzero_cli_status() {
         .code(2)
         .stderr(predicates::str::contains(
             "number of threads must be greater than zero",
+        ));
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            input.to_str().unwrap(),
+            "--batch-memory-budget-mib",
+            "0",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "dynamic batch planning requires a nonzero memory budget",
         ));
 }

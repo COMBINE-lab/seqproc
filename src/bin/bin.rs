@@ -204,6 +204,15 @@ pub struct RunArgs {
     #[arg(long)]
     batch_size: Option<usize>,
 
+    /// Retain the fixed pipeline defaults instead of deterministic graph- and
+    /// geometry-aware batch planning.
+    #[arg(long)]
+    no_dynamic_batch_planning: bool,
+
+    /// Memory budget in MiB for admitted record batches and codec buffers.
+    #[arg(long, default_value_t = 256)]
+    batch_memory_budget_mib: usize,
+
     /// Gzip compression level for output paths ending in `.gz`. Level 3 is a
     /// fast default; use 6 for the previous size/speed tradeoff.
     #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(0..=9))]
@@ -510,6 +519,8 @@ fn main() {
             config.queue_capacity = args.queue_capacity;
             config.max_in_flight_batches = args.max_in_flight_batches;
             config.batch_size = args.batch_size;
+            config.dynamic_batch_planning = !args.no_dynamic_batch_planning;
+            config.batch_memory_budget = args.batch_memory_budget_mib.saturating_mul(1024 * 1024);
             config.gzip_level = args.gzip_level;
             config.parallel_gzip = args.parallel_gzip;
             config.parallel_gzip_stream = args.parallel_gzip_stream;

@@ -35,6 +35,8 @@ config.execution_mode = ExecutionMode::Auto;
 config.graph_optimization = true;
 config.graph_optimization_passes.dead_label_elimination = true;
 config.graph_optimization_passes.early_selective_filter_placement = true;
+config.dynamic_batch_planning = true;
+config.batch_memory_budget = 256 * 1024 * 1024;
 
 let report = run(config, compiled)?;
 println!("effective transform threads: {}", report.effective_threads);
@@ -72,6 +74,7 @@ API intentionally does not add `input3` fields; use a third `InputLane` and
 - automatic execution planning (currently the normal whole-graph path unless
   ordering requires a pipeline);
 - conservative graph optimization;
+- deterministic dynamic batch planning under a 256 MiB memory budget;
 - gzip level 3;
 - serial output compression;
 - default `needletail` input decoding;
@@ -83,6 +86,13 @@ API intentionally does not add `input3` fields; use a third `InputLane` and
 ordering, execution mode, graph optimization, pipeline input mode and bounds, gzip
 backends, additional geometry arguments, demultiplexing, direct terminal
 rendering, and statistics.
+
+`batch_size`, `queue_capacity`, and `max_in_flight_batches` are optional exact
+overrides. When they are absent and `dynamic_batch_planning` is enabled, the
+planner selects those values from static run information. It never samples an
+input stream. `batch_memory_budget` bounds estimated admitted batches and
+declared codec buffers; the resulting plan is available through
+`RunReport::execution_plan.batch_planning`.
 
 If a compiled geometry transforms into two reads, both primary output paths are
 required unless demultiplexing handles output routing.

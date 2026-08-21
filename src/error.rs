@@ -110,6 +110,8 @@ pub enum ExecutionConfigError {
     GzipInputChunkSize,
     #[error("parallel gzip block size must be at least {minimum}, got {observed}")]
     GzipBlockSize { minimum: usize, observed: usize },
+    #[error("dynamic batch planning requires a nonzero memory budget")]
+    BatchMemoryBudget,
 }
 
 #[derive(Debug, Error)]

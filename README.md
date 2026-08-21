@@ -87,6 +87,14 @@ The bounded public lane model supports one, two, or three segments, including
 Library callers should use `compile_geom_typed` and `run`; both return the
 matchable `SeqprocError` hierarchy rather than stringly typed `anyhow` errors.
 
+Pipeline runs use deterministic, graph- and geometry-aware batch planning by
+default. The planner chooses batch size, queue capacity, and the maximum
+in-flight batches under a 256 MiB memory budget without sampling input reads.
+Exact `--batch-size`, `--queue-capacity`, and `--max-in-flight-batches` values
+remain authoritative; use `--batch-memory-budget-mib` to change the bound or
+`--no-dynamic-batch-planning` to retain the fixed compatibility defaults. The
+effective choices and stable reason codes are recorded in run summaries.
+
 New geometry files should declare EFGDL 2 in the general document header.
 Optional metadata fields accept integers, quoted strings, or bare identifiers
 and are retained for provenance tooling. Headerless files continue to use

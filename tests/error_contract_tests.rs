@@ -50,6 +50,16 @@ fn execution_configuration_errors_are_matchable_without_display_parsing() {
             ExecutionConfigError::ThreadCount(0)
         ))
     ));
+
+    let compiled = compile_geom_typed("1{r:}").unwrap();
+    let mut config = RunConfig::new("unused.fastq");
+    config.batch_memory_budget = 0;
+    assert!(matches!(
+        run(config, compiled),
+        Err(SeqprocError::InvalidExecutionConfiguration(
+            ExecutionConfigError::BatchMemoryBudget
+        ))
+    ));
 }
 
 #[test]

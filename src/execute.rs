@@ -27,10 +27,37 @@ use crate::{
     io_config::{InputLane, InputSource, OutputTarget, MAX_INPUT_LANES},
     lexer,
     parser::parser,
+    parser::IntervalShape,
     resources::{ResourceBindings, ResourceResolutionReport},
 };
 
 const MIN_PARALLEL_GZIP_BLOCK_SIZE: usize = 32 * 1024;
+const DEFAULT_BATCH_MEMORY_BUDGET: usize = 256 * 1024 * 1024;
+
+fn estimated_geometry_bases(compiled: &CompiledData) -> usize {
+    compiled
+        .geometry
+        .iter()
+        .map(|read| {
+            read.iter()
+                .map(|piece| match &piece.expr.0.size {
+                    IntervalShape::FixedSeq(sequence) => sequence.0.len(),
+                    IntervalShape::FixedLen(length) => length.0,
+                    IntervalShape::RangedLen(range) => range.0 .1,
+                    IntervalShape::UnboundedLen => 150,
+                })
+                .sum::<usize>()
+                .max(1)
+        })
+        .sum::<usize>()
+        .max(1)
+}
+
+fn path_is_gzip(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("gz"))
+}
 
 fn graph_error_contains(
     error: &antisequence::errors::Error,
@@ -245,6 +272,12 @@ pub struct RunConfig {
     pub queue_capacity: Option<usize>,
     pub max_in_flight_batches: Option<usize>,
     pub batch_size: Option<usize>,
+    /// Select deterministic graph/geometry-aware batch and queue bounds when
+    /// their corresponding exact overrides are absent.
+    pub dynamic_batch_planning: bool,
+    /// Hard planner budget for admitted record batches and declared codec
+    /// buffers.
+    pub batch_memory_budget: usize,
     /// Gzip compression level for output paths ending in `.gz`.
     pub gzip_level: u32,
     /// Compress independent batches into concatenated gzip members.
@@ -304,6 +337,8 @@ impl RunConfig {
             queue_capacity: None,
             max_in_flight_batches: None,
             batch_size: None,
+            dynamic_batch_planning: true,
+            batch_memory_budget: DEFAULT_BATCH_MEMORY_BUDGET,
             // Development profiling selected level 3 as the speed/size
             // default; users can request the traditional level 6 explicitly.
             gzip_level: 3,
@@ -509,6 +544,9 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
     }
     if config.gzip_level > 9 {
         return Err(ExecutionConfigError::GzipLevel(config.gzip_level).into());
+    }
+    if config.dynamic_batch_planning && config.batch_memory_budget == 0 {
+        return Err(ExecutionConfigError::BatchMemoryBudget.into());
     }
     if config.parallel_gzip && config.parallel_gzip_stream {
         return Err(ExecutionConfigError::ConflictingGzipModes.into());
@@ -833,6 +871,40 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
         .map_err(|source| SeqprocError::GraphCompilation { source })?;
     let optimization = graph.optimization_report().clone();
     let mut execution_request = ExecutionRequest::new(config.threads);
+    let compressed_input = interleaved_sources
+        .as_ref()
+        .into_iter()
+        .flatten()
+        .chain(input_lanes.iter().flat_map(|lane| lane.shards.iter()))
+        .filter_map(InputSource::path)
+        .any(path_is_gzip);
+    let compressed_output = primary_targets.iter().any(|target| match target {
+        OutputTarget::Path(path) => path_is_gzip(path),
+        OutputTarget::Stdout => config.stdout_gzip,
+        OutputTarget::Discard => false,
+    });
+    let fixed_buffer_bytes = usize::from(config.parallel_gzip_stream)
+        .saturating_mul(effective_gzip_threads)
+        .saturating_mul(config.gzip_block_size)
+        .saturating_add(
+            usize::from(config.accelerated_gzip_input)
+                .saturating_mul(config.gzip_input_threads)
+                .saturating_mul(config.gzip_input_chunk_size)
+                .saturating_mul(input_lane_count),
+        );
+    execution_request.batch_planning = BatchPlanningHints {
+        enabled: config.dynamic_batch_planning,
+        automatic_batch_size: config.batch_size.is_none(),
+        automatic_queue_capacity: config.queue_capacity.is_none(),
+        automatic_max_in_flight: config.max_in_flight_batches.is_none(),
+        input_lanes: input_lane_count,
+        output_lanes: output_arity,
+        estimated_bases_per_fragment: estimated_geometry_bases(&compiled_data),
+        compressed_input,
+        compressed_output,
+        fixed_buffer_bytes,
+        memory_budget_bytes: config.batch_memory_budget,
+    };
     execution_request.mode =
         if config.staged_pipeline && config.execution_mode == ExecutionMode::Auto {
             ExecutionMode::Pipeline
@@ -1087,7 +1159,7 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.11.0".to_owned(),
+        schema_version: "1.12.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
         statistics_level,
         call,
@@ -1643,7 +1715,7 @@ fn interpret_to_pipes(
     }
 
     Ok(SeqprocStats {
-        schema_version: "1.11.0".to_string(),
+        schema_version: "1.12.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
@@ -2063,7 +2135,7 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.11.0".to_string(),
+            schema_version: "1.12.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),

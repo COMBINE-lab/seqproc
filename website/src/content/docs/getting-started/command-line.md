@@ -109,7 +109,14 @@ controls are:
 - `--batch-size N`
 - `--queue-capacity N`
 - `--max-in-flight-batches N`
+- `--batch-memory-budget-mib N`
 - `--pipeline-input-mode worker-local|dedicated-reader`
+
+Pipeline bounds are planned deterministically from the compiled graph, input
+and output arity, static geometry lengths, compression choices, and a 256 MiB
+memory budget. The planner does not sample or consume reads. Any exact bound
+listed above overrides only that dimension. Use
+`--no-dynamic-batch-planning` to retain all fixed compatibility defaults.
 
 When the staged planner proves that a terminal projection is safe, it can
 render FASTQ directly without materializing the projected records. This is

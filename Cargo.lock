@@ -82,7 +82,7 @@ dependencies = [
 [[package]]
 name = "antisequence"
 version = "0.1.0"
-source = "git+https://github.com/COMBINE-lab/ANTISEQUENCE?rev=59bfbfed41405715fcff7b7640368b626e4aed7a#59bfbfed41405715fcff7b7640368b626e4aed7a"
+source = "git+https://github.com/COMBINE-lab/ANTISEQUENCE?rev=baa4bc26cc1041197de6dc57d08d3d0a6425bb5a#baa4bc26cc1041197de6dc57d08d3d0a6425bb5a"
 dependencies = [
  "bio",
  "block-aligner",
