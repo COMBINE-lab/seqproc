@@ -182,7 +182,11 @@ geometry text, including its EFGDL header.
 Compilation now emits an inspectable optimization report, and the execution
 planner records why it selected the whole-graph or bounded-pipeline backend.
 `--execution-mode` forces either backend for controlled comparisons, while
-`--no-graph-optimization` provides a structural-optimization oracle. The
+`--no-graph-optimization` provides a structural-optimization oracle.
+Proof-backed dead-label elimination and early selective-filter placement can
+also be ablated independently with `--no-dead-label-elimination` and
+`--no-early-filter-placement`; stable pass-level change counts are included in
+the run report. The
 bounded pipeline can render a proven-safe terminal FASTQ projection directly
 into recycled output buffers, avoiding intermediate record materialization
 while preserving byte-identical output. The automatic planner keeps the

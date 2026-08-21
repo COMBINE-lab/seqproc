@@ -63,6 +63,12 @@ rendering is an independent pipeline optimization, so also use
 `--no-direct-output-rendering` when the oracle must materialize the terminal
 projection.
 
+Use `--no-dead-label-elimination` or `--no-early-filter-placement` to isolate
+one proof-backed pass while retaining all other rewrites. The summary's
+optimization report records stable pass-level change counts. Neither pass
+introduces a per-record feature check: compilation either
+rewrites the graph or leaves the runtime node sequence unchanged.
+
 ## Staged execution
 
 Ordered output enables the bounded reader → worker → writer pipeline

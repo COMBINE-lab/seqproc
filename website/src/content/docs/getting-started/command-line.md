@@ -122,6 +122,12 @@ byte-equivalence and performance comparisons. It does not disable independent
 runtime choices such as direct terminal rendering; disable both when testing
 the fully materialized terminal path.
 
+For focused optimizer ablations,
+`--no-dead-label-elimination` retains metadata whose production is proven
+dead, and `--no-early-filter-placement` preserves the original position of
+selective filters. Both passes disable themselves when statistics or tracing
+make operation order observable and are reported separately in summary JSON.
+
 Treat these as workload-specific tuning controls and benchmark before changing
 their defaults.
 

@@ -33,6 +33,8 @@ config.output2 = Some(PathBuf::from("processed_R2.fastq.gz"));
 config.threads = 8;
 config.execution_mode = ExecutionMode::Auto;
 config.graph_optimization = true;
+config.graph_optimization_passes.dead_label_elimination = true;
+config.graph_optimization_passes.early_selective_filter_placement = true;
 
 let report = run(config, compiled)?;
 println!("effective transform threads: {}", report.effective_threads);

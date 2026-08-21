@@ -233,6 +233,9 @@ pub struct RunConfig {
     pub execution_mode: ExecutionMode,
     /// Apply conservative compile-time graph optimization passes.
     pub graph_optimization: bool,
+    /// Individually configurable compile-time optimization passes. The
+    /// legacy `graph_optimization` switch remains the master enable.
+    pub graph_optimization_passes: GraphOptimizationConfig,
     /// Select whether pipeline workers parse their own batches or receive
     /// batches from a dedicated reader thread.
     pub pipeline_input_mode: PipelineInputMode,
@@ -295,6 +298,7 @@ impl RunConfig {
             staged_pipeline: false,
             execution_mode: ExecutionMode::Auto,
             graph_optimization: true,
+            graph_optimization_passes: GraphOptimizationConfig::default(),
             pipeline_input_mode: PipelineInputMode::WorkerLocal,
             direct_output_rendering: true,
             queue_capacity: None,
@@ -822,10 +826,10 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
     graph.set_missing_input_policy(MissingInputPolicy::Skip);
     let statistics_level = config.effective_statistics_level();
     graph.set_statistics_level(statistics_level);
+    let mut graph_optimization = config.graph_optimization_passes;
+    graph_optimization.enabled &= config.graph_optimization;
     let graph = graph
-        .compile_with(GraphOptimizationConfig {
-            enabled: config.graph_optimization,
-        })
+        .compile_with(graph_optimization)
         .map_err(|source| SeqprocError::GraphCompilation { source })?;
     let optimization = graph.optimization_report().clone();
     let mut execution_request = ExecutionRequest::new(config.threads);

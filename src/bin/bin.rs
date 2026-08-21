@@ -172,6 +172,14 @@ pub struct RunArgs {
     #[arg(long)]
     no_graph_optimization: bool,
 
+    /// Disable only the proof-backed dead-label elimination pass.
+    #[arg(long)]
+    no_dead_label_elimination: bool,
+
+    /// Disable only conservative early placement of selective filters.
+    #[arg(long)]
+    no_early_filter_placement: bool,
+
     /// Select where FASTQ parsing occurs when the pipeline backend is used.
     #[arg(long, value_enum, default_value = "worker-local")]
     pipeline_input_mode: PipelineInputModeArg,
@@ -492,6 +500,11 @@ fn main() {
             config.staged_pipeline = args.staged_pipeline;
             config.execution_mode = args.execution_mode.into();
             config.graph_optimization = !args.no_graph_optimization;
+            config.graph_optimization_passes.dead_label_elimination =
+                !args.no_dead_label_elimination;
+            config
+                .graph_optimization_passes
+                .early_selective_filter_placement = !args.no_early_filter_placement;
             config.pipeline_input_mode = args.pipeline_input_mode.into();
             config.direct_output_rendering = !args.no_direct_output_rendering;
             config.queue_capacity = args.queue_capacity;

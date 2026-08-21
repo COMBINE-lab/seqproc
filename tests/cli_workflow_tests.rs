@@ -815,8 +815,10 @@ fn optimized_and_unoptimized_graphs_emit_identical_fastq() {
     let input = directory.path().join("input.fastq");
     let optimized = directory.path().join("optimized.fastq");
     let unoptimized = directory.path().join("unoptimized.fastq");
+    let pass_ablated = directory.path().join("pass-ablated.fastq");
     let optimized_summary = directory.path().join("optimized.json");
     let unoptimized_summary = directory.path().join("unoptimized.json");
+    let pass_ablated_summary = directory.path().join("pass-ablated.json");
     fs::write(
         &geometry,
         concat!(
@@ -856,6 +858,19 @@ fn optimized_and_unoptimized_graphs_emit_identical_fastq() {
         .args(common)
         .args([
             "--out1",
+            pass_ablated.to_str().unwrap(),
+            "--summary",
+            pass_ablated_summary.to_str().unwrap(),
+            "--no-dead-label-elimination",
+            "--no-early-filter-placement",
+        ])
+        .assert()
+        .success();
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args(common)
+        .args([
+            "--out1",
             unoptimized.to_str().unwrap(),
             "--summary",
             unoptimized_summary.to_str().unwrap(),
@@ -869,12 +884,28 @@ fn optimized_and_unoptimized_graphs_emit_identical_fastq() {
         fs::read(&optimized).unwrap(),
         fs::read(&unoptimized).unwrap()
     );
+    assert_eq!(
+        fs::read(&optimized).unwrap(),
+        fs::read(&pass_ablated).unwrap()
+    );
     let optimized_report: Value =
         serde_json::from_slice(&fs::read(optimized_summary).unwrap()).unwrap();
     let unoptimized_report: Value =
         serde_json::from_slice(&fs::read(unoptimized_summary).unwrap()).unwrap();
+    let pass_ablated_report: Value =
+        serde_json::from_slice(&fs::read(pass_ablated_summary).unwrap()).unwrap();
     assert_eq!(optimized_report["graph_optimization"]["enabled"], true);
     assert_eq!(unoptimized_report["graph_optimization"]["enabled"], false);
+    let passes = pass_ablated_report["graph_optimization"]["passes"]
+        .as_array()
+        .unwrap();
+    for pass_name in ["dead_label_elimination", "early_selective_filter_placement"] {
+        let pass = passes
+            .iter()
+            .find(|pass| pass["pass"] == pass_name)
+            .unwrap();
+        assert_eq!(pass["changed_nodes"], 0);
+    }
     assert_eq!(
         optimized_report["execution_plan"]["backend"],
         "worker_local_pipeline"
