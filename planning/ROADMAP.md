@@ -708,6 +708,9 @@ controls and reproducibility.
 
 ## 9. Continuous fuzzing and full-language reference interpreter
 
+The detailed, checkpointed implementation plan is maintained in
+[`MILESTONE_9_REFERENCE_FUZZING.md`](MILESTONE_9_REFERENCE_FUZZING.md).
+
 ### Goal
 
 Provide an independent semantic oracle for the complete supported EFGDL
