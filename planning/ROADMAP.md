@@ -58,7 +58,7 @@ Every milestone must satisfy these requirements:
 | 4 | Interleaved input | Complete | Stream targets and geometry arity |
 | 5 | Three or more input segments | Complete | Generalized bounded lane model |
 | 6 | Fully typed `SeqprocError` | Complete | Public I/O and resource contracts |
-| 7 | Remaining optimizer passes | Foundation exists | Effects, scoped metadata, recursive liveness |
+| 7 | Remaining optimizer passes | Complete | Effects, scoped metadata, recursive liveness |
 | 8 | Dynamic batch-size planning | Planned | Stable execution and lane-cost model |
 | 9 | Continuous fuzzing and full-language reference interpreter | Partial matcher oracle only | Stable language and I/O contracts |
 | 10 | Dry-run support | Planned | Resources, inputs, errors, and planning |
@@ -597,6 +597,37 @@ optimization.
   dedicated liveness tests.
 - Feature-off and no-op graphs do not regress by more than 3%; accepted passes
   demonstrate a meaningful win on a declared workload.
+
+### Completion record
+
+- **Implementation:** ANTISEQUENCE commit `59bfbfe` (`Add proof-backed
+  optimizer passes`) and seqproc commit `92b1cda` (`Expose proof-backed
+  optimizer passes`).
+- **Contract:** `GraphOptimizationConfig` independently controls semantic
+  no-op removal, dead-label elimination, early selective-filter placement,
+  adjacent idempotent fusion, and terminal projection/output fusion. Every
+  pass has a stable report entry. seqproc retains the master switch and adds
+  focused CLI ablations for the two new passes.
+- **Safety:** dead-label elimination requires explicit terminal observations,
+  backwards continuation liveness, and an operation-level proof of error-free
+  removal. Early filters cross only independent operations whose filter and
+  predecessor both prove total/infallible behavior. Both passes disable under
+  tracing or statistics; shared and opaque nested graphs remain barriers.
+- **Tests:** ANTISEQUENCE `cargo test --lib` (368 passed), including generated
+  optimized/unoptimized graphs, nested continuation and loop liveness, live
+  metadata, rejection, FASTQ bytes, pass ablation, and observable-mode
+  barriers. seqproc CLI workflows (20 passed) and regression tests (19 passed)
+  verify byte-identical user-facing output and serialized pass reports.
+- **Performance gate:** the checked-in release benchmark over 100,000 100-nt
+  records measured early selective filtering at 8.964 ms versus 43.409 ms
+  (4.843x), twelve dead metadata assignments below 0.001 ms versus 80.173 ms,
+  and the no-applicable-rewrite control at 37.165 ms versus 37.237 ms (0.2%
+  difference). These are focused optimizer measurements, not end-to-end
+  seqproc throughput claims.
+- **Documentation:** ANTISEQUENCE's optimizer guide documents proof boundaries,
+  pass ordering, ablation, and the benchmark; seqproc README, CLI, Rust API,
+  and performance guides document the user-facing controls. The Astro
+  production build passed.
 
 ---
 
