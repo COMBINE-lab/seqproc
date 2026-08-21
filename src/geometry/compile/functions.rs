@@ -6,7 +6,7 @@
 
 use crate::{
     compile::utils::{Error, GeometryMeta, GeometryPiece},
-    parser::{Expr, Function},
+    parser::{Expr, Function, ResourceRef},
     Nucleotide, S,
 };
 use antisequence::{AmbiguityPolicy, PositionAmbiguityPolicy};
@@ -25,15 +25,15 @@ pub enum CompiledFunction {
     PadTo(usize, Nucleotide),
     PadToLeft(usize, Nucleotide),
     Normalize,
-    Map(String, Vec<S<CompiledFunction>>),
-    MapWithMismatch(String, Vec<S<CompiledFunction>>, usize),
-    MapWithEdit(String, Vec<S<CompiledFunction>>, usize),
-    FilterWithinDist(String, usize),
+    Map(ResourceRef, Vec<S<CompiledFunction>>),
+    MapWithMismatch(ResourceRef, Vec<S<CompiledFunction>>, usize),
+    MapWithEdit(ResourceRef, Vec<S<CompiledFunction>>, usize),
+    FilterWithinDist(ResourceRef, usize),
     /// Property-style ambiguity resolution modifier applied to the next
     /// map/filter operation in this definition's stack.
     AmbiguityPolicy(AmbiguityPolicy),
     /// Whitelist-backed patterns for a fixed anchor definition.
-    AnchorSet(String),
+    AnchorSet(ResourceRef),
     /// Equal-best placement policy for search-style anchors.
     PositionAmbiguityPolicy(PositionAmbiguityPolicy),
     Hamming(usize),

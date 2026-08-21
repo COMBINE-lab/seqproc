@@ -8,6 +8,51 @@ use crate::{lexer::Token, Nucleotide, S};
 
 use super::Span;
 
+/// A file-backed resource referenced by a geometry operation.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ResourceRef {
+    /// A quoted path embedded in the geometry.
+    Literal(String),
+    /// A legacy zero-based `$0`, `$1`, ... runtime resource.
+    Positional(usize),
+    /// A declared `$name` runtime resource.
+    Named(String),
+}
+
+impl fmt::Display for ResourceRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Literal(path) => write!(f, "\"{path}\""),
+            Self::Positional(index) => write!(f, "${index}"),
+            Self::Named(name) => write!(f, "${name}"),
+        }
+    }
+}
+
+impl From<String> for ResourceRef {
+    fn from(value: String) -> Self {
+        Self::Literal(value)
+    }
+}
+
+impl From<&str> for ResourceRef {
+    fn from(value: &str) -> Self {
+        Self::Literal(value.to_owned())
+    }
+}
+
+impl PartialEq<str> for ResourceRef {
+    fn eq(&self, other: &str) -> bool {
+        matches!(self, Self::Literal(path) if path == other)
+    }
+}
+
+impl PartialEq<&str> for ResourceRef {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
 /// The length of a nucleotide interval,
 /// and whether it must match a specific sequence.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -68,19 +113,19 @@ pub enum Function {
     /// `norm(I)`
     Normalize,
     /// `map(I, A, F)`
-    Map(String, S<Box<Expr>>),
+    Map(ResourceRef, S<Box<Expr>>),
     /// `map_with_mismatch(I, A, F, n)`
-    MapWithMismatch(String, S<Box<Expr>>, usize),
+    MapWithMismatch(ResourceRef, S<Box<Expr>>, usize),
     /// `filter(I, A)`
-    Filter(String),
+    Filter(ResourceRef),
     /// `filter_within_dist(I, A, n)`
-    FilterWithinDist(String, usize),
+    FilterWithinDist(ResourceRef, usize),
     /// `hamming(F, n)`
     Hamming(usize),
     /// `edit(F, n)` - edit distance (Levenshtein) matching
     Edit(usize),
     /// `map_with_edit(I, A, F, n)` - map with edit distance tolerance
-    MapWithEdit(String, S<Box<Expr>>, usize),
+    MapWithEdit(ResourceRef, S<Box<Expr>>, usize),
     /// `anchor_relative(F)` - search for anchor from position 0 and extract preceding elements with flexible length
     Anchor,
 }
@@ -275,6 +320,14 @@ pub struct DocumentHeader {
     pub fields: Vec<S<HeaderField>>,
 }
 
+/// One declaration in an EFGDL 2 `resources` block.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ResourceDeclaration {
+    pub name: S<String>,
+    /// A quoted default path, resolved relative to the geometry file.
+    pub default: Option<S<String>>,
+}
+
 /// How an EFGDL 2 output transformation modifies a FASTQ record name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OutputHeaderMode {
@@ -328,6 +381,8 @@ pub struct Description {
     /// Optional document header. Headerless files retain legacy EFGDL 1
     /// semantics; new EFGDL 2 documents declare `header { efgdl = 2 }`.
     pub header: Option<S<DocumentHeader>>,
+    /// Optional named resource declarations for EFGDL 2.
+    pub resources: Option<S<Vec<S<ResourceDeclaration>>>>,
     /// The list of definitions at the top of an EFGDL file:
     /// `brc = b[10] foo = f[CAGAGC]`.
     pub definitions: S<Vec<S<Definition>>>,
@@ -480,6 +535,12 @@ pub fn parser<'tokens>(
     let num = select! {Token::Num(n) => n };
     let file = select! {Token::File(f) => f.clone() };
     let argument = select! {Token::Arg(n) => n.to_string() };
+    let resource_ref = choice((
+        select! { Token::File(path) => ResourceRef::Literal(path.clone()) },
+        select! { Token::Arg(index) => ResourceRef::Positional(index) },
+        select! { Token::NamedArg(name) => ResourceRef::Named(name.clone()) },
+    ))
+    .boxed();
     let self_ = select! { Token::Self_ => Expr::Self_ };
 
     // The document header intentionally uses a small, version-neutral scalar
@@ -507,6 +568,30 @@ pub fn parser<'tokens>(
             .delimited_by(just(Token::LBrace), just(Token::RBrace)),
     )
     .map_with(|fields, state| S(DocumentHeader { fields }, state.span()))
+    .or_not()
+    .boxed();
+
+    let resource_declaration = label
+        .clone()
+        .map_with(|name, state| S(name, state.span()))
+        .then(
+            just(Token::Equals)
+                .ignore_then(file.clone().map_with(|path, state| S(path, state.span())))
+                .or_not(),
+        )
+        .map_with(|(name, default), state| S(ResourceDeclaration { name, default }, state.span()));
+    let resources = select! {
+        Token::Label(name) if name == "resources" => (),
+    }
+    .ignore_then(
+        resource_declaration
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .at_least(1)
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+    )
+    .map_with(|declarations, state| S(declarations, state.span()))
     .or_not()
     .boxed();
 
@@ -641,8 +726,7 @@ pub fn parser<'tokens>(
                 function_arguments!(
                     tp.clone()
                         .labelled("geometry piece as argument to 'filter'"),
-                    file.labelled("file name")
-                        .or(argument.labelled("argument from commandline"))
+                    resource_ref.clone().labelled("resource reference")
                 )
             ),
             nary_functions!(
@@ -662,8 +746,7 @@ pub fn parser<'tokens>(
                 ternary_function,
                 function_arguments!(
                     tp.clone().labelled("geometry piece to 'map'"),
-                    file.labelled("file name")
-                        .or(argument.labelled("argument from commandline")),
+                    resource_ref.clone().labelled("resource reference"),
                     tp.clone()
                         .labelled("geometry piece after mapping")
                         .map_with(|transf_p, state| S(Box::new(transf_p), state.span()))
@@ -675,8 +758,7 @@ pub fn parser<'tokens>(
                 function_arguments!(
                     tp.clone()
                         .labelled("geometry piece to 'filter_within_dist'"),
-                    file.labelled("file name")
-                        .or(argument.labelled("argument from commandline")),
+                    resource_ref.clone().labelled("resource reference"),
                     num.labelled("numerical argument")
                 )
             ),
@@ -684,8 +766,7 @@ pub fn parser<'tokens>(
                 quaternary_function,
                 function_arguments!(
                     tp.clone().labelled("geometry piece to 'map_with_mismatch'"),
-                    file.labelled("file name")
-                        .or(argument.labelled("argument from commandline")),
+                    resource_ref.clone().labelled("resource reference"),
                     tp.clone()
                         .labelled("geometry piece after mapping")
                         .map_with(|transf_p, state| S(Box::new(transf_p), state.span())),
@@ -780,6 +861,7 @@ pub fn parser<'tokens>(
         label,
         file,
         argument,
+        select! { Token::NamedArg(name) => format!("${name}") },
         num.map(|n: usize| n.to_string()),
         just(Token::Edit).to("edit".to_string()),
         just(Token::Hamming).to("hamming".to_string()),
@@ -1048,15 +1130,19 @@ pub fn parser<'tokens>(
 
     Box::new(
         document_header
+            .then(resources)
             .then(definitions)
             .then(reads)
             .then(transformations)
-            .map(|(((header, defs), reads), transforms)| Description {
-                header,
-                definitions: defs,
-                reads,
-                transforms,
-            }),
+            .map(
+                |((((header, resources), defs), reads), transforms)| Description {
+                    header,
+                    resources,
+                    definitions: defs,
+                    reads,
+                    transforms,
+                },
+            ),
     )
 }
 
@@ -1236,7 +1322,7 @@ mod tests {
             S(Function::Filter("test".into()), span()),
             S(Box::new(inner.clone()), span()),
         );
-        assert_eq!(format!("{}", filter), "filter(b[16], test)");
+        assert_eq!(format!("{}", filter), "filter(b[16], \"test\")");
 
         let filter_within = Expr::Function(
             S(Function::FilterWithinDist("test".into(), 2), span()),
@@ -1244,7 +1330,7 @@ mod tests {
         );
         assert_eq!(
             format!("{}", filter_within),
-            "filter_within_dist(b[16], test, 2)"
+            "filter_within_dist(b[16], \"test\", 2)"
         );
     }
 

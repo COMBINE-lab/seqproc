@@ -5,7 +5,7 @@ use crate::{
         functions::{compile_fn, CompiledFunction},
         utils::*,
     },
-    parser::{Annotation, Definition, Expr},
+    parser::{Annotation, Definition, Expr, ResourceRef},
     S,
 };
 use antisequence::{AmbiguityPolicy, PositionAmbiguityPolicy};
@@ -340,7 +340,16 @@ fn annotations_to_compiled_functions(
                             .to_string(),
                     });
                 }
-                result.push(S(CompiledFunction::AnchorSet(ann.args[0].0.clone()), *span));
+                let value = &ann.args[0].0;
+                let resource = if let Some(name) = value.strip_prefix('$') {
+                    match name.parse::<usize>() {
+                        Ok(index) => ResourceRef::Positional(index),
+                        Err(_) => ResourceRef::Named(name.to_owned()),
+                    }
+                } else {
+                    ResourceRef::Literal(value.clone())
+                };
+                result.push(S(CompiledFunction::AnchorSet(resource), *span));
             }
             "ambig_policy" => result.push(S(
                 CompiledFunction::AmbiguityPolicy(parse_ambiguity_policy(ann, *span)?),

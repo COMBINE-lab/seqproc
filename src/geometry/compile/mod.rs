@@ -16,7 +16,10 @@ use transformation::compile_transformation;
 use utils::Error;
 
 use crate::{
-    parser::{Annotation, Description, DocumentHeader, HeaderValue, TransformOutput},
+    parser::{
+        Annotation, Description, DocumentHeader, HeaderValue, ResourceDeclaration, ResourceRef,
+        TransformOutput,
+    },
     S,
 };
 
@@ -136,6 +139,8 @@ pub struct CompiledData {
     pub efgdl_version: usize,
     /// User-provided document metadata, if an EFGDL header was present.
     pub document_header: Option<DocumentHeader>,
+    /// Declared EFGDL 2 runtime resources.
+    pub resource_declarations: Vec<ResourceDeclaration>,
     pub geometry: Vec<Vec<GeometryMeta>>,
     /// Bounded, source-ordered alternatives for each input read. Linear
     /// geometries contain exactly one alternative.
@@ -195,6 +200,89 @@ fn validate_document_header(header: &Option<S<DocumentHeader>>) -> Result<usize,
         });
     }
     Ok(version)
+}
+
+fn validate_resource_declarations(
+    resources: Option<S<Vec<S<ResourceDeclaration>>>>,
+    efgdl_version: usize,
+) -> Result<Vec<ResourceDeclaration>, Error> {
+    let Some(S(resources, span)) = resources else {
+        return Ok(Vec::new());
+    };
+    if efgdl_version != 2 {
+        return Err(Error {
+            span,
+            msg: "named resources require `header { efgdl = 2 }`".to_owned(),
+        });
+    }
+    let mut seen = HashSet::with_capacity(resources.len());
+    let mut declarations = Vec::with_capacity(resources.len());
+    for S(declaration, declaration_span) in resources {
+        if !seen.insert(declaration.name.0.clone()) {
+            return Err(Error {
+                span: declaration_span,
+                msg: format!("duplicate resource declaration `{}`", declaration.name.0),
+            });
+        }
+        declarations.push(declaration);
+    }
+    Ok(declarations)
+}
+
+fn visit_function_resources(
+    function: &functions::CompiledFunction,
+    visit: &mut impl FnMut(&ResourceRef),
+) {
+    use functions::CompiledFunction;
+    let fallback = match function {
+        CompiledFunction::Map(resource, fallback)
+        | CompiledFunction::MapWithMismatch(resource, fallback, _)
+        | CompiledFunction::MapWithEdit(resource, fallback, _) => {
+            visit(resource);
+            Some(fallback)
+        }
+        CompiledFunction::FilterWithinDist(resource, _) | CompiledFunction::AnchorSet(resource) => {
+            visit(resource);
+            None
+        }
+        _ => None,
+    };
+    if let Some(fallback) = fallback {
+        for S(function, _) in fallback {
+            visit_function_resources(function, visit);
+        }
+    }
+}
+
+fn validate_resource_references(
+    geometry: &[Vec<utils::GeometryMeta>],
+    declarations: &[ResourceDeclaration],
+) -> Result<(), Error> {
+    let declared = declarations
+        .iter()
+        .map(|declaration| declaration.name.0.as_str())
+        .collect::<HashSet<_>>();
+    for meta in geometry.iter().flatten() {
+        for S(function, span) in &meta.stack {
+            let mut error = None;
+            visit_function_resources(function, &mut |resource| {
+                if let ResourceRef::Named(name) = resource {
+                    if !declared.contains(name.as_str()) {
+                        error = Some(Error {
+                            span: *span,
+                            msg: format!(
+                                "resource `${name}` is referenced but not declared in the `resources` block"
+                            ),
+                        });
+                    }
+                }
+            });
+            if let Some(error) = error {
+                return Err(error);
+            }
+        }
+    }
+    Ok(())
 }
 
 impl CompiledData {
@@ -275,6 +363,7 @@ impl CompiledData {
 pub fn compile(
     Description {
         header,
+        resources,
         definitions,
         reads,
         transforms,
@@ -282,6 +371,7 @@ pub fn compile(
 ) -> Result<CompiledData, Error> {
     let efgdl_version = validate_document_header(&header)?;
     let document_header = header.map(|S(header, _)| header);
+    let resource_declarations = validate_resource_declarations(resources, efgdl_version)?;
     // Extract per-element annotations (reads + definitions).
     let mut element_annotations: Vec<ElementAnnotations> = Vec::new();
 
@@ -376,10 +466,12 @@ pub fn compile(
             let transformation = label_transformation(transformation, &numbered_labels);
 
             let geometry = standardize_geometry(map, geometry);
+            validate_resource_references(&geometry, &resource_declarations)?;
 
             Ok(CompiledData {
                 efgdl_version,
                 document_header,
+                resource_declarations: resource_declarations.clone(),
                 geometry,
                 layout_alternatives,
                 layout_report,
@@ -452,10 +544,12 @@ pub fn compile(
             }
 
             let geometry = standardize_geometry(fw_map.clone(), geometry);
+            validate_resource_references(&geometry, &resource_declarations)?;
 
             Ok(CompiledData {
                 efgdl_version,
                 document_header,
+                resource_declarations: resource_declarations.clone(),
                 geometry,
                 layout_alternatives,
                 layout_report,
@@ -476,10 +570,12 @@ pub fn compile(
         }
         None => {
             let geometry = standardize_geometry(map, geometry);
+            validate_resource_references(&geometry, &resource_declarations)?;
 
             Ok(CompiledData {
                 efgdl_version,
                 document_header,
+                resource_declarations,
                 geometry,
                 layout_alternatives,
                 layout_report,
@@ -530,6 +626,7 @@ mod tests {
         let span = (0..1).into();
         let desc = Description {
             header: None,
+            resources: None,
             definitions: S(vec![], span),
             reads: S(vec![make_annotated_read(256)], span),
             transforms: None,
@@ -555,6 +652,7 @@ mod tests {
         let span = (0..1).into();
         let desc = Description {
             header: None,
+            resources: None,
             definitions: S(vec![], span),
             reads: S(vec![make_annotated_read(255)], span),
             transforms: None,

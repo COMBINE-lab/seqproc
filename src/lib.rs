@@ -23,6 +23,7 @@ pub mod error;
 pub mod execute;
 mod geometry;
 mod processors;
+pub mod resources;
 
 pub use crate::geometry::*;
 pub use crate::processors::*;

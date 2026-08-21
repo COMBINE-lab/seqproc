@@ -1,6 +1,6 @@
 # seqproc report schemas
 
-`seqproc-summary-1.6.0.schema.json` is the current versioned schema emitted by
+`seqproc-summary-1.7.0.schema.json` is the current versioned schema emitted by
 `seqproc run --summary`; the 1.0.0 and 1.1.0 files remain immutable for existing
 consumers. Schema versions are independent of the seqproc binary version so
 consumers can negotiate report compatibility explicitly.
@@ -48,6 +48,9 @@ counts to every detailed match-stage ambiguity object.
 
 Schema 1.6.0 adds `position_resolved_quality`, which counts equal-best
 placements selected by the position-quality policy.
+
+Schema 1.7.0 adds resolved EFGDL resources, their binding source and BLAKE3
+content digest, plus declared resources that were not used by the geometry.
 
 Additive fields require a schema minor version. Removing fields, changing their
 meaning, or changing types requires a schema major version and a new file.

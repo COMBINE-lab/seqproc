@@ -63,6 +63,24 @@ their defaults.
 
 ## Additional geometry arguments
 
+For EFGDL 2, prefer declared named resources and explicit bindings:
+
+```text
+header { efgdl = 2 }
+resources { whitelist }
+bc = filter_within_dist(b[8], $whitelist, 1)
+```
+
+```console
+seqproc run --geom protocol.geom --bind whitelist=barcodes.txt \
+  --file1 reads.fastq.gz --out1 clean.fastq.gz
+```
+
+Named resources are resolved once during graph construction. Missing,
+duplicate, unknown, and unreadable bindings fail before FASTQ processing.
+
+### Positional compatibility
+
 One or more values supplied with `--additional` fill positional placeholders
 such as `$0` in a geometry. This lets a shared geometry select a whitelist or
 mapping file at invocation time.

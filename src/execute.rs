@@ -22,6 +22,7 @@ use crate::{
     demux::DemuxConfig,
     lexer,
     parser::parser,
+    resources::{ResourceBindings, ResourceResolutionReport},
 };
 
 const MIN_PARALLEL_GZIP_BLOCK_SIZE: usize = 32 * 1024;
@@ -88,6 +89,10 @@ pub struct RunConfig {
     /// Decoded bytes assigned to each accelerated input handoff chunk.
     pub gzip_input_chunk_size: usize,
     pub additional_args: Vec<String>,
+    /// Named EFGDL 2 resource bindings supplied by the caller.
+    pub resource_bindings: ResourceBindings,
+    /// Base directory used for relative EFGDL 2 literal/default resources.
+    pub geometry_base: Option<PathBuf>,
     pub demux: Option<DemuxConfig>,
     /// Runtime instrumentation level. `Off` leaves data-dependent statistics
     /// collection disabled; `Basic` collects run totals; `Detailed` also
@@ -130,6 +135,8 @@ impl RunConfig {
             gzip_input_threads: 1,
             gzip_input_chunk_size: 256 * 1024,
             additional_args: Vec::new(),
+            resource_bindings: ResourceBindings::new(),
+            geometry_base: None,
             demux: None,
             statistics_level: StatisticsLevel::Off,
             collect_statistics: false,
@@ -164,6 +171,7 @@ pub struct RunReport {
     pub gzip_input_chunk_size: usize,
     pub graph_optimization: GraphOptimizationReport,
     pub execution_plan: ExecutionPlan,
+    pub resources: ResourceResolutionReport,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<PipelineReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -191,6 +199,7 @@ pub struct SeqprocStats {
     pub graph_optimization: Option<GraphOptimizationReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_plan: Option<ExecutionPlan>,
+    pub resources: ResourceResolutionReport,
 
     pub n_fastqs: u32,
     pub n_processed: u64,
@@ -313,11 +322,11 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         }
     }
 
-    let additional_args = config
-        .additional_args
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
+    let resolved_resources = compiled_data.resolve_resources(
+        &config.additional_args,
+        &config.resource_bindings,
+        config.geometry_base.as_deref(),
+    )?;
     let mut graph = Graph::new();
     let mut input_files = vec![config.input1.to_string_lossy().into_owned()];
     if let Some(input2) = &config.input2 {
@@ -337,7 +346,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
     let has_unassigned = config.unassigned1.is_some() || config.unassigned2.is_some();
     if has_unassigned {
         let mut try_graph = Graph::new();
-        compiled_data.interpret(&mut try_graph, &additional_args);
+        compiled_data.interpret_with_resources(&mut try_graph, &resolved_resources);
 
         let mut catch_graph = Graph::new();
         let mut unassigned_files = Vec::new();
@@ -358,7 +367,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         }
         graph.add(TryOp::new(try_graph, catch_graph));
     } else {
-        compiled_data.interpret(&mut graph, &additional_args);
+        compiled_data.interpret_with_resources(&mut graph, &resolved_resources);
     }
 
     if let Some(demux) = &config.demux {
@@ -460,6 +469,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
                 gzip_compression_threads: effective_gzip_threads,
                 optimization: &optimization,
                 execution_plan: &execution_plan,
+                resources: resolved_resources.report(),
             },
         )
     });
@@ -489,6 +499,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         },
         graph_optimization: optimization,
         execution_plan,
+        resources: resolved_resources.report().clone(),
         pipeline,
         statistics,
     })
@@ -499,6 +510,7 @@ struct RuntimeProvenance<'a> {
     gzip_compression_threads: usize,
     optimization: &'a GraphOptimizationReport,
     execution_plan: &'a ExecutionPlan,
+    resources: &'a ResourceResolutionReport,
 }
 
 fn statistics_from_graph(
@@ -513,6 +525,7 @@ fn statistics_from_graph(
         gzip_compression_threads,
         optimization,
         execution_plan,
+        resources,
     } = provenance;
     let input_stats = graph.input_stats();
     let (n_fastqs, n_processed, n_reads_max, read_length_min, read_length_max, read_length_mean) =
@@ -613,7 +626,7 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.6.0".to_owned(),
+        schema_version: "1.7.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
         statistics_level,
         call,
@@ -646,6 +659,7 @@ fn statistics_from_graph(
         },
         graph_optimization: Some(optimization.clone()),
         execution_plan: Some(execution_plan.clone()),
+        resources: resources.clone(),
         n_fastqs,
         n_processed,
         n_reads_max,
@@ -716,7 +730,10 @@ pub fn interpret_with_unassigned(
 
     // Build main processing graph
     let mut main_graph = antisequence::graph::Graph::new();
-    compiled_data.interpret(&mut main_graph, &additional_args);
+    if let Err(error) = compiled_data.try_interpret(&mut main_graph, &additional_args) {
+        tracing::error!("Failed to resolve geometry resources: {error}");
+        return;
+    }
 
     // If unassigned output is requested, wrap in TryOp
     let has_unassigned = unassigned1.is_some() || unassigned2.is_some();
@@ -757,7 +774,10 @@ pub fn interpret_with_unassigned(
         graph.add(TryOp::new(main_graph, catch_graph));
     } else {
         // No unassigned output - just add main graph nodes
-        compiled_data.interpret(&mut graph, &additional_args);
+        if let Err(error) = compiled_data.try_interpret(&mut graph, &additional_args) {
+            tracing::error!("Failed to resolve geometry resources: {error}");
+            return;
+        }
     }
 
     // Add LookupOp for demultiplexing if configured
@@ -868,7 +888,10 @@ pub fn interpret_with_demux(
             .unwrap_or_else(|e| panic!("{e}")),
     );
 
-    compiled_data.interpret(&mut graph, &additional_args);
+    if let Err(error) = compiled_data.try_interpret(&mut graph, &additional_args) {
+        tracing::error!("Failed to resolve geometry resources: {error}");
+        return;
+    }
 
     // Add LookupOp for demultiplexing if configured
     if let Some(ref config) = demux_config {
@@ -978,7 +1001,7 @@ fn interpret_to_pipes(
             .map_err(|error| anyhow!(error.to_string()))?,
     );
 
-    compiled_data.interpret(&mut graph, &additional_args);
+    compiled_data.try_interpret(&mut graph, &additional_args)?;
 
     let stream1 = BufWriter::new(f1);
 
@@ -1119,7 +1142,7 @@ fn interpret_to_pipes(
     }
 
     Ok(SeqprocStats {
-        schema_version: "1.6.0".to_string(),
+        schema_version: "1.7.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
@@ -1140,6 +1163,7 @@ fn interpret_to_pipes(
         gzip_input_chunk_size: 0,
         graph_optimization: None,
         execution_plan: None,
+        resources: ResourceResolutionReport::default(),
 
         n_fastqs,
         n_processed,
@@ -1493,7 +1517,7 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.6.0".to_string(),
+            schema_version: "1.7.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
@@ -1510,6 +1534,7 @@ mod tests {
             gzip_input_chunk_size: 0,
             graph_optimization: None,
             execution_plan: None,
+            resources: ResourceResolutionReport::default(),
             n_fastqs: 2,
             n_processed: 100,
             n_reads_max: 1000,

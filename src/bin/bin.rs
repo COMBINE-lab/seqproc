@@ -9,6 +9,7 @@ use antisequence::graph::{ExecutionMode, PipelineInputMode, StatisticsLevel};
 use seqproc::{
     demux::DemuxConfig,
     execute::{compile_geom, run, RunConfig},
+    resources::ResourceBindings,
 };
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -216,6 +217,10 @@ pub struct RunArgs {
     #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     additional: Vec<String>,
 
+    /// Bind a declared EFGDL 2 resource as NAME=PATH. May be repeated.
+    #[arg(long = "bind", value_name = "NAME=PATH")]
+    bindings: Vec<String>,
+
     // Demultiplexing options
     /// Path to TSV file mapping barcodes to sample names (enables demultiplexing)
     #[arg(long = "demux-map")]
@@ -305,6 +310,10 @@ fn main() {
 
     let geom = read_geometry(&geom_path);
     let geometry_digest = format!("blake3:{}", blake3::hash(geom.as_bytes()).to_hex());
+    let geometry_base = std::fs::canonicalize(&geom_path)
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .or_else(|| geom_path.parent().map(std::path::Path::to_path_buf));
 
     // Validate input FASTQ paths up front so a missing file surfaces as a clean
     // error instead of a panic from deep inside the read-processing engine.
@@ -324,6 +333,21 @@ fn main() {
         .iter()
         .map(|a| a.as_str())
         .collect::<Vec<_>>();
+    let mut resource_bindings = ResourceBindings::new();
+    for binding in &args.bindings {
+        let Some((name, path)) = binding.split_once('=') else {
+            eprintln!("error: malformed --bind `{binding}`; expected NAME=PATH");
+            exit(2);
+        };
+        if name.is_empty() || path.is_empty() {
+            eprintln!("error: malformed --bind `{binding}`; expected NAME=PATH");
+            exit(2);
+        }
+        if let Err(error) = resource_bindings.insert(name, path) {
+            eprintln!("error: {error}");
+            exit(2);
+        }
+    }
 
     // Build demux config if demux-map is provided
     let demux_config = args.demux_map.as_ref().map(|map_path| {
@@ -358,6 +382,8 @@ fn main() {
             config.gzip_input_threads = args.gzip_input_threads;
             config.gzip_input_chunk_size = args.gzip_input_chunk_size;
             config.additional_args = additional_args.into_iter().map(str::to_owned).collect();
+            config.resource_bindings = resource_bindings;
+            config.geometry_base = geometry_base;
             config.demux = demux_config;
             config.statistics_level = if args.summary.is_some() {
                 args.statistics_level

@@ -20,7 +20,7 @@ fn gzip_copy(source: &str, destination: &std::path::Path) {
 
 fn assert_current_summary_shape(report: &Value) {
     let schema: Value =
-        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.6.0.schema.json")).unwrap();
+        serde_json::from_str(include_str!("../schemas/seqproc-summary-1.7.0.schema.json")).unwrap();
     assert_eq!(
         report["schema_version"],
         schema["properties"]["schema_version"]["const"]
@@ -29,7 +29,7 @@ fn assert_current_summary_shape(report: &Value) {
     for key in report.as_object().unwrap().keys() {
         assert!(
             properties.contains_key(key),
-            "summary field {key:?} is absent from schema 1.6.0"
+            "summary field {key:?} is absent from schema 1.7.0"
         );
     }
     for required in schema["required"].as_array().unwrap() {
@@ -96,6 +96,141 @@ fn validate_returns_nonzero_for_invalid_geometry() {
     let mut diagnostic = invalid.get_output().stdout.clone();
     diagnostic.extend_from_slice(&invalid.get_output().stderr);
     assert!(String::from_utf8_lossy(&diagnostic).contains("found '@'"));
+}
+
+#[test]
+fn named_resources_match_positional_resources_and_report_provenance() {
+    let directory = tempdir().unwrap();
+    let named_geometry = directory.path().join("named.geom");
+    let positional_geometry = directory.path().join("positional.geom");
+    let whitelist = directory.path().join("whitelist.txt");
+    let input = directory.path().join("input.fastq");
+    let named_output = directory.path().join("named.fastq");
+    let positional_output = directory.path().join("positional.fastq");
+    let summary = directory.path().join("summary.json");
+    fs::write(&whitelist, "AAAA\n").unwrap();
+    fs::write(&input, "@kept\nAAAA\n+\nIIII\n@dropped\nCCCC\n+\nIIII\n").unwrap();
+    fs::write(
+        &named_geometry,
+        "header { efgdl = 2 }\nresources { whitelist }\nbc = filter(b[4], $whitelist)\n1{<bc>} -> 1{<bc>}\n",
+    )
+    .unwrap();
+    fs::write(
+        &positional_geometry,
+        "bc = filter(b[4], $0)\n1{<bc>} -> 1{<bc>}\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            named_geometry.to_str().unwrap(),
+            "--bind",
+            &format!("whitelist={}", whitelist.display()),
+            "--file1",
+            input.to_str().unwrap(),
+            "--out1",
+            named_output.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            positional_geometry.to_str().unwrap(),
+            "--additional",
+            whitelist.to_str().unwrap(),
+            "--file1",
+            input.to_str().unwrap(),
+            "--out1",
+            positional_output.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(named_output).unwrap(),
+        fs::read(positional_output).unwrap()
+    );
+    let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
+    assert_current_summary_shape(&report);
+    assert_eq!(
+        report["resources"]["resolved"][0]["reference"],
+        "$whitelist"
+    );
+    assert_eq!(report["resources"]["resolved"][0]["source"], "named");
+    assert!(report["resources"]["resolved"][0]["content_digest"]
+        .as_str()
+        .unwrap()
+        .starts_with("blake3:"));
+}
+
+#[test]
+fn named_resource_defaults_and_binding_errors_are_deterministic() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("default.geom");
+    let whitelist = directory.path().join("default-whitelist.txt");
+    let input = directory.path().join("input.fastq");
+    let output = directory.path().join("output.fastq");
+    fs::write(&whitelist, "AAAA\n").unwrap();
+    fs::write(&input, "@read\nAAAA\n+\nIIII\n").unwrap();
+    fs::write(
+        &geometry,
+        "header { efgdl = 2 }\nresources { whitelist = \"default-whitelist.txt\" }\nbc = filter(b[4], $whitelist)\n1{<bc>} -> 1{<bc>}\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--file1",
+            input.to_str().unwrap(),
+            "--out1",
+            output.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--bind",
+            "unknown=nowhere",
+            "--file1",
+            input.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not declared"));
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--bind",
+            "whitelist=one",
+            "--bind",
+            "whitelist=two",
+            "--file1",
+            input.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("more than once"));
 }
 
 #[test]
@@ -174,7 +309,7 @@ fn summary_mode_uses_the_same_processing_pipeline() {
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.6.0");
+    assert_eq!(report["schema_version"], "1.7.0");
     assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
@@ -744,7 +879,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.6.0");
+    assert_eq!(report["schema_version"], "1.7.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);

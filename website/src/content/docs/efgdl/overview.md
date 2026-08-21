@@ -102,8 +102,30 @@ Functions wrap intervals and can be nested:
 short_bc = trunc_to(revcomp(b[16]), 10)
 ```
 
-Matching and lookup functions can use a quoted path or a positional command
-line argument:
+EFGDL 2 geometries can declare named resources, with an optional path default:
+
+```text
+header { efgdl = 2 }
+resources {
+  barcode_whitelist,
+  replacements = "defaults/replacements.tsv"
+}
+bc = filter_within_dist(b[8], $barcode_whitelist, 1)
+corrected = map(<bc>, $replacements, self)
+```
+
+Bind a declaration explicitly with `--bind NAME=PATH`:
+
+```console
+seqproc run --geom protocol.geom --bind barcode_whitelist=barcodes.txt \
+  --file1 reads.fastq.gz --out1 clean.fastq.gz
+```
+
+Named defaults and quoted relative paths are resolved relative to the geometry
+file. Explicit bindings are interpreted in the invocation environment. Run
+summaries record BLAKE3 digests of all resolved resource content.
+
+The positional resource interface remains available for compatibility:
 
 ```text
 bc = filter_within_dist(b[8], $0, 1)
@@ -114,9 +136,7 @@ seqproc run --geom protocol.geom --additional whitelist.txt \
   --file1 reads.fastq.gz --out1 clean.fastq.gz
 ```
 
-Quoted relative paths and `--additional` paths are resolved in the execution
-environment, so archive the invoked working directory or use stable paths in
-reproduction packages.
+`--additional` paths are resolved in the invocation environment.
 
 ## Compile before processing
 

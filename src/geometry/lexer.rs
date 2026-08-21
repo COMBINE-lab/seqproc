@@ -114,6 +114,8 @@ pub enum Token {
     TransformTo,
     /// `$n`, where `n` is a numeric literal.
     Arg(usize),
+    /// `$name`, where `name` is a declared resource identifier.
+    NamedArg(String),
     /// Nucleotide `U`.
     U,
     /// Nucleotide `G`.
@@ -194,6 +196,7 @@ impl fmt::Display for Token {
             TransformTo => f.write_str("->"),
             Self_ => f.write_str("self"),
             Arg(n) => write!(f, "${n}"),
+            NamedArg(name) => write!(f, "${name}"),
         }
     }
 }
@@ -248,6 +251,10 @@ pub fn lexer<'src>(
         .then(text::int(10).from_str().unwrapped())
         .map(|(_, n)| Token::Arg(n));
 
+    let named_argument = just('$')
+        .ignore_then(text::ident())
+        .map(|name: &str| Token::NamedArg(name.to_owned()));
+
     let nucs = choice((
         just('A').to(Token::A),
         just('T').to(Token::T),
@@ -300,6 +307,7 @@ pub fn lexer<'src>(
     let token = choice((
         nucs,
         argument,
+        named_argument,
         ident,
         hash_bracket,
         fatarrow,
