@@ -56,7 +56,7 @@ Every milestone must satisfy these requirements:
 | 2 | Lists of FASTQ files per lane | Complete | Grouped input-source model |
 | 3 | stdin/stdout | Complete | Input/output target model |
 | 4 | Interleaved input | Complete | Stream targets and geometry arity |
-| 5 | Three or more input segments | Foundation exists in compiler/backend | Generalized bounded lane model |
+| 5 | Three or more input segments | Complete | Generalized bounded lane model |
 | 6 | Fully typed `SeqprocError` | Partial foundations only | Public I/O and resource contracts |
 | 7 | Remaining optimizer passes | Foundation exists | Effects, scoped metadata, recursive liveness |
 | 8 | Dynamic batch-size planning | Planned | Stable execution and lane-cost model |
@@ -437,6 +437,38 @@ explicit for the common first three lanes.
 - Unsupported arity fails during validation rather than in a worker.
 - Benchmarks report any binary-size or throughput effect of fixed-arity
   specialization.
+
+### Completion record
+
+- **Implementation:** seqproc commit `8f9cd35` (`Add bounded three-segment
+  FASTQ support`) and ANTISEQUENCE commit `33b7df4` (`Inline bounded FASTQ
+  reader lanes`). The public input bound is one through three lanes;
+  ANTISEQUENCE stores the common bounded reader set inline, and generalized
+  output routing covers primary, unassigned, stdout, and demultiplexed output.
+- **Compatibility:** one- and two-lane CLI and Rust configurations retain their
+  existing forms. Three-lane runs add `--read3`, `--out3`, and
+  `--unassigned3`; the Rust API uses its existing bounded collections. Input
+  lane indices must be contiguous, and a geometry exceeding the supported
+  bound fails validation before workers start.
+- **Tests:** ANTISEQUENCE `cargo test` (363 passed); seqproc `cargo test --lib`
+  (276 passed), `cargo test --test cli_workflow_tests` (19 passed), and `cargo
+  test --test bench_regression` (19 passed). The synthetic scATAC fixture
+  covers transformation and rejection, ordered two-shard input with mixed
+  plain/gzip compression, three-way interleaving, stdin, stdout on lane three,
+  unassigned output, summaries, and invalid arity. Separate and interleaved
+  outputs are asserted byte-identical.
+- **Performance gate:** the one-thread Criterion input benchmark over 20,000
+  fragments measured 1.255 ms for one lane, 2.456 ms for two lanes, and 3.776
+  ms for three lanes. Normalized throughput was 15.93, 16.29, and 15.89 million
+  FASTQ records/s, respectively, showing proportional parsing cost without a
+  third-lane dispatch penalty. The release binary decreased from 9,231,376 to
+  9,112,424 bytes (118,952 bytes, or 1.289%). The existing one-/two-lane
+  SE-versus-PE regression benchmark also passed.
+- **Reporting and documentation:** summary schema 1.11.0 adds validated
+  `input_arity` and `output_arity`; the README and CLI, summary, and Rust API
+  guides document bounded arity, three-segment scATAC usage, streams, shards,
+  output routing, and diagnostics. The Astro documentation production build
+  passed with Node 22.22.3.
 
 ---
 
