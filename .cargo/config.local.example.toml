@@ -3,11 +3,13 @@
 #
 #     cargo build --release --config .cargo/config.local.toml
 #
-# On x86_64, also select ANTISEQUENCE's AVX2 block-aligner backend explicitly:
+# seqproc selects ANTISEQUENCE's architecture-tuned backend by default. To use
+# the generic compatibility control instead, override rustflags and features:
 #
-#     cargo build --release --no-default-features \
-#       --features antisequence/simd-avx2 \
-#       --config .cargo/config.local.toml
+#     RUSTFLAGS="" cargo build --release --no-default-features \
+#       --features antisequence/baseline-simd
 
+# `config.toml` already uses this setting. Keep this example for packagers or
+# users who override the repository config and want an explicit local build.
 [build]
 rustflags = ["-C", "target-cpu=native"]

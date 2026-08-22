@@ -7,6 +7,7 @@ use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use antisequence::graph::{ExecutionMode, PipelineInputMode, StatisticsLevel};
 use seqproc::{
+    build_info::{build_provenance, ensure_runtime_cpu_compatible},
     demux::DemuxConfig,
     error::{render_geometry_diagnostics, SeqprocError},
     execute::{compile_geom_typed, run, RunConfig},
@@ -67,11 +68,19 @@ impl From<PipelineInputModeArg> for PipelineInputMode {
 #[derive(Debug, clap::Parser)]
 #[command(
     name = "seqproc",
-    version,
+    disable_version_flag = true,
     about = "Geometry-driven FASTQ preprocessing",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
+    /// Print seqproc's version and exit.
+    #[arg(short = 'V', long, global = true)]
+    version: bool,
+
+    /// Include compiler, target, CPU-floor, and SIMD-backend provenance.
+    #[arg(long, global = true, requires = "version")]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 
@@ -313,6 +322,17 @@ fn cli_output_targets(paths: [Option<PathBuf>; 3]) -> Vec<OutputTarget> {
 }
 
 fn main() {
+    if let Err(error) = ensure_runtime_cpu_compatible() {
+        eprintln!("error: {error}");
+        exit(78);
+    }
+
+    let cli = <Cli as clap::Parser>::parse();
+    if cli.version {
+        print_version(cli.verbose);
+        return;
+    }
+
     // set up the logging. Here we will take the
     // logging level from the environment variable if
     // it is set. Otherwise we will set the default
@@ -326,7 +346,6 @@ fn main() {
         )
         .init();
 
-    let cli = <Cli as clap::Parser>::parse();
     let args = match cli.command {
         Some(Command::Validate { geometry }) => {
             let source = read_geometry(&geometry);
@@ -585,6 +604,20 @@ fn main() {
             report_seqproc_error(Some(&geom), &error);
             exit(error.exit_code());
         }
+    }
+}
+
+fn print_version(verbose: bool) {
+    let build = build_provenance();
+    println!("seqproc {}", build.seqproc_version);
+    if verbose {
+        println!("rustc: {}", build.rustc_version);
+        println!("target: {}", build.target_triple);
+        println!("compiler CPU target: {}", build.compiler_cpu_target);
+        println!("build profile: {}", build.build_profile);
+        println!("CPU floor: {}", build.cpu_floor);
+        println!("SIMD backend: {}", build.simd_backend);
+        println!("target features: {}", build.target_features.join(","));
     }
 }
 

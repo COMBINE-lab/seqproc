@@ -135,19 +135,28 @@ cargo build --release --locked
 ./target/release/seqproc --help
 ```
 
-Repository and release builds are portable by default: SSE2 is the x86_64
-matcher floor and NEON is used on aarch64. For a local x86_64 build that will
-run only on AVX2-capable hosts, select the optimized block-aligner backend and
-local CPU tuning explicitly:
+Repository builds use `target-cpu=native` so local development and profiling
+exercise the current host. Tagged artifacts use fixed, reproducible targets:
+x86-64-v3 (including AVX2) for x86_64 Linux and macOS, Neoverse N1 for aarch64
+Linux, and Apple A14 for aarch64 macOS. Confirm the binary selected on a host
+with:
 
 ```console
-cp .cargo/config.local.example.toml .cargo/config.local.toml
-cargo build --release --locked --no-default-features \
-  --features antisequence/simd-avx2 \
-  --config .cargo/config.local.toml
+seqproc --version --verbose
 ```
 
-The portable and AVX2 matcher features are mutually exclusive by design.
+seqproc performs a best-effort early x86-64-v3 compatibility check with raw
+CPUID before processing. ANTISEQUENCE remains a library-safe SSE2/NEON crate
+by default; seqproc deliberately selects its `release-simd` AVX2/NEON backend.
+A generic SSE2 compatibility build is available for controlled testing or
+older x86_64 hosts:
+
+```console
+RUSTFLAGS="" cargo build --release --locked --no-default-features \
+  --features antisequence/baseline-simd
+```
+
+Do not label a `target-cpu=native` local build as a generic release artifact.
 
 ## Ambiguous barcode matches
 
@@ -185,10 +194,13 @@ test, feature, benchmark-compilation, and sanitizer matrix.
 cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
-# On an AVX2-capable x86_64 host, also exercise the explicit optimized backend:
+# Exercise the generic SSE2 compatibility control as well:
 cargo test --locked --no-default-features \
-  --features antisequence/simd-avx2 --lib
+  --features antisequence/baseline-simd --lib
 ```
+
+Comprehensive CI also builds both variants and requires every checked-in FASTQ
+fixture to remain byte-identical across the SIMD backends.
 
 The documentation site requires Node.js 22.12 or newer and has its own locked
 build:

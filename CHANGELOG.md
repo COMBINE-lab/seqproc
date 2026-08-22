@@ -5,7 +5,14 @@ All notable changes to seqproc are documented here. This project follows
 
 ## [Unreleased]
 
-- No unreleased changes yet.
+- Make seqproc's executable default architecture-tuned while preserving
+  ANTISEQUENCE's library-safe baseline: distributed x86_64 binaries target
+  x86-64-v3/AVX2, aarch64 artifacts use fixed platform targets, and local
+  repository builds use `target-cpu=native`.
+- Add an early raw-CPUID compatibility check, `--version --verbose` build
+  provenance, and build/SIMD provenance in summary schema 1.13.0.
+- Add comprehensive byte-equivalence gates between generic SSE2 and tuned
+  AVX2 builds.
 
 ## [0.1.0] - 2026-08-21
 
@@ -23,10 +30,10 @@ release.
   for one compatibility cycle.
 - Corrected SPLiT-seq FILTER/Hamming behavior, normalized duplicate whitelist
   entries, deterministic ambiguity handling, and exhaustive input validation.
-- Worker-local statistics, versioned summary schema 1.12.0, proof-gated graph
+- Worker-local statistics, versioned run summaries, proof-gated graph
   optimization, dynamic batch planning, and optimized low-thread execution.
-- Portable public builds by default, with an explicit x86_64 AVX2 feature for
-  compatible locally built artifacts.
+- Reproducible multi-platform binary release automation with explicit CPU
+  floors.
 
 [Unreleased]: https://github.com/COMBINE-lab/seqproc/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/COMBINE-lab/seqproc/releases/tag/v0.1.0

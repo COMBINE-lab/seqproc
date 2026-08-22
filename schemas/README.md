@@ -1,6 +1,6 @@
 # seqproc report schemas
 
-`seqproc-summary-1.12.0.schema.json` is the current versioned schema emitted by
+`seqproc-summary-1.13.0.schema.json` is the current versioned schema emitted by
 `seqproc run --summary`; the 1.0.0 and 1.1.0 files remain immutable for existing
 consumers. Schema versions are independent of the seqproc binary version so
 consumers can negotiate report compatibility explicitly.
@@ -67,6 +67,12 @@ bounded to one, two, or three).
 Schema 1.12.0 adds `execution_plan.batch_planning`, including static planning
 inputs, exact-override flags, selected batch/queue/in-flight bounds, estimated
 fragment/batch/peak bytes, the memory budget, and stable reason codes.
+
+Schema 1.13.0 adds a required `build` object containing the compiler target,
+enabled target features, compiler CPU target, build profile, Rust compiler
+version, CPU floor, and ANTISEQUENCE SIMD backend. This makes
+performance-affecting artifact selection part of every statistics report
+rather than external bookkeeping.
 
 Additive fields require a schema minor version. Removing fields, changing their
 meaning, or changing types requires a schema major version and a new file.

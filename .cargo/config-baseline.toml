@@ -1,0 +1,2 @@
+# Architecture-neutral control used only by comprehensive compatibility and
+# byte-equivalence CI. It intentionally supplies no target-specific rustflags.

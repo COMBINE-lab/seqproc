@@ -545,10 +545,11 @@ preserving compatibility with headerless EFGDL 1 geometries.
   artifacts. It is published before seqproc.
 - seqproc uses cargo-dist for tagged executable releases. Release artifacts are
   separate from the crates.io source package.
-- Repository and release builds use portable compiler defaults. An optimized
-  local x86-64 build is explicit (`--no-default-features --features
-  antisequence/simd-avx2`) rather than hidden in `.cargo/config.toml`; release artifacts do
-  not silently raise the CPU floor.
+- ANTISEQUENCE is library-safe by default (SSE2 on x86_64, NEON on aarch64),
+  while seqproc is an executable product with an explicit tuned contract.
+  Local repository builds use `target-cpu=native`; cargo-dist builds fixed
+  x86-64-v3, Neoverse N1, or Apple A14 artifacts according to target. The CPU
+  floor is reported by the CLI and run schema rather than hidden.
 - The public documentation deploys from `main`, so `dev` documentation becomes
   public only after the reviewed branch promotion.
 
@@ -559,8 +560,10 @@ preserving compatibility with headerless EFGDL 1 geometries.
 - ANTISEQUENCE commits: `da29107`, `c799281`, `5efba5a`.
 - Release scripts: both repositories' `scripts/bump_and_publish.sh`.
 - seqproc release files: `dist-workspace.toml`, `.cargo/config.toml`,
-  `.cargo/config-portable.toml`, `.github/build-setup.yml`, and
+  `.cargo/config-release.toml`, `.cargo/config-baseline.toml`,
+  `.github/build-setup.yml`, and
   `.github/workflows/release.yml`.
+- SIMD equivalence gate: `scripts/verify_simd_equivalence.sh`.
 - CI: seqproc `.github/workflows/actions.yml` and `comprehensive.yml`;
   ANTISEQUENCE `.github/workflows/ci.yaml`.
 - Dependency records: each repository's `DEPENDENCY_AUDIT.md`.
@@ -888,13 +891,13 @@ These are navigation aids, not a substitute for reviewing the full diffs.
 
 ### P0: resolve before publishing either crate
 
-- **CPU portability (resolved in the review-fix pass):** repository, crate,
-  cargo-dist, and Bioconda-facing builds now use portable compiler defaults.
-  ANTISEQUENCE defaults to SSE2 on x86-64 and NEON on AArch64 through its
-  `portable-simd` feature; `simd-avx2` is mutually exclusive and explicit.
-  seqproc forwards the same choice. The remaining release-product decision is
-  only whether to add a separately labeled AVX2 artifact; it is no longer a
-  source-build or generic-artifact blocker.
+- **CPU product contract (resolved by maintainer decision):** ANTISEQUENCE
+  defaults to `baseline-simd` (SSE2/NEON); seqproc selects `release-simd`
+  (AVX2/NEON). Official x86_64 seqproc executables require x86-64-v3 and are
+  labeled/documented accordingly. Fixed aarch64 targets, raw-CPUID startup
+  diagnostics, `--version --verbose`, schema 1.13.0 provenance, and byte-level
+  baseline/release differential CI guard the contract. `cargo-multivers` is
+  deferred pending measured v3-versus-v4 benefit.
 
 - **Exact release heads:** ANTISEQUENCE's review-fix head is
   `a10d990ed5c66dd8a4edb61b36dc3cce74543238`; seqproc's final implementation
@@ -913,7 +916,7 @@ These are navigation aids, not a substitute for reviewing the full diffs.
   registry-resolved dry-run and smoke every generated archive/installer.
 - **Release metadata (resolved):** both repositories have root changelogs and
   citation files, complete Cargo package metadata, locked package allowlists,
-  and portable docs.rs feature selection.
+  and role-appropriate docs.rs feature selection.
 - **User documentation:** seqproc README/site text still describes tagged
   releases as planned. Replace those instructions only once the release URLs
   and installation commands are real. Ensure ANTISEQUENCE public API docs are
@@ -932,7 +935,7 @@ These are navigation aids, not a substitute for reviewing the full diffs.
   build/run example. Repeat it against the registry package, and run seqproc's
   existing tiny-FASTQ validation/transformation smoke test against each final
   artifact.
-- Summary schema 1.12.0 is the only schema shipped in the seqproc crate (with
+- Summary schema 1.13.0 is the only schema shipped in the seqproc crate (with
   its history README); CLI regressions compile it and validate all emitted
   reports deeply. Preserve the same compatibility review for future schemas.
 - Confirm the docs deployment after `dev` is promoted to `main` and validate
@@ -977,13 +980,15 @@ The recipe should follow current Bioconda guidance:
 3. Use `{{ compiler('rust') }}` in build requirements.
 4. Bundle dependency licenses using `cargo-bundle-licenses` and include the
    generated license file in `about.license_file`.
-5. Prefer the documented locked install form:
-   `cargo install -v --locked --no-track --root $PREFIX --path .`.
-6. Ensure the recipe neutralizes or replaces repository CPU-specific rustflags
-   unless the supported host feature is guaranteed and declared.
-7. Test at minimum `seqproc --version`, `seqproc validate` on a packaged tiny
-   EFGDL geometry, and an end-to-end tiny FASTQ transformation with an output
-   checksum.
+5. Use the documented locked install form, but set the compiler target to the
+   declared package floor rather than inheriting the build worker:
+   `RUSTFLAGS="-C target-cpu=x86-64-v3" cargo install -v --locked --no-track --root $PREFIX --path .`
+   on x86_64. Use the reviewed fixed aarch64 target for an ARM recipe.
+6. Ensure the recipe overrides repository `target-cpu=native`; never allow the
+   build worker's CPU to silently determine a redistributed package.
+7. Test at minimum `seqproc --version --verbose`, `seqproc validate` on a
+   packaged tiny EFGDL geometry, and an end-to-end tiny FASTQ transformation
+   with an output checksum.
 8. Run `bioconda-utils lint`, local Docker build/test, and a mulled
    build-and-test before opening the recipe pull request.
 9. Review platform coverage explicitly. Bioconda supports Linux x86-64/ARM64

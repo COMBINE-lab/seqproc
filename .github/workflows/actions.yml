@@ -22,7 +22,7 @@ jobs:
       CARGO_NET_RETRY: 10
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
-      RUSTFLAGS: -D warnings
+      RUSTFLAGS: -C target-cpu=x86-64-v3 -D warnings
       RUSTDOCFLAGS: -D warnings
       RUSTUP_MAX_RETRIES: 10
 

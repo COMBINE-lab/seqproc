@@ -127,10 +127,10 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
-      - name: "Use portable Cargo config for CI builds"
+      - name: "Use fixed architecture-tuned Cargo config for release builds"
         run: |
           set -euo pipefail
-          cp .cargo/config-portable.toml .cargo/config.toml
+          cp .cargo/config-release.toml .cargo/config.toml
         shell: "bash"
       - name: "Cache Rust release build"
         uses: "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6"

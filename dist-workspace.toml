@@ -3,14 +3,15 @@ members = ["cargo:."]
 
 # Config for 'dist'
 [dist]
-# Keep release artifacts aligned with the checked-in portable Cargo target
-# floors. The path is resolved relative to .github/workflows/release.yml.
+# Keep release artifacts aligned with the fixed target floors in
+# `.cargo/config-release.toml`. The path is resolved relative to the generated
+# `.github/workflows/release.yml`.
 github-build-setup = "../build-setup.yml"
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
-# Release archives intentionally build the portable default feature set. The
-# mutually exclusive AVX2 development feature is tested in comprehensive CI,
-# but must not be combined with the default by cargo-dist metadata/builds.
+# Release archives build seqproc's architecture-tuned default feature set.
+# ANTISEQUENCE retains a separate library-safe baseline feature, tested in
+# comprehensive CI but intentionally absent from cargo-dist feature metadata.
 all-features = false
 # CI backends to support
 ci = "github"

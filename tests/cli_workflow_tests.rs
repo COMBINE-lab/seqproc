@@ -20,7 +20,7 @@ fn gzip_copy(source: &str, destination: &std::path::Path) {
 
 fn assert_current_summary_shape(report: &Value) {
     let schema: Value = serde_json::from_str(include_str!(
-        "../schemas/seqproc-summary-1.12.0.schema.json"
+        "../schemas/seqproc-summary-1.13.0.schema.json"
     ))
     .unwrap();
     assert_eq!(
@@ -31,7 +31,7 @@ fn assert_current_summary_shape(report: &Value) {
     for key in report.as_object().unwrap().keys() {
         assert!(
             properties.contains_key(key),
-            "summary field {key:?} is absent from schema 1.12.0"
+            "summary field {key:?} is absent from schema 1.13.0"
         );
     }
     for required in schema["required"].as_array().unwrap() {
@@ -43,8 +43,30 @@ fn assert_current_summary_shape(report: &Value) {
     }
     let validator = jsonschema::validator_for(&schema).expect("summary schema must be valid");
     if let Err(error) = validator.validate(report) {
-        panic!("summary does not validate against schema 1.12.0: {error}");
+        panic!("summary does not validate against schema 1.13.0: {error}");
     }
+}
+
+#[test]
+fn verbose_version_reports_cpu_and_backend_provenance() {
+    let output = Command::cargo_bin("seqproc")
+        .unwrap()
+        .args(["--version", "--verbose"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains(concat!("seqproc ", env!("CARGO_PKG_VERSION"))));
+    assert!(stdout.contains("target:"));
+    assert!(stdout.contains("compiler CPU target:"));
+    assert!(stdout.contains("CPU floor:"));
+    assert!(stdout.contains("SIMD backend:"));
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .arg("-V")
+        .assert()
+        .success()
+        .stdout(predicates::str::starts_with("seqproc "));
 }
 
 #[test]
@@ -419,7 +441,7 @@ fn summary_mode_uses_the_same_processing_pipeline() {
 
     let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.12.0");
+    assert_eq!(report["schema_version"], "1.13.0");
     assert_eq!(report["statistics_level"], "detailed");
     assert_eq!(report["gzip_compression_level"], 3);
     assert_eq!(report["parallel_gzip_members"], false);
@@ -1045,7 +1067,7 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         assert_eq!(decoded, fs::read(plain).unwrap());
     }
     let report: Value = serde_json::from_slice(&fs::read(stream_summary).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "1.12.0");
+    assert_eq!(report["schema_version"], "1.13.0");
     assert_eq!(report["parallel_gzip_members"], false);
     assert_eq!(report["parallel_gzip_stream"], true);
     assert_eq!(report["gzip_compression_threads"], 2);
@@ -1308,7 +1330,7 @@ fn stdin_stdout_streams_are_clean_typed_and_composable() {
         .success();
     assert_eq!(stdin_to_stdout.get_output().stdout, expected);
     let stderr = String::from_utf8_lossy(&stdin_to_stdout.get_output().stderr);
-    assert!(stderr.contains("\"schema_version\": \"1.12.0\""));
+    assert!(stderr.contains("\"schema_version\": \"1.13.0\""));
     assert!(stderr.contains("\"input_topology\""));
     assert!(stderr.contains("\"stdin\""));
     assert!(stderr.contains("\"stdout\""));
@@ -1598,7 +1620,7 @@ fn three_segment_scatac_paths_cover_shards_streams_interleaving_and_reports() {
     }
     let report: Value = serde_json::from_slice(&fs::read(&separate_summary).unwrap()).unwrap();
     assert_current_summary_shape(&report);
-    assert_eq!(report["schema_version"], "1.12.0");
+    assert_eq!(report["schema_version"], "1.13.0");
     assert_eq!(report["input_layout"], "separate");
     assert_eq!(report["input_arity"], 3);
     assert_eq!(report["output_arity"], 3);

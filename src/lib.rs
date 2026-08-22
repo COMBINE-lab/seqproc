@@ -18,6 +18,7 @@
 //! - `geometry`: Geometry file parsing and compilation
 //! - `processors`: Read processing operations
 
+pub mod build_info;
 pub mod demux;
 pub mod error;
 pub mod execute;

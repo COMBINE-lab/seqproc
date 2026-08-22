@@ -10,11 +10,12 @@ homepage = "https://combine-lab.github.io/seqproc"
 documentation = "https://combine-lab.github.io/seqproc"
 readme = "README.md"
 include = [
+    "/build.rs",
     "/src/**",
     "/tests/**",
     "/benches/**",
     "/schemas/README.md",
-    "/schemas/seqproc-summary-1.12.0.schema.json",
+    "/schemas/seqproc-summary-1.13.0.schema.json",
     "/Cargo.toml",
     "/Cargo.lock",
     "/README.md",
@@ -26,10 +27,10 @@ keywords = ["bioinformatics", "fastq", "sequencing", "preprocessing"]
 categories = ["command-line-utilities", "science"]
 
 [package.metadata.docs.rs]
-# Keep docs builds on the same portable feature set as generic artifacts;
-# allocator and AVX2 development features are intentionally opt-in.
+# Document the same tuned matcher API used by seqproc binaries. docs.rs does
+# not execute the AVX2 backend.
 all-features = false
-features = ["portable-simd"]
+features = ["release-simd"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -41,7 +42,7 @@ name = "seqproc"
 path = "src/bin/bin.rs"
 
 [dependencies]
-antisequence = { version = "0.1.0", git = "https://github.com/COMBINE-lab/ANTISEQUENCE", rev = "a10d990ed5c66dd8a4edb61b36dc3cce74543238", default-features = false, features = ["accelerated-gzip"] }
+antisequence = { version = "0.1.0", git = "https://github.com/COMBINE-lab/ANTISEQUENCE", rev = "1d1c10d84e7ca67fd1f67f61f44abd530ecb7e82", default-features = false, features = ["accelerated-gzip"] }
 rustc-hash = "1.1.0"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tracing = "0.1.37"
@@ -61,8 +62,10 @@ flate2 = { version = "1.0", features = ["zlib-rs"], default-features = false }
 nix = { version = "0.31", features = ["fs"] }
 
 [features]
-default = ["portable-simd"]
-portable-simd = ["antisequence/portable-simd"]
+default = ["release-simd"]
+# seqproc is an executable application, so its supported x86_64 release floor
+# is AVX2/x86-64-v3. ANTISEQUENCE itself retains a lower SSE2 library default.
+release-simd = ["antisequence/release-simd"]
 # Forward allocator features to antisequence so you can run: cargo bench --features mimalloc|jemalloc
 mimalloc = ["antisequence/mimalloc"]
 jemalloc = ["antisequence/jemalloc"]

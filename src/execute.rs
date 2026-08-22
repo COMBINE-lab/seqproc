@@ -18,6 +18,7 @@ use tempfile::tempdir;
 use tracing::info;
 
 use crate::{
+    build_info::{build_provenance, BuildProvenance},
     compile::{compile, CompiledData},
     demux::DemuxConfig,
     error::{
@@ -452,6 +453,7 @@ impl RunConfig {
 
 #[derive(Debug, Serialize)]
 pub struct RunReport {
+    pub build: BuildProvenance,
     pub effective_threads: usize,
     pub ordered_output: bool,
     pub statistics_level: StatisticsLevel,
@@ -481,6 +483,7 @@ pub struct RunReport {
 pub struct SeqprocStats {
     pub schema_version: String,
     pub seqproc_version: String,
+    pub build: BuildProvenance,
     pub statistics_level: StatisticsLevel,
     pub call: Option<String>,
     pub geometry_digest: Option<String>,
@@ -1003,6 +1006,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
         )
     });
     Ok(RunReport {
+        build: build_provenance(),
         effective_threads: config.threads,
         ordered_output: config.preserve_order || config.threads == 1,
         statistics_level,
@@ -1194,8 +1198,9 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.12.0".to_owned(),
+        schema_version: "1.13.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
+        build: build_provenance(),
         statistics_level,
         call,
         geometry_digest,
@@ -1750,8 +1755,9 @@ fn interpret_to_pipes(
     }
 
     Ok(SeqprocStats {
-        schema_version: "1.12.0".to_string(),
+        schema_version: "1.13.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
+        build: build_provenance(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
         geometry_digest: None,
@@ -2215,8 +2221,9 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.12.0".to_string(),
+            schema_version: "1.13.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
+            build: build_provenance(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
             geometry_digest: None,

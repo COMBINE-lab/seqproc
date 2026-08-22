@@ -1,0 +1,15 @@
+# Fixed release targets: x86_64 artifacts require the psABI x86-64-v3 level;
+# aarch64 artifacts use one documented target per operating system. Local
+# development uses target-cpu=native from config.toml instead.
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=neoverse-n1"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=apple-a14"]

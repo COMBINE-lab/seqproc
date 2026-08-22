@@ -1,4 +1,6 @@
-# Intentionally empty, portable repository default. Do not add
-# `target-cpu=native`, x86-64-v3, AVX2, or a microarchitecture-specific ARM
-# target here: Cargo source builds and downstream packagers honor this file.
-# Local CPU tuning belongs in config.local.toml (see config.local.example.toml).
+# Local development follows the host CPU so profiling and ordinary source
+# builds exercise its best code generation. Release automation replaces this
+# file with config-release.toml, whose target floors are fixed and reproducible.
+
+[build]
+rustflags = ["-C", "target-cpu=native"]

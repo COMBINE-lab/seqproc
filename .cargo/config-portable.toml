@@ -1,2 +1,0 @@
-# Canonical portable cargo-dist configuration. It is intentionally free of
-# target-specific rustflags so artifact names cannot conceal a newer CPU floor.

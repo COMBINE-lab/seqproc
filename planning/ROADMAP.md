@@ -707,7 +707,7 @@ controls and reproducibility.
   end-to-end FASTQ throughput claims.
 - **Documentation:** ANTISEQUENCE's batch-planning guide documents the model,
   formulas, invariants, and benchmark. seqproc's README, CLI, performance,
-  summaries, Rust API, and versioned summary schema 1.12.0 document the public
+  summaries, Rust API, and versioned summary schema 1.13.0 document the public
   controls and report. The Astro production build passed with Node 22.
 
 ---

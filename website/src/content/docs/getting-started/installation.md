@@ -20,27 +20,35 @@ with its committed lockfile:
 git clone https://github.com/COMBINE-lab/seqproc.git
 cd seqproc
 cargo build --release --locked
-./target/release/seqproc --version
+./target/release/seqproc --version --verbose
 ```
 
 Using `--locked` prevents Cargo from silently selecting dependency versions
 other than those recorded in `Cargo.lock`.
 
-The repository and tagged binary configuration is portable: SSE2 is the
-x86_64 matcher floor and NEON is used on aarch64. It does not silently inherit
-`target-cpu=native`, x86-64-v3, or a machine-specific ARM target.
+The repository configuration uses `target-cpu=native`, so a local source build
+is optimized for—and should be run on—the host that compiled it. Do not
+redistribute that executable as a generic binary.
 
-For a local x86_64 build that will run only on AVX2-capable hosts:
+Tagged artifacts instead use fixed, reviewable CPU targets:
+
+- x86_64 Linux and macOS: x86-64-v3, including AVX2;
+- aarch64 Linux: Neoverse N1;
+- aarch64 macOS: Apple A14.
+
+The x86_64 executable makes a best-effort check of the complete v3 feature set
+through raw CPUID before processing and reports an actionable incompatibility.
+`seqproc --version --verbose` reports the compiler, target, target features,
+CPU floor, and compiled ANTISEQUENCE SIMD backend.
+
+ANTISEQUENCE itself keeps an SSE2/NEON library default. For a seqproc
+compatibility control or a pre-AVX2 x86_64 host, build its baseline backend and
+override the repository's native code-generation setting:
 
 ```console
-cp .cargo/config.local.example.toml .cargo/config.local.toml
-cargo build --release --locked --no-default-features \
-  --features antisequence/simd-avx2 \
-  --config .cargo/config.local.toml
+RUSTFLAGS="" cargo build --release --locked --no-default-features \
+  --features antisequence/baseline-simd
 ```
-
-Do not distribute that binary as a generic x86_64 artifact; its CPU floor is
-intentional. The portable and AVX2 matcher features are mutually exclusive.
 
 To put the local build on your path:
 
@@ -70,6 +78,7 @@ compared.
 
 ```console
 seqproc --help
+seqproc --version --verbose
 seqproc run --help
 ```
 

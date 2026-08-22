@@ -1,8 +1,8 @@
-- name: Use portable Cargo config for CI builds
+- name: Use fixed architecture-tuned Cargo config for release builds
   shell: bash
   run: |
     set -euo pipefail
-    cp .cargo/config-portable.toml .cargo/config.toml
+    cp .cargo/config-release.toml .cargo/config.toml
 
 - name: Cache Rust release build
   uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
