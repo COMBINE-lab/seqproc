@@ -5,6 +5,10 @@ All notable changes to seqproc are documented here. This project follows
 
 ## [Unreleased]
 
+- Restore the declared Rust 1.88 compatibility of the x86-64 CPU-floor
+  diagnostic by isolating CPUID calls behind audited wrappers that compile
+  with both the older unsafe and newer safe intrinsic signatures.
+
 ## [0.1.0] - 2026-08-22
 
 Initial public release. It includes the preprint functionality plus the

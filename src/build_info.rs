@@ -92,10 +92,32 @@ pub fn ensure_runtime_cpu_compatible() -> Result<(), CpuCompatibilityError> {
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
+// These intrinsics are unsafe on the declared Rust 1.88 MSRV and safe on
+// newer compilers. Keep the compatibility block without warning on either.
+#[allow(unused_unsafe)]
+fn cpuid(leaf: u32) -> std::arch::x86_64::CpuidResult {
+    // SAFETY: every x86-64 processor supports the CPUID instruction. The
+    // intrinsic accepts unsupported leaves and reports zero/vendor-defined
+    // values; callers below bound optional-leaf interpretation with the
+    // corresponding maximum-leaf query.
+    unsafe { std::arch::x86_64::__cpuid(leaf) }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+// See `cpuid`: the intrinsic's safety signature changed after our MSRV.
+#[allow(unused_unsafe)]
+fn cpuid_count(leaf: u32, subleaf: u32) -> std::arch::x86_64::CpuidResult {
+    // SAFETY: CPUID is guaranteed on x86-64, and ECX is an ordinary subleaf
+    // selector. Callers below query only architecturally defined subleaves
+    // after checking the associated maximum-leaf/subleaf value.
+    unsafe { std::arch::x86_64::__cpuid_count(leaf, subleaf) }
+}
+
+#[cfg(target_arch = "x86_64")]
 #[inline(never)]
 fn missing_required_x86_features() -> Vec<&'static str> {
-    use std::arch::x86_64::{__cpuid, __cpuid_count};
-
     let target_features = env!("SEQPROC_TARGET_FEATURES");
     let x86_64_v3_feature = |feature: &str| {
         matches!(
@@ -125,8 +147,8 @@ fn missing_required_x86_features() -> Vec<&'static str> {
         target_features.split(',').any(|item| item == feature)
             || (x86_64_v3_feature(feature) && cfg!(feature = "release-simd"))
     };
-    let leaf0 = __cpuid(0);
-    let leaf1 = __cpuid(1);
+    let leaf0 = cpuid(0);
+    let leaf1 = cpuid(1);
     let ecx = leaf1.ecx;
     let edx = leaf1.edx;
     let mut missing = Vec::new();
@@ -191,7 +213,7 @@ fn missing_required_x86_features() -> Vec<&'static str> {
             }
         }
     } else {
-        let leaf7 = __cpuid_count(7, 0);
+        let leaf7 = cpuid_count(7, 0);
         for (bit, feature, name) in [
             (3, "bmi1", "bmi1"),
             (5, "avx2", "avx2"),
@@ -234,7 +256,7 @@ fn missing_required_x86_features() -> Vec<&'static str> {
                 }
             }
         } else {
-            let leaf7_1 = __cpuid_count(7, 1);
+            let leaf7_1 = cpuid_count(7, 1);
             for (bit, feature, name) in [(4, "avxvnni", "avxvnni"), (5, "avx512bf16", "avx512bf16")]
             {
                 if required(feature) && leaf7_1.eax & (1 << bit) == 0 {
@@ -244,7 +266,7 @@ fn missing_required_x86_features() -> Vec<&'static str> {
         }
     }
 
-    let extended_max = __cpuid(0x8000_0000).eax;
+    let extended_max = cpuid(0x8000_0000).eax;
     if extended_max < 0x8000_0001 {
         for feature in ["lahfsahf", "lzcnt", "sse4a", "prfchw"] {
             if required(feature) {
@@ -252,7 +274,7 @@ fn missing_required_x86_features() -> Vec<&'static str> {
             }
         }
     } else {
-        let extended = __cpuid(0x8000_0001);
+        let extended = cpuid(0x8000_0001);
         for (bit, feature, name) in [
             (0, "lahfsahf", "lahf/sahf"),
             (5, "lzcnt", "lzcnt"),
@@ -311,7 +333,7 @@ fn missing_required_x86_features() -> Vec<&'static str> {
                 }
             }
         } else {
-            let leaf_d_1 = __cpuid_count(0xD, 1);
+            let leaf_d_1 = cpuid_count(0xD, 1);
             for (bit, feature, name) in [
                 (0, "xsaveopt", "xsaveopt"),
                 (1, "xsavec", "xsavec"),
