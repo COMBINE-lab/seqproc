@@ -80,6 +80,140 @@ script.
 
 ---
 
+## Final independent re-review (2026-08-22, boundary seqproc `4e0de31` / ANTISEQUENCE `b5fecee`)
+
+### Verdict
+
+**The maintainer pass is substantially verified and of high quality — approve
+after the short fix list below.** Every gate in the "Post-fix verification
+evidence" table reproduced on this host exactly as claimed: ANTISEQUENCE
+386/386 baseline and 388/388 release-SIMD (warning-denied), doc-test, 67
+package files; seqproc full all-target suite green including `diff_tests`,
+87 package files, `verify_simd_equivalence.sh` 9/9 byte-identical,
+`cargo dist generate --check`/`plan` clean, `/dev/full` now exits 1,
+publish-before-tag ordering fixed, MSRV/macOS CI present, CHANGELOG/CITATION
+in place, crates.io namespaces still free. The library/executable SIMD split
+is provably correct (block-aligner `simd_avx2` is absent from the default
+dependency graph; `compile_error!` enforces backend exclusivity), the
+CPUID predicate itself is complete including OSXSAVE/XGETBV, and an A/B
+against the pre-fix build showed the matcher fixes are a large net
+performance win (a 400k-barcode × 20k-read workload: pre-fix >600 s,
+post-fix 51 s, single debug thread). One resolution-table claim per
+subsystem did not fully survive scrutiny; none undermines the architecture.
+
+### Remaining release blockers (all small relative to the completed work)
+
+1. **Legacy output permissiveness leaks into `seqproc run`.**
+   `execute.rs:682-695` gates on `config.outputs.is_none()`, which both the
+   legacy flag-only path and the modern `run` subcommand satisfy
+   (`bin.rs:349-389` converge). Empirically: `seqproc run --geom paired
+   --out1 X` exits 0 writing only R1, and a paired geometry with **no**
+   output flags exits 0 writing nothing (pre-fix: arity error). The report's
+   claim (line: "restored the legacy **flag-only** prefix contract") does
+   not match the implementation. Fix: thread an invoked-via-legacy flag into
+   `RunConfig` and require at least one non-`Discard` primary target;
+   `diff_tests` (flag-only) still passes.
+2. **`--unassigned2` is still silently ignored** —
+   `unassigned_targets_from_legacy` (`execute.rs:148-160`) truncates with
+   `.take(input_arity)` before validation, the exact pattern fixed for
+   `--out2`. Users believing rejected mates are retained lose them silently.
+3. **`finish()` runs on failed/invalid runs and materializes outputs.**
+   Empirically confirmed: a run failing on malformed input truncates a
+   pre-existing output file (pre-fix it was untouched); at the library
+   level, re-running a graph after a config-validation failure appends a
+   second deflate stream after a finalized gzip footer (silent corruption).
+   Fix: validate pipeline config before `finish_after`, materialize constant
+   outputs only on success, and make `finish()` terminal-state-guarded.
+4. **The CPUID guard cannot report its own failure in v3 dist artifacts**
+   (verified by disassembly of `target/dist/seqproc`): the error-path code
+   is compiled with VEX instructions, so a pre-AVX host SIGILLs before the
+   message prints, and the XGETBV check is dead code exactly where it
+   matters. Cheapest complete fix on Linux: add
+   `-C link-arg=-Wl,-z,x86-64-v3` to the x86 entries of
+   `.cargo/config-release.toml` (glibc ≥ 2.33 refuses to load with a clean
+   "CPU ISA level" message); otherwise make the failure path allocation-free.
+   The guard *is* effective for plain `cargo install` builds.
+5. **`target-cpu=native` default vs. hardcoded v3 guard.** A binary built
+   with the checked-in `native` config on a newer node (e.g., AVX-512
+   build/login node) passes the v3 guard on an older compute node and can
+   SIGILL in real work — the classic HPC build-node/compute-node split.
+   Fix: drive the guard from the `SEQPROC_TARGET_FEATURES` string `build.rs`
+   already exports (~60 lines; also fixes `cpu_floor` under-reporting), or
+   drop `native` from the checked-in config.
+6. **Per-read `vec![None; n_patterns]` in the general match loop**
+   (`match_any_op.rs:1455-1459`). Not a regression — the pre-fix exhaustive
+   behavior was far worse — but measured at ~2.4 ms/read at 400k patterns
+   (linear in whitelist size; a 10x v3 6.8M whitelist extrapolates to
+   ~40 ms/read/thread). The oracle cache should be allocated lazily, only
+   when detailed statistics or a non-default position policy makes the
+   reference oracle active. Trivial fix; whitelists are seqproc's headline
+   use case.
+7. **Quadratic tie-break on long reads:** `edit_search_myers`/`edit_search_dp`
+   now run a full reverse DP per equal-best end (`match_any_op.rs:2366-2374`,
+   `:2461-2469`); unbounded `best_ends` on repetitive 10 kb reads is
+   O(n²m). Compute the leftmost start for the smallest end first, or bound
+   the candidate set. Matters for the long-read SPLiT-seq protocol.
+8. **Mixed-length Hamming seeding still unsound:** `get_searcher` derives
+   `k` from the *minimum* literal length (`match_any_op.rs:654-659`), but
+   for `Hamming(Count(c))` longer patterns have larger mismatch budgets, so
+   the chosen k can exceed their safe bound → silent false negatives. Claimed
+   fixed; not fixed. Guard: fall back to exhaustive when literal lengths
+   differ under Hamming, or take the per-pattern minimum safe k.
+9. **Provenance smoke on a real dist artifact before tagging:** CI asserts
+   the v3 contract via `RUSTFLAGS` env, not via `config-release.toml` +
+   `--target` as cargo-dist builds do. Run one `dist build --artifacts=local`
+   and check `--version --verbose` reports `compiler CPU target: x86-64-v3`;
+   add the assertion to the release workflow.
+
+### Cheap pre-tag improvements (should-fix, not blocking)
+
+- Restore `paper_chemistry_tests`, `diff_tests`, and clippy to
+  pull-request-triggered CI: commit `1925425` moved them to a workflow that
+  runs only on dispatch/tags/monthly cron, so the release's headline
+  byte-identity criterion currently runs on no PR.
+- Namespace `_batch_idx` and demote the four `.expect()`s in
+  `try_orientation_op.rs` (nested/user-attr collision panics).
+- Add a real-filesystem `/dev/full` test for `OutputFastqFileOp` (plain and
+  gzip), a byte-level (not flag-level) optimizer-ablation differential test,
+  and a nested-`done` retention regression test.
+- Validate `identity/overlap ≤ 1.0` in `MatchType::k()` (alignment-metric
+  underflow remains); document `MatcherPlan.backend` as advisory or make
+  dispatch consult it; strengthen the vacuous
+  `test_short_hamming_lookup_falls_back_for_non_acgt_input`.
+- Correct stale `docs/graph-api.md` claims (statistics mutability; document
+  the `finish()` obligation for `run_one` consumers), fold the CHANGELOG
+  `[Unreleased]` section into 0.1.0, add a seqproc `baseline-simd`
+  passthrough feature, and document `cargo install --locked`.
+- Bioconda note for the future recipe: the source package defaults to
+  `release-simd` (AVX2) and the repo config uses `target-cpu=native`; the
+  recipe must build `--no-default-features --features
+  antisequence/baseline-simd` with neutralized rustflags to meet Bioconda's
+  portability baseline.
+
+### User decisions still open (unchanged from the maintainer's list)
+
+1. stdout `EPIPE` exit-code policy (maintainer recommendation — exit 0 for
+   stdout EPIPE only — is sound).
+2. Confirm `0.1.0` as the coordinated first version (recommendation: yes).
+
+### What this re-review confirmed as genuinely solid
+
+The `GraphNode::finish()` recursion (all writers, all nested ops, correct
+error aggregation, double-finish safe), the statistics immutability fix, the
+optimizer ablation plumbing, the `SetOp` constant-folding proof, the
+`TryOrientationOp` lane-invalidation + compile-time liveness rejection, the
+Hamming k() pigeonhole math, the non-ACGT bypass design, the AVX2 bit
+enumeration fix (tests run under `release-simd` and pass), the unified
+`(start, end)` tie order with a stats-on/off equality test, annotation
+allowlists with no legacy name wrongly rejected, the preflight nesting
+bound, `Anchor1` lexing, schema 1.13.0 strict validation, the package
+allowlists, and the publish-script ordering. No test assertions were
+weakened anywhere in the fix range; the one deleted test was the documented,
+user-directed ambiguity-syntax reversal, replaced by a stronger equivalence
+test.
+
+---
+
 ## Historical intermediate status after the first 2026-08-21 fix pass
 
 A first round of mechanical fixes was applied on top of the reviewed heads
