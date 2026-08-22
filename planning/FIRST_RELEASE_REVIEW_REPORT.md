@@ -103,6 +103,10 @@ subsystem did not fully survive scrutiny; none undermines the architecture.
 
 ### Remaining release blockers (all small relative to the completed work)
 
+> **Update 2026-08-22:** items 6 and 7 below were subsequently fixed by the
+> reviewer in ANTISEQUENCE `cd4a9e4` — see "Resolution of blockers 6 and 7"
+> after this list. Items 1–5 and 8–9 remain open.
+
 1. **Legacy output permissiveness leaks into `seqproc run`.**
    `execute.rs:682-695` gates on `config.outputs.is_none()`, which both the
    legacy flag-only path and the modern `run` subcommand satisfy
@@ -164,6 +168,64 @@ subsystem did not fully survive scrutiny; none undermines the architecture.
    `--target` as cargo-dist builds do. Run one `dist build --artifacts=local`
    and check `--version --verbose` reports `compiler CPU target: x86-64-v3`;
    add the assertion to the release workflow.
+
+### Resolution of blockers 6 and 7 (2026-08-22 reviewer fix, ANTISEQUENCE `cd4a9e4`)
+
+Blockers 6 and 7 were fixed by the reviewer in ANTISEQUENCE commit
+`cd4a9e4` ("Keep positional-oracle caching and tie resolution off the hot
+path"); seqproc's pin advances accordingly. For the next agent, the precise
+mechanics of both defects and their fixes:
+
+**Blocker 6 — what the O(pattern-count) work was.** The matching itself was
+never a list scan: pattern sets are indexed once at graph construction (a
+k-mer seed index, or a precomputed neighbor table for short Hamming
+patterns), and per-read work is proportional to seed hits. The regression
+was bookkeeping: the detailed-statistics fix memoizes the *reference
+position oracle* (the exhaustive positional matcher consulted only when
+detailed statistics or a non-default position policy is active) once per
+(read, pattern). That cache was a dense `vec![None; patterns.len()]` —
+one 40-byte slot per whitelist entry — allocated and zero-filled for
+**every read**, even on the default path where the oracle immediately
+returns `None`. At 400k patterns that is ~16 MB of memset per read
+(~2.4 ms measured); a 6.8M-barcode 10x v3 whitelist would be ~270 MB per
+read. Fix: the cache is now a sparse `FxHashMap` keyed by the pattern
+indices the seed index actually surfaces for that read. An empty map
+allocates nothing, so the default path pays zero; the active path pays
+O(#seed-hit patterns) instead of O(#whitelist). Measured on the
+400k × 20k-read workload: 51 s → 7.7 s single-threaded debug (the
+remainder is fixed startup cost — the 2k-read case dropped from 7.6 s to
+3.3 s), outputs byte-identical.
+
+**Blocker 7 — what the quadratic behavior was.** The deterministic
+tie-ordering fix made the edit kernels collect **every** end position
+achieving the best score, then run a *reverse DP over the entire prefix*
+`text[..end]` for each one to recover that end's leftmost start, then take
+the lexicographic (start, end) minimum. On a repetitive read, a pattern
+can have O(n) equal-best ends and each reverse DP is O(end·m) →
+O(n²·m) per pattern per read. Two exact bounds remove this:
+(1) *window bound* — an alignment within k edits of an m-length pattern
+spans at most m+k text characters (each edit changes length by ≤1), so a
+placement ending at `end` cannot start before `end − (m+k)`; the reverse
+DP now scans only that suffix, O((m+k)·m) per end, exact because any
+excluded longer window necessarily exceeds the edit budget; (2) *early
+termination* — ends arrive in ascending order, and once the current best
+start `s*` satisfies `end − (m+k) ≥ s*` no later end can produce a smaller
+start (and a start tie loses on the larger end), so the scan stops after
+at most ~2(m+k) ends past the first winner. Worst case drops from
+O(n²·m) to O((m+k)²·m), independent of read length. Applied identically
+to `edit_search_myers` (≤64 bp), `edit_search_dp` (>64 bp fallback), and
+`edit_search_long_myers` (>64 bp Myers, which also no longer materializes
+every sub-threshold hit). Exposure note: the CLI anchor pipeline routes
+through windowed/precomputed kernels first, so the reachable worst case
+from seqproc geometries is primarily >64 bp patterns on long reads
+(`edit_search_long_myers`) and runtime expression-derived patterns; the
+library API reaches all three directly.
+
+Verification: ANTISEQUENCE 386/386 baseline and 388/388 release-SIMD
+suites pass (these include the randomized `edit_search` vs
+`reference_edit_search` oracle matrices that pin exact
+(score, start, end) triples), clippy clean, and both benchmark workloads
+above produce byte-identical outputs against the pre-fix binary.
 
 ### Cheap pre-tag improvements (should-fix, not blocking)
 
