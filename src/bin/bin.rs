@@ -604,6 +604,7 @@ fn main() {
 
             let report = match run(config, geom) {
                 Ok(report) => report,
+                Err(SeqprocError::StdoutBrokenPipe { .. }) => exit(0),
                 Err(error) => {
                     report_seqproc_error(None, &error);
                     exit(error.exit_code());

@@ -91,8 +91,10 @@ stdout. Stdin must be the only shard in its separate or interleaved input
 stream. Parallel gzip
 output modes are path-only; stdout uses the ordinary bounded writer path.
 If a downstream process closes the pipe, seqproc cancels the remaining graph
-and exits nonzero with the write diagnostic on stderr; it never treats a
-partial FASTQ stream as a successful run.
+and exits 0 without a diagnostic, following normal Unix early-consumer
+semantics. Only stdout `EPIPE` receives this treatment: ENOSPC, quota
+exhaustion, named-pipe/file failures, and every other output error remain
+nonzero.
 
 ## Parallel execution and ordering
 

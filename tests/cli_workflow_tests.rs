@@ -1,7 +1,9 @@
+use assert_cmd::cargo::CommandCargoExt;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
 use std::io::Read;
+use std::process::{Command as StdCommand, Stdio};
 use tempfile::tempdir;
 
 fn fixture(path: &str) -> String {
@@ -1321,6 +1323,48 @@ fn final_output_flush_failure_is_a_nonzero_cli_error() {
         ])
         .assert()
         .failure();
+}
+
+#[test]
+fn closed_stdout_pipe_is_success_without_diagnostics() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("single.geom");
+    let input = directory.path().join("input.fastq");
+    fs::write(&geometry, "1{r:}\n").unwrap();
+
+    let mut fastq = String::with_capacity(4 * 1024 * 1024);
+    for index in 0..200_000 {
+        use std::fmt::Write as _;
+        writeln!(fastq, "@read{index}\nACGTACGTACGTACGT\n+\nIIIIIIIIIIIIIIII").unwrap();
+    }
+    fs::write(&input, fastq).unwrap();
+
+    let mut child = StdCommand::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--file1",
+            input.to_str().unwrap(),
+            "--out1",
+            "-",
+            "--threads",
+            "2",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        output.stderr.is_empty(),
+        "normal stdout pipe closure emitted diagnostics: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

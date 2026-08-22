@@ -5,7 +5,7 @@ All notable changes to seqproc are documented here. This project follows
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-08-21
+## [0.1.0] - 2026-08-22
 
 Initial public release. It includes the preprint functionality plus the
 post-preprint correctness, usability, and performance work reviewed for this
@@ -16,6 +16,14 @@ release.
   cycle. Unassigned outputs likewise require exactly one target per input lane,
   and primary outputs combined with demultiplexing are rejected rather than
   silently ignored.
+- Treat only a closed stdout pipe as normal Unix early-consumer termination
+  (silent exit 0). ENOSPC, quota exhaustion, named-pipe/file failures, and all
+  other output errors remain nonzero. Output writers retain their target
+  identity through the type-erased execution graph so a file `EPIPE` cannot be
+  mistaken for stdout closure.
+- Report demultiplexed output topology from the effective writer graph: one
+  `path` sink per emitted read lane, without exposing data-dependent sample
+  filenames.
 - Propagate ANTISEQUENCE's single-use graph lifecycle and fallible finalization:
   malformed input, output flush/footer failures, and repeated execution now
   produce typed nonzero errors instead of panic, silent truncation, or false

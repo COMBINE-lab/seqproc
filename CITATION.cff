@@ -3,6 +3,7 @@ message: "If you use seqproc, please cite this software and the associated prepr
 title: "seqproc"
 type: software
 version: 0.1.0
+date-released: 2026-08-22
 license: BSD-3-Clause
 repository-code: "https://github.com/COMBINE-lab/seqproc"
 url: "https://combine-lab.github.io/seqproc"

@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Build the current seqproc release candidate from source.
+description: Install a released seqproc binary or build the pinned source tree.
 ---
 
 ## Requirements
@@ -11,10 +11,20 @@ The current source tree requires:
 - Git;
 - a C toolchain and the usual system build tools used by Rust dependencies.
 
-## Build the pinned dependency set
+## Install a release
 
-Until tagged binary releases are published, clone the repository and build
-with its committed lockfile:
+Checksummed archives for supported platforms and a shell installer are
+published on the
+[GitHub Releases page](https://github.com/COMBINE-lab/seqproc/releases). The
+corresponding crates.io installation is:
+
+```console
+cargo install --locked seqproc
+```
+
+## Build the pinned source tree
+
+Clone the repository and build with its committed lockfile:
 
 ```console
 git clone https://github.com/COMBINE-lab/seqproc.git
@@ -25,13 +35,6 @@ cargo build --release --locked
 
 Using `--locked` prevents Cargo from silently selecting dependency versions
 other than those recorded in `Cargo.lock`.
-
-After the coordinated seqproc and ANTISEQUENCE 0.1.0 crates from this release
-are published, the corresponding Cargo installation is:
-
-```console
-cargo install --locked seqproc
-```
 
 The repository configuration uses `target-cpu=native`, so a local source build
 is optimized for—and should be run on—the host that compiled it. Do not

@@ -170,15 +170,15 @@ pub enum SeqprocError {
         #[source]
         source: io::Error,
     },
-    #[error("{operation} stopped because the downstream pipe closed")]
-    BrokenPipe { operation: &'static str },
+    #[error("{operation} stopped because the stdout consumer closed its pipe")]
+    StdoutBrokenPipe { operation: &'static str },
     #[error("unsupported feature combination: {0}")]
     Unsupported(String),
 }
 
 impl SeqprocError {
     /// Broad, stable CLI status classes: 2 configuration, 3 malformed/runtime
-    /// input, and 1 graph/output execution.
+    /// input, 1 graph/output execution, and 0 for normal stdout early closure.
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::Geometry { .. }
@@ -190,12 +190,12 @@ impl SeqprocError {
             | Self::Demultiplex(_)
             | Self::Unsupported(_) => 2,
             Self::FastqInput { .. } => 3,
+            Self::StdoutBrokenPipe { .. } => 0,
             Self::FastqOutput { .. }
             | Self::GraphConstruction(_)
             | Self::GraphCompilation { .. }
             | Self::GraphExecution { .. }
-            | Self::Io { .. }
-            | Self::BrokenPipe { .. } => 1,
+            | Self::Io { .. } => 1,
         }
     }
 

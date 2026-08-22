@@ -29,12 +29,13 @@ versioned run summaries.
 - **Preprint:** <https://www.biorxiv.org/content/10.64898/2026.07.28.741211v1>
 - **Reproducible paper analysis:** <https://github.com/COMBINE-lab/seqproc-paper-analysis>
 
-After the coordinated seqproc and ANTISEQUENCE 0.1.0 crates described by this
-release are published, install their locked dependency set with
-`cargo install --locked seqproc`. Until then, use the reviewed repository
-checkout and `cargo install --locked --path .`; the checked-in local
-configuration tunes that build for the current host, so do not redistribute it
-as a generic binary.
+Install the released crate and its locked dependency set with
+`cargo install --locked seqproc`. Checksummed prebuilt archives and a shell
+installer are published on the
+[GitHub Releases page](https://github.com/COMBINE-lab/seqproc/releases).
+For development, use the repository checkout and
+`cargo install --locked --path .`; its checked-in local configuration tunes
+that build for the current host, so do not redistribute it as a generic binary.
 
 ## A first geometry
 
@@ -82,7 +83,9 @@ shards lazily and verifies their record counts at every shard boundary.
 `-` denotes stdin for one input lane and stdout for one output lane. For
 example, `seqproc run --geom protocol.geom --read1 - --out1 -` is a clean FASTQ
 filter in a Unix pipeline; diagnostics remain on stderr. Add `--stdout-gzip`
-when stdout itself should be gzip-compressed.
+when stdout itself should be gzip-compressed. If the downstream stdout consumer
+closes early, seqproc exits 0 without a diagnostic; ENOSPC, quota exhaustion,
+and file or named-pipe output failures remain nonzero.
 
 For FASTQ files that alternate complete fragment segments in one stream, use
 `--interleaved-input`. Its arity is derived from the geometry, and ordered file
@@ -130,10 +133,11 @@ template is used. The [EFGDL 2 guide](https://combine-lab.github.io/seqproc/efgd
 documents the complete syntax, quality behavior, migration boundary, and a
 runnable paired-end example.
 
-## Install from source
+## Installation
 
-Tagged binary releases are planned. During the pre-release phase, build the
-pinned dependency set from source with Rust 1.88 or newer:
+Use the checksummed archive or shell installer from the
+[latest GitHub release](https://github.com/COMBINE-lab/seqproc/releases/latest),
+or build the pinned dependency set from source with Rust 1.88 or newer:
 
 ```console
 git clone https://github.com/COMBINE-lab/seqproc.git

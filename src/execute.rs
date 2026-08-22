@@ -87,17 +87,59 @@ fn is_fastq_input_error(error: &antisequence::errors::Error) -> bool {
     })
 }
 
-fn is_broken_pipe_error(error: &antisequence::errors::Error) -> bool {
+#[derive(Debug)]
+struct StdoutPipeClosed;
+
+impl std::fmt::Display for StdoutPipeClosed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("stdout consumer closed its pipe")
+    }
+}
+
+impl std::error::Error for StdoutPipeClosed {}
+
+fn tag_stdout_error(error: io::Error) -> io::Error {
+    if error.kind() == io::ErrorKind::BrokenPipe {
+        io::Error::new(io::ErrorKind::BrokenPipe, StdoutPipeClosed)
+    } else {
+        error
+    }
+}
+
+fn is_stdout_broken_pipe_error(error: &antisequence::errors::Error) -> bool {
     graph_error_contains(error, &|error| {
         let source = match error {
             antisequence::errors::Error::BytesIo(source) => source.as_ref(),
             antisequence::errors::Error::FileIo { source, .. } => source.as_ref(),
             _ => return false,
         };
-        source
-            .downcast_ref::<io::Error>()
-            .is_some_and(|error| error.kind() == io::ErrorKind::BrokenPipe)
+        source.downcast_ref::<io::Error>().is_some_and(|error| {
+            error.kind() == io::ErrorKind::BrokenPipe
+                && error
+                    .get_ref()
+                    .is_some_and(|source| source.is::<StdoutPipeClosed>())
+        })
     })
+}
+
+struct StdoutWriter<W> {
+    inner: W,
+}
+
+impl<W> StdoutWriter<W> {
+    fn new(inner: W) -> Self {
+        Self { inner }
+    }
+}
+
+impl<W: Write> Write for StdoutWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.inner.write(buffer).map_err(tag_stdout_error)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush().map_err(tag_stdout_error)
+    }
 }
 
 fn configure_fastq_output(
@@ -203,7 +245,11 @@ fn writer_for_target(
             }
         }
         OutputTarget::Stdout => {
-            let writer = BufWriter::new(io::stdout());
+            // Preserve the output target through type-erased ANTISEQUENCE
+            // writers. Only an EPIPE tagged here is normal Unix stdout early
+            // termination; an EPIPE from a file/FIFO remains an execution
+            // failure even in a multi-output run that also uses stdout.
+            let writer = StdoutWriter::new(BufWriter::new(io::stdout()));
             if stdout_gzip {
                 Ok(Box::new(FinishingGzipWriter::new(writer, gzip_level)))
             } else {
@@ -1021,8 +1067,8 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
         ) {
             return SeqprocError::ExecutionPlanning { source };
         }
-        if is_broken_pipe_error(&source) {
-            return SeqprocError::BrokenPipe {
+        if is_stdout_broken_pipe_error(&source) {
+            return SeqprocError::StdoutBrokenPipe {
                 operation: "FASTQ output",
             };
         }
@@ -2072,6 +2118,25 @@ pub fn read_pairs_to_fifo<'a: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_tagged_stdout_epipe_is_a_normal_pipe_closure() {
+        let tagged = antisequence::errors::Error::BytesIo(Box::new(tag_stdout_error(
+            io::Error::from(io::ErrorKind::BrokenPipe),
+        )));
+        assert!(is_stdout_broken_pipe_error(&tagged));
+
+        let untagged = antisequence::errors::Error::BytesIo(Box::new(io::Error::from(
+            io::ErrorKind::BrokenPipe,
+        )));
+        assert!(!is_stdout_broken_pipe_error(&untagged));
+
+        let file_epipe = antisequence::errors::Error::FileIo {
+            file: "named.pipe".to_owned(),
+            source: Box::new(io::Error::from(io::ErrorKind::BrokenPipe)),
+        };
+        assert!(!is_stdout_broken_pipe_error(&file_epipe));
+    }
 
     #[test]
     fn test_compile_geom_simple_barcode_read() {
