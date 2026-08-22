@@ -5,10 +5,11 @@
 `baa4bc2` (dev)
 **Final re-review packet prepared:** 2026-08-22
 **Final implementation boundary:** seqproc
-`456695354771c9058be8a55e35210ed1f0904594`, including an exact dependency
+`ef4dee75b79efd836e8d63e11cac02ac9193da69`, including an exact dependency
 pin to ANTISEQUENCE `773e1ced7bae6170b1358a2d2198f1c152109624`.
-Subsequent seqproc commits change documentation and source comments only; they
-do not change executable behavior, manifests, or lockfiles.
+This boundary includes the final demultiplexed-output provenance correction;
+subsequent review-report updates do not change executable behavior, manifests,
+or lockfiles.
 **Scope:** independent technical review requested by
 `planning/FIRST_RELEASE_REVIEW_HANDOFF.md`, covering semantics, correctness,
 error handling, I/O, optimizer soundness, packaging, and portability.
@@ -33,7 +34,7 @@ The implementation work is concentrated in these commits:
 
 | Repository | Concern-fix commits | Release/architecture commits |
 | --- | --- | --- |
-| seqproc | `1fca512`, `6b6da77`, `c49a90e`, `1925425`, final blocker repair `2c26678`, second-pass closure `9ed2d87` | `1141162`, final ANTISEQUENCE pin/pre-tag cleanup `770499d`, cargo-dist-compatible baseline selection `388777b`, exact final pin `4566953` |
+| seqproc | `1fca512`, `6b6da77`, `c49a90e`, `1925425`, final blocker repair `2c26678`, second-pass closure `9ed2d87`, demux-provenance correction `ef4dee7` | `1141162`, final ANTISEQUENCE pin/pre-tag cleanup `770499d`, cargo-dist-compatible baseline selection `388777b`, exact final pin `4566953` |
 | ANTISEQUENCE | `5b30b5c`, `053b924`, `5672682`, `46065aa`, `5468b3f`, `0c16ed2`, sticky finalization `3617472`, hot-path refinement `773e1ce` | `477462b`, `1d1c10d`, final review cleanup `272ba77` |
 
 The previously hosted fast paths were green before the final local blocker
@@ -43,9 +44,9 @@ closure; the final `dev` pushes will be checked again by the next review pass:
   [32552480133](https://github.com/COMBINE-lab/ANTISEQUENCE/actions/runs/32552480133)
   on `b5fecee`.
 - seqproc Fast CI run
-  [32552812463](https://github.com/COMBINE-lab/seqproc/actions/runs/32552812463)
-  on report-only head `fa9a34a`, containing the exact `4e0de31`
-  implementation and lockfile; the job completed in 12m38s.
+  [32587272717](https://github.com/COMBINE-lab/seqproc/actions/runs/32587272717)
+  on pre-correction head `e3eafa0`; the final `ef4dee7` correction is covered
+  by the local exact-boundary gates below and awaits the final pushed-head CI.
 
 ### Decision ownership
 
@@ -475,10 +476,10 @@ repository blocks tagging.
 **Release-candidate boundary.** ANTISEQUENCE `dev` at
 `773e1ced7bae6170b1358a2d2198f1c152109624` (the reviewer's sticky-finalization
 and read-only-polling implementation `3617472`, plus the maintainer's
-`Relaxed`-load refinement). seqproc `dev` at the commit series ending with
-`9ed2d87` (output-topology and provenance closures) and `4566953` (the exact
-dependency pin); commits after `4566953` are documentation-only and change no
-compiled source, manifest, or lockfile.
+`Relaxed`-load refinement). seqproc `dev` at
+`ef4dee75b79efd836e8d63e11cac02ac9193da69`, including `9ed2d87`
+(output-topology and provenance closures), `4566953` (the exact dependency
+pin), and the final effective demultiplexing-topology correction.
 
 **How the second-pass blockers closed.** The work was completed
 cooperatively: the maintainer fixed blockers 1 (SIMD-gate arity) and 2
@@ -495,12 +496,12 @@ independently reviewed by the other — no fix in this pass shipped unreviewed.
 | ANTISEQUENCE lib tests, baseline + accelerated-gzip, `-D warnings` | 399/399 (includes new sticky-finish and failed-run-aggregation regressions) |
 | ANTISEQUENCE lib tests, release-SIMD + accelerated-gzip, `-D warnings` | 401/401 |
 | ANTISEQUENCE fmt / clippy all-targets | clean / zero errors |
-| seqproc full `--no-fail-fast` suite at the final pin | all suites green, including 30/30 CLI-workflow tests (demux-conflict and exact-unassigned-arity regressions included) |
+| seqproc full `--no-fail-fast` suite at the final pin | all suites green, including 31/31 CLI-workflow tests (demux-conflict, exact-unassigned-arity, and effective demux-topology regressions included) |
 | `scripts/verify_simd_equivalence.sh`, executed end to end | 9/9 fixtures byte-identical between SSE2 and x86-64-v3/AVX2, both lanes compared for the paired untransformed fixtures |
 | `cargo fmt --check`, `cargo dist plan`, `cargo dist generate --check` | clean / exit 0 / exit 0 |
 | Warning-denied seqproc all-target clippy | clean after all second-pass source and dependency-pin changes |
 | Explicit target-feature provenance probe | split `-C target-cpu=x86-64-v3` plus joined `-Ctarget-feature=+aes,-sse4.2` records `aes`, removes `sse4.2`, and retains the CPU preset's remaining features |
-| Final cargo-dist x86_64 Linux archive | rebuilt under the fixed release config; SHA-256 `4207329e9e2b3ecfe7dcd9cfd0d3548e20c8441b0bfe4747a82ec451f807862c`; packaged binary reports x86-64-v3/AVX2 provenance |
+| Final cargo-dist x86_64 Linux archive | rebuilt from `ef4dee7` under the fixed release config; SHA-256 `d4def76f7069aed934665322d169ab7e654e8c7a2fc3c50895781f64691af023`; packaged binary reports x86-64-v3/AVX2 provenance |
 | ELF ISA note in that packaged binary | present, mask `0x7`, `verify_x86_64_v3_elf.py` passes; absent (as expected and documented) under rust-lld local builds |
 | Failed-run output preservation | re-verified: pre-existing outputs untouched by input-stage failures; finalization errors aggregated, sticky on repeat |
 | crates.io namespaces | both still 404/unclaimed |
@@ -539,6 +540,41 @@ as far as the tests reached) was closed in this pass by executing the actual
 release gates — the equivalence script, the dist checks, the ELF verification
 — rather than the test suite alone; the release procedure should preserve
 that habit end to end.
+
+### Maintainer correction after the final assessment: effective demultiplexing topology
+
+The final audit found one non-blocking but misleading provenance case. A
+demultiplexed run creates sample-dependent path writers dynamically, while
+the fixed-output validation path represents an omitted `--outN` list with
+placeholder `Discard` targets. `RunReport.output_topology` and the versioned
+summary had reused those placeholders. Consequently, a paired demultiplexed
+run could correctly emit two FASTQ lanes while reporting `output_arity = 2`
+and `output_topology = ["discard"]`.
+
+Commit `ef4dee7` separates configured fixed-output targets from the effective
+reported topology. Fixed-output runs continue to report their exact configured
+target kinds. Demultiplexed runs now report one `path` target for every emitted
+read lane, so the same paired run reports `["path", "path"]` in both the Rust
+`RunReport` and the machine-readable `SeqprocStats` path. This deliberately
+does not enumerate sample names or generated filenames: their cardinality and
+values are data-dependent, while `output_topology` is defined as a list of
+sink kinds rather than concrete destinations.
+
+The correction retains summary schema 1.13.0. It neither changes the JSON
+shape nor adds a vocabulary value—`path` already denotes a filesystem-backed
+sink—so a schema bump or a new `dynamic-path` enum would add compatibility
+cost without improving the field's documented meaning. The writer graph,
+demultiplexing lookup, filenames, FASTQ bytes, and performance-sensitive read
+path are unchanged; only the post-run provenance vector is corrected.
+
+The new paired-end CLI regression executes a real barcode-to-sample routing,
+asserts that `sample_R1.fastq` and `sample_R2.fastq` are created, validates the
+summary against schema 1.13.0, and requires `output_arity = 2` with
+`output_topology = ["path", "path"]`. On the exact `ef4dee7` boundary,
+formatting and warning-denied all-target clippy pass, all 31 CLI workflow tests
+pass, and the exhaustive all-target source/benchmark gate completes without a
+failure. The release-profile artifact was rebuilt from this boundary; its
+SHA-256 and ELF/provenance checks are recorded above and below.
 
 ### Critical analysis of the blocker-6 cache design (2026-08-22, reviewer)
 
@@ -789,14 +825,14 @@ this host:
 | ANTISEQUENCE baseline all-target tests | **397/397 pass**, locked, at exact final head `773e1ce` |
 | ANTISEQUENCE release-SIMD/accelerated all-target tests | **401/401 pass**, locked, using the mutually exclusive AVX2 backend at exact final head `773e1ce` |
 | ANTISEQUENCE clippy/docs/downstream package gate | Warning-denied clippy and docs pass; README doc-test passes; the packaged crate builds and runs from an extracted clean-room downstream project |
-| seqproc complete source regression run | **Pass** on the final source/dependency graph: 278 library, 30 CLI workflow, 58 compile, 1 differential, 6 error-contract, 2 error-handling, 12 layout-algebra, 12 lexer, 69 paper-chemistry, and 31 parser tests, plus anchor-set, annotation, benchmark-regression, and error suites and both Criterion benchmark binaries. The chemistry consistency case completed in 186.88 s rather than being skipped. Exact all-features metadata, cargo-dist plan/generation, and warning-denied all-target clippy pass at implementation boundary `4566953`. |
+| seqproc complete source regression run | **Pass** on the final source/dependency graph: 278 library, 31 CLI workflow, 58 compile, 1 differential, 6 error-contract, 2 error-handling, 12 layout-algebra, 12 lexer, 69 paper-chemistry, and 31 parser tests, plus anchor-set, annotation, benchmark-regression, and error suites and both Criterion benchmark binaries. The chemistry consistency case completed in 187.37 s rather than being skipped. Formatting and warning-denied all-target clippy pass at implementation boundary `ef4dee7`. |
 | seqproc SIMD source gate | The tuned default suite passes against exact ANTISEQUENCE `773e1ce`; the explicit `antisequence/baseline-simd` compatibility build is warning-denied and mutually exclusive with the default. The exhaustive gate was rerun after the strict-output repair: **9/9** checked-in FASTQ fixtures are byte-identical, and both lanes are compared for the three paired pass-through fixtures. A local passthrough feature was rejected after an empirical cargo-dist metadata failure, as documented in the pre-tag disposition table. |
-| seqproc cargo-dist profile smoke | The optimized `dist` profile rebuilt successfully from implementation boundary `4566953` and exact ANTISEQUENCE pin `773e1ce` (later seqproc changes are documentation/comments only). Archive SHA-256 is `4207329e9e2b3ecfe7dcd9cfd0d3548e20c8441b0bfe4747a82ec451f807862c`. The packaged executable reports target `x86_64-unknown-linux-gnu`, compiler CPU target/floor `x86-64-v3`, SIMD backend `x86-avx2`, and the expected v3 target features; the independent ELF parser reads ISA-needed mask `0x7`. |
+| seqproc cargo-dist profile smoke | The optimized `dist` profile rebuilt successfully from implementation boundary `ef4dee7` and exact ANTISEQUENCE pin `773e1ce`. Archive SHA-256 is `d4def76f7069aed934665322d169ab7e654e8c7a2fc3c50895781f64691af023`. The packaged executable reports target `x86_64-unknown-linux-gnu`, compiler CPU target/floor `x86-64-v3`, SIMD backend `x86-avx2`, and the expected v3 target features; the independent ELF parser reads ISA-needed mask `0x7`. |
 | seqproc clippy/docs/MSRV | Warning-denied all-target clippy and docs pass; all-target check passes on Rust 1.88 |
 | Formatting and manifests | `cargo fmt --check`, `git diff --check`, locked metadata (including seqproc all-features), `cargo dist plan`, and `cargo dist generate --check` pass |
 | Package boundaries | seqproc lists exactly 87 intended files (including the new build script/provenance module); ANTISEQUENCE lists 67. Planning documents, the Astro site, generated dependencies, and build output do not enter either source package |
 | Documentation site | Astro production build passes under Node 22.22.3 (20 generated pages plus search index) |
-| Hosted fast CI before final cleanup | ANTISEQUENCE run `32552480133` passed on `b5fecee`; seqproc run `32552812463` passed on report-only head `fa9a34a`. The next reviewer should confirm the newly pushed final implementation heads `773e1ce` and `4566953` rather than treating these older hosted runs as final-pin evidence. |
+| Hosted fast CI before final demux-provenance correction | ANTISEQUENCE run `32585043975` passed on final head `773e1ce`; seqproc run `32587272717` passed on pre-correction head `e3eafa0`. The final reviewer should confirm the pushed `ef4dee7` seqproc boundary; the exact correction is already covered by the local gates in this table. |
 
 The only package gate that cannot be completed before publication ordering is
 seqproc's registry-resolved `cargo publish --dry-run`: its manifest correctly
@@ -832,7 +868,7 @@ RUSTFLAGS='-D warnings' RUSTDOCFLAGS='-D warnings' \
 cargo package --locked --allow-dirty --list
 ```
 
-From seqproc implementation boundary `456695354771c9058be8a55e35210ed1f0904594`
+From seqproc implementation boundary `ef4dee75b79efd836e8d63e11cac02ac9193da69`
 (or the later documentation-only `dev` head):
 
 ```bash
