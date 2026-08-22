@@ -5,11 +5,11 @@
 `baa4bc2` (dev)
 **Final re-review packet prepared:** 2026-08-22
 **Final implementation boundary:** seqproc
-`ef4dee75b79efd836e8d63e11cac02ac9193da69`, including an exact dependency
+`590ac0efb71d7b2ddcc078d0ff3eb5958e1d29f5`, including an exact dependency
 pin to ANTISEQUENCE `773e1ced7bae6170b1358a2d2198f1c152109624`.
-This boundary includes the final demultiplexed-output provenance correction;
-subsequent review-report updates do not change executable behavior, manifests,
-or lockfiles.
+This boundary includes the final demultiplexed-output provenance correction
+and the user-approved stdout broken-pipe policy. Only an identity-tagged
+stdout `EPIPE` returns success; all other output failures remain nonzero.
 **Scope:** independent technical review requested by
 `planning/FIRST_RELEASE_REVIEW_HANDOFF.md`, covering semantics, correctness,
 error handling, I/O, optimizer soundness, packaging, and portability.
@@ -34,7 +34,7 @@ The implementation work is concentrated in these commits:
 
 | Repository | Concern-fix commits | Release/architecture commits |
 | --- | --- | --- |
-| seqproc | `1fca512`, `6b6da77`, `c49a90e`, `1925425`, final blocker repair `2c26678`, second-pass closure `9ed2d87`, demux-provenance correction `ef4dee7` | `1141162`, final ANTISEQUENCE pin/pre-tag cleanup `770499d`, cargo-dist-compatible baseline selection `388777b`, exact final pin `4566953` |
+| seqproc | `1fca512`, `6b6da77`, `c49a90e`, `1925425`, final blocker repair `2c26678`, second-pass closure `9ed2d87`, demux-provenance correction `ef4dee7`, stdout policy `590ac0e` | `1141162`, final ANTISEQUENCE pin/pre-tag cleanup `770499d`, cargo-dist-compatible baseline selection `388777b`, exact final pin `4566953` |
 | ANTISEQUENCE | `5b30b5c`, `053b924`, `5672682`, `46065aa`, `5468b3f`, `0c16ed2`, sticky finalization `3617472`, hot-path refinement `773e1ce` | `477462b`, `1d1c10d`, final review cleanup `272ba77` |
 
 The final implementation boundaries have independent hosted fast-path
@@ -63,6 +63,8 @@ fixing maintainer made silently:
 | Official x86 binary floor | Explicitly deferred to the user. The user selected x86-64-v3/AVX2 as the floor for official seqproc x86 artifacts. These artifacts are labeled and guarded at startup; they are not described as portable. |
 | Lower-floor and multiversion strategy | The user approved retaining a separately buildable/tested baseline artifact rather than adding runtime dispatch now. `cargo-multivers` is deferred until measured v3-versus-v4 gains justify added release complexity. |
 | Fixed release CPU targets | Presented as part of the architecture plan and approved by the user: x86-64-v3 for x86 Linux/macOS, Neoverse N1 for Linux aarch64, and Apple A14 for macOS aarch64. Local repository builds use `target-cpu=native`. |
+| First public version | Deferred until final release approval. The user selected coordinated version `0.1.0` for ANTISEQUENCE and seqproc. |
+| Stdout broken-pipe policy | Deferred until final release approval. The user selected silent exit 0 only for a closed stdout pipe; ENOSPC, quota, file/named-pipe, and every other output failure remain nonzero. |
 
 Correctness repairs—EOF lockstep, fallible graph finalization, matcher
 semantics, AVX2 candidate enumeration, optimizer effects, panic removal, and
@@ -70,15 +72,13 @@ typed validation—were not treated as policy choices. They were resolved in
 favor of preserving documented semantics and making failures explicit.
 
 Two publication policies were **not** inferred from the architecture approval
-and remain for the user to confirm before publishing:
+and were subsequently confirmed by the user before publishing:
 
-1. whether stdout `EPIPE` should be Unix-success while every file/output error
-   remains nonzero; and
-2. whether the coordinated first public version should be `0.1.0`.
+1. stdout `EPIPE` is Unix-success only when the failing target is stdout; and
+2. the coordinated first public version is `0.1.0`.
 
-These do not leave a silent-correctness path open, but they should remain on
-the release checklist rather than being decided by a reviewer or release
-script.
+The implementation tags stdout writers before type erasure, so file or named
+pipe `EPIPE` cannot inherit the stdout success policy in a mixed-output run.
 
 ---
 
@@ -469,17 +469,18 @@ silent data-loss or incorrect-match path in the supported seqproc workflow.
 
 ### Final release-readiness assessment (2026-08-22, reviewer)
 
-**Verdict: READY FOR RELEASE**, pending only the two user-owned policy
-decisions and the mechanical release procedure. No open finding in either
-repository blocks tagging.
+**Verdict: READY FOR RELEASE.** The two user-owned policy decisions were
+subsequently resolved as recorded above; only the mechanical release procedure
+remains. No open finding in either repository blocks tagging.
 
 **Release-candidate boundary.** ANTISEQUENCE `dev` at
 `773e1ced7bae6170b1358a2d2198f1c152109624` (the reviewer's sticky-finalization
 and read-only-polling implementation `3617472`, plus the maintainer's
 `Relaxed`-load refinement). seqproc `dev` at
-`ef4dee75b79efd836e8d63e11cac02ac9193da69`, including `9ed2d87`
+`590ac0efb71d7b2ddcc078d0ff3eb5958e1d29f5`, including `9ed2d87`
 (output-topology and provenance closures), `4566953` (the exact dependency
-pin), and the final effective demultiplexing-topology correction.
+pin), the final effective demultiplexing-topology correction, and the
+identity-tagged stdout `EPIPE` policy.
 
 **How the second-pass blockers closed.** The work was completed
 cooperatively: the maintainer fixed blockers 1 (SIMD-gate arity) and 2
@@ -496,7 +497,7 @@ independently reviewed by the other — no fix in this pass shipped unreviewed.
 | ANTISEQUENCE lib tests, baseline + accelerated-gzip, `-D warnings` | 399/399 (includes new sticky-finish and failed-run-aggregation regressions) |
 | ANTISEQUENCE lib tests, release-SIMD + accelerated-gzip, `-D warnings` | 401/401 |
 | ANTISEQUENCE fmt / clippy all-targets | clean / zero errors |
-| seqproc full `--no-fail-fast` suite at the final pin | all suites green, including 31/31 CLI-workflow tests (demux-conflict, exact-unassigned-arity, and effective demux-topology regressions included) |
+| seqproc full `--no-fail-fast` suite at the final pin | all suites green, including 279/279 library tests and 32/32 CLI-workflow tests (stdout-only `EPIPE`, `/dev/full`, demux-conflict, exact-unassigned-arity, and effective demux-topology regressions included) |
 | `scripts/verify_simd_equivalence.sh`, executed end to end | 9/9 fixtures byte-identical between SSE2 and x86-64-v3/AVX2, both lanes compared for the paired untransformed fixtures |
 | `cargo fmt --check`, `cargo dist plan`, `cargo dist generate --check` | clean / exit 0 / exit 0 |
 | Warning-denied seqproc all-target clippy | clean after all second-pass source and dependency-pin changes |
@@ -507,12 +508,16 @@ independently reviewed by the other — no fix in this pass shipped unreviewed.
 | Failed-run output preservation | re-verified: pre-existing outputs untouched by input-stage failures; finalization errors aggregated, sticky on repeat |
 | crates.io namespaces | both still 404/unclaimed |
 
+The final stdout-policy change was additionally checked with warning-denied
+all-target clippy and the complete locked all-target test/benchmark gate. The
+CLI test closes the only reader of a real child-process stdout pipe and
+requires exit 0 with empty stderr; the pre-existing `/dev/full` regression
+continues to require a nonzero exit. A unit regression also proves that raw
+`BytesIo`/`FileIo` `EPIPE` values are not classified as stdout closure.
+
 **What remains before the tag — all procedural, none code:**
 
-1. **Two user decisions** (unchanged): stdout `EPIPE` exit-code policy
-   (recommendation stands: exit 0 for stdout EPIPE only), and confirmation of
-   `0.1.0` as the coordinated first version (recommendation: yes).
-2. **The release procedure itself**, in the order the scripts already
+1. **The release procedure itself**, in the order the scripts already
    encode: merge both reviewed `dev` branches to `main`; rerun the locked
    gates on the merge commits; publish ANTISEQUENCE and wait for registry
    resolution; run seqproc's registry-resolved `cargo publish --dry-run`
@@ -522,7 +527,7 @@ independently reviewed by the other — no fix in this pass shipped unreviewed.
    artifacts; then the Bioconda recipe per the handoff (portable build:
    `--no-default-features --features antisequence/baseline-simd` with
    neutralized rustflags).
-3. **Known accepted limitations to carry into the release notes**, already
+2. **Known accepted limitations to carry into the release notes**, already
    documented in changelogs/docs: a graph executes at most once (no
    retry-after-failure); an output the run began writing is truncated by that
    streaming even if the run later fails; the ELF loader enforcement of the
