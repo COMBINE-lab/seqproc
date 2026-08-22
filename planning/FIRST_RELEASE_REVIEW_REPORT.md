@@ -76,8 +76,9 @@ The list immediately above records the state at reviewer handoff. The
 maintainer pass subsequently addressed the implementation findings rather than
 deleting that historical record. The final ANTISEQUENCE review-fix head is
 `a10d990ed5c66dd8a4edb61b36dc3cce74543238`; seqproc pins that exact revision.
-The seqproc release-candidate SHA will be recorded here after its final gates
-and commit.
+The seqproc implementation review-fix head is
+`1925425b0ace241be09e8d70880104979c3228a5`; the report-only follow-up commit
+that records this SHA does not alter compiled source, manifests, or tests.
 
 **P0 resolution:**
 

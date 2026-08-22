@@ -898,9 +898,9 @@ These are navigation aids, not a substitute for reviewing the full diffs.
 
 - **Exact release heads:** ANTISEQUENCE's review-fix head is
   `a10d990ed5c66dd8a4edb61b36dc3cce74543238`; seqproc's final implementation
-  SHA is recorded by the report-only follow-up commit in
-  `planning/FIRST_RELEASE_REVIEW_REPORT.md`. Merge those reviewed `dev` heads
-  into `main` before tagging.
+  head is `1925425b0ace241be09e8d70880104979c3228a5`. The report-only follow-up
+  commit does not alter compiled source, manifests, or tests. Merge those
+  reviewed `dev` heads into `main` before tagging.
 - **Version and namespaces:** explicitly approve `0.1.0` (or choose another
   version) and reconfirm both crates.io names immediately before publishing.
 - **Publication ordering:** publish and verify ANTISEQUENCE first. Then update
