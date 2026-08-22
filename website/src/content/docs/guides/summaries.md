@@ -73,7 +73,9 @@ Schema 1.8.0 adds `shard_read_counts`, nested first by biological read lane and
 then by the ordered FASTQ shard within that lane.
 
 Schema 1.9.0 adds `input_topology` and `output_topology`. These report only the
-target kinds (`path`, `stdin`, `stdout`, or `discard`), not path names.
+target kinds (`path`, `stdin`, `stdout`, or `discard`), not path names. For
+demultiplexing, the summary reports one `path` entry per emitted read lane;
+sample-dependent filenames remain intentionally outside the report.
 
 Schema 1.10.0 adds `input_layout` (`separate` or `interleaved`).
 

@@ -1971,3 +1971,48 @@ fn demultiplexing_rejects_primary_output_targets_instead_of_ignoring_them() {
     assert!(!primary.exists());
     assert!(!demux_dir.exists());
 }
+
+#[test]
+fn demultiplexed_summary_reports_one_path_target_per_output_lane() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("paired.geom");
+    let read1 = directory.path().join("r1.fastq");
+    let read2 = directory.path().join("r2.fastq");
+    let map = directory.path().join("samples.tsv");
+    let summary = directory.path().join("summary.json");
+    let demux_dir = directory.path().join("demux");
+    fs::write(&geometry, "1{r:}\n2{b<bc1>[4]r:}\n").unwrap();
+    fs::write(&read1, "@r/1\nAAAA\n+\nIIII\n").unwrap();
+    fs::write(&read2, "@r/2\nACGTTT\n+\nIIIIII\n").unwrap();
+    fs::write(&map, "ACGT\tsample\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            read1.to_str().unwrap(),
+            "--read2",
+            read2.to_str().unwrap(),
+            "--demux-map",
+            map.to_str().unwrap(),
+            "--demux-out-dir",
+            demux_dir.to_str().unwrap(),
+            "--summary",
+            summary.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(demux_dir.join("sample_R1.fastq").exists());
+    assert!(demux_dir.join("sample_R2.fastq").exists());
+    let report: Value = serde_json::from_slice(&fs::read(summary).unwrap()).unwrap();
+    assert_current_summary_shape(&report);
+    assert_eq!(report["output_arity"], 2);
+    assert_eq!(
+        report["output_topology"],
+        serde_json::json!(["path", "path"])
+    );
+}

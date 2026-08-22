@@ -753,6 +753,19 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
     if config.stdout_gzip && stdout_targets == 0 {
         return Err(OutputTopologyError::StdoutGzipWithoutStdout.into());
     }
+    // Fixed outputs can report their configured target kinds directly. Demux
+    // outputs are instead created dynamically from the sample-map attribute,
+    // but still emit one path-backed FASTQ per output lane. Keep provenance
+    // aligned with the effective writer graph rather than leaking the
+    // placeholder Discard targets used when no fixed --outN paths are given.
+    let reported_output_topology = if config.demux.is_some() {
+        vec!["path".to_owned(); output_arity]
+    } else {
+        primary_targets
+            .iter()
+            .map(|target| target.kind().to_owned())
+            .collect()
+    };
 
     let stdin_sources = input_lanes
         .iter()
@@ -1034,7 +1047,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
                 input_layout,
                 input_arity: input_lane_count,
                 output_arity,
-                output_topology: &primary_targets,
+                output_topology: &reported_output_topology,
             },
         )
     });
@@ -1070,10 +1083,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
         input_layout: input_layout.to_owned(),
         input_arity: input_lane_count,
         output_arity,
-        output_topology: primary_targets
-            .iter()
-            .map(|target| target.kind().to_owned())
-            .collect(),
+        output_topology: reported_output_topology,
         pipeline,
         statistics,
     })
@@ -1089,7 +1099,7 @@ struct RuntimeProvenance<'a> {
     input_layout: &'a str,
     input_arity: usize,
     output_arity: usize,
-    output_topology: &'a [OutputTarget],
+    output_topology: &'a [String],
 }
 
 fn statistics_from_graph(
@@ -1270,10 +1280,7 @@ fn statistics_from_graph(
         input_layout: input_layout.to_owned(),
         input_arity,
         output_arity,
-        output_topology: output_topology
-            .iter()
-            .map(|target| target.kind().to_owned())
-            .collect(),
+        output_topology: output_topology.to_vec(),
         n_fastqs,
         n_processed,
         n_reads_max,
