@@ -577,6 +577,25 @@ pass, and the exhaustive all-target source/benchmark gate completes without a
 failure. The release-profile artifact was rebuilt from this boundary; its
 SHA-256 and ELF/provenance checks are recorded above and below.
 
+#### Reviewer confirmation of the final correction (2026-08-22)
+
+Independently verified on report head `ebf8aa3`: the correction is exactly as
+described — a post-run provenance fix that separates configured fixed-output
+targets from the effective reported topology, touching no writer graph, demux
+routing, or read-path code. The no-schema-bump reasoning was checked against
+the schema itself: `output_topology` in 1.13.0 is an unconstrained-length
+array over the enum `["path", "stdout", "discard"]`, so `["path", "path"]`
+validates without any change and the field's documented meaning (sink kinds,
+not destinations) is preserved. Reproduced locally on `ebf8aa3`:
+`cargo fmt --check` clean, the full `--no-fail-fast` suite green in every
+crate suite (278 library, 31/31 CLI-workflow including the new demux-topology
+regression, 69 paper-chemistry), and clippy with zero errors. ANTISEQUENCE
+remains at the previously verified `773e1ce` with an unchanged lockfile.
+The final-assessment verdict above — **READY FOR RELEASE**, pending the two
+user decisions and the mechanical release procedure — stands unchanged on
+this boundary, and no further review pass is required before the merge to
+`main`.
+
 ### Critical analysis of the blocker-6 cache design (2026-08-22, reviewer)
 
 Questions raised: is the sparse-map fix optimal; is a fresh map created per
