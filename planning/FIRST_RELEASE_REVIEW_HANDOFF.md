@@ -556,9 +556,9 @@ preserving compatibility with headerless EFGDL 1 geometries.
 #### Relevant changes
 
 - seqproc commits: `631ba81`, `f6fafe2`, `e13f8dd`, `b2a6846`, `348b439`,
-  `032a1ee`, `f634449`, `769be4a`, `1141162`, `85c3d21`.
+  `032a1ee`, `f634449`, `769be4a`, `1141162`, `4e0de31`.
 - ANTISEQUENCE commits: `da29107`, `c799281`, `5efba5a`, `477462b`,
-  `1d1c10d`, `a835e66`.
+  `1d1c10d`, `a835e66`, `b5fecee`.
 - Release scripts: both repositories' `scripts/bump_and_publish.sh`.
 - seqproc release files: `dist-workspace.toml`, `.cargo/config.toml`,
   `.cargo/config-release.toml`, `.cargo/config-baseline.toml`,
@@ -904,10 +904,11 @@ These are navigation aids, not a substitute for reviewing the full diffs.
   deferred pending measured v3-versus-v4 benefit.
 
 - **Exact release implementations:** ANTISEQUENCE is
-  `a835e66aa8978a0e4ab3261286bf87e58b56f761`; seqproc's pinned
-  implementation is `85c3d21c2f0160f874346079b6a24ec733205d54`. The report-only
-  follow-up that records those SHAs does not alter compiled source, manifests,
-  or tests. Merge the reviewed `dev` heads into `main` before tagging.
+  `b5fecee6feb19f53da3dfd0dcd7fa56ab8023612`; seqproc's pinned
+  implementation is `4e0de317bdf82a0c9b52dd97213a6e8ba7a5ed03`. The final
+  ANTISEQUENCE commit is workflow-only, and the report-only follow-up that
+  records these SHAs does not alter compiled source, manifests, or tests.
+  Merge the reviewed `dev` heads into `main` before tagging.
 - **Version and namespaces:** explicitly approve `0.1.0` (or choose another
   version) and reconfirm both crates.io names immediately before publishing.
 - **Publication ordering:** publish and verify ANTISEQUENCE first. Then update
