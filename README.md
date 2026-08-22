@@ -29,10 +29,12 @@ versioned run summaries.
 - **Preprint:** <https://www.biorxiv.org/content/10.64898/2026.07.28.741211v1>
 - **Reproducible paper analysis:** <https://github.com/COMBINE-lab/seqproc-paper-analysis>
 
-After the crate is published, install its locked dependency set with
-`cargo install --locked seqproc`. For a repository checkout, use
-`cargo install --locked --path .`; the checked-in local configuration tunes
-that build for the current host, so do not redistribute it as a generic binary.
+After the coordinated seqproc and ANTISEQUENCE 0.1.0 crates described by this
+release are published, install their locked dependency set with
+`cargo install --locked seqproc`. Until then, use the reviewed repository
+checkout and `cargo install --locked --path .`; the checked-in local
+configuration tunes that build for the current host, so do not redistribute it
+as a generic binary.
 
 ## A first geometry
 

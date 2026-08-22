@@ -80,8 +80,10 @@ pub enum OutputTopologyError {
         "{supplied} primary output targets were supplied, but the geometry emits {required} reads"
     )]
     ArityMismatch { required: usize, supplied: usize },
-    #[error("{supplied} unassigned output targets were supplied for {input_arity} input lanes")]
-    TooManyUnassigned { supplied: usize, input_arity: usize },
+    #[error("unassigned output arity is {supplied}, but input arity is {input_arity}")]
+    UnassignedArityMismatch { supplied: usize, input_arity: usize },
+    #[error("primary FASTQ outputs cannot be combined with demultiplexing; use --demux-out-dir")]
+    PrimaryOutputsWithDemultiplexing,
     #[error("at most one FASTQ output target may use stdout")]
     MultipleStdout,
     #[error("stdout gzip compression was requested, but no output target uses stdout")]

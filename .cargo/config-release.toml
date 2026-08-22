@@ -9,6 +9,8 @@
 SEQPROC_RELEASE_BUILD = "1"
 
 [target.x86_64-unknown-linux-gnu]
+# Load-bearing: GNU ld preserves/merges the explicit x86 ISA-needed note in
+# the seqproc binary. rust-lld on the reviewed toolchain silently drops it.
 linker = "gcc"
 rustflags = ["-C", "target-cpu=x86-64-v3"]
 

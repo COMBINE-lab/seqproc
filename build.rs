@@ -1,11 +1,29 @@
 use std::process::Command;
 
+fn encoded_codegen_options() -> Vec<String> {
+    let flags = std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
+    let mut flags = flags.split('\u{1f}');
+    let mut options = Vec::new();
+    while let Some(flag) = flags.next() {
+        if flag == "-C" {
+            if let Some(option) = flags.next() {
+                options.push(option.to_owned());
+            }
+        } else if let Some(option) = flag.strip_prefix("-C") {
+            if !option.is_empty() {
+                options.push(option.to_owned());
+            }
+        }
+    }
+    options
+}
+
 fn configured_cpu_target(target: &str) -> String {
-    let encoded_flags = std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
-    if let Some(cpu) = encoded_flags.split('\u{1f}').find_map(|flag| {
-        flag.strip_prefix("target-cpu=")
-            .or_else(|| flag.strip_prefix("-Ctarget-cpu="))
-    }) {
+    let codegen_options = encoded_codegen_options();
+    if let Some(cpu) = codegen_options
+        .iter()
+        .find_map(|option| option.strip_prefix("target-cpu="))
+    {
         return cpu.to_owned();
     }
 
@@ -36,14 +54,34 @@ fn rustc_target_features(rustc: &std::ffi::OsStr, target: &str, cpu: &str) -> Op
         .ok()
         .filter(|output| output.status.success())?;
     let cfg = String::from_utf8(output.stdout).ok()?;
-    let mut features: Vec<_> = cfg
+    let mut features: Vec<String> = cfg
         .lines()
         .filter_map(|line| {
             line.strip_prefix("target_feature=\"")
                 .and_then(|value| value.strip_suffix('"'))
         })
+        .map(str::to_owned)
         .collect();
+    // `rustc --print cfg -C target-cpu=...` does not see additional
+    // `-C target-feature=+X,-Y` flags Cargo supplied to the real build. Apply
+    // those overrides so provenance and the runtime guard describe the exact
+    // compiler contract rather than only the CPU preset.
+    for option in encoded_codegen_options() {
+        let Some(settings) = option.strip_prefix("target-feature=") else {
+            continue;
+        };
+        for setting in settings.split(',').filter(|setting| !setting.is_empty()) {
+            if let Some(feature) = setting.strip_prefix('+') {
+                if !features.iter().any(|existing| existing == feature) {
+                    features.push(feature.to_owned());
+                }
+            } else if let Some(feature) = setting.strip_prefix('-') {
+                features.retain(|existing| existing != feature);
+            }
+        }
+    }
     features.sort_unstable();
+    features.dedup();
     Some(features.join(","))
 }
 

@@ -696,6 +696,13 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
         .outputs
         .clone()
         .unwrap_or_else(|| output_targets_from_legacy(&config));
+    if config.demux.is_some()
+        && primary_targets
+            .iter()
+            .any(|target| !matches!(target, OutputTarget::Discard))
+    {
+        return Err(OutputTopologyError::PrimaryOutputsWithDemultiplexing.into());
+    }
     if config.demux.is_none()
         && !primary_targets
             .iter()
@@ -728,8 +735,8 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
         .unassigned_outputs
         .clone()
         .unwrap_or_else(|| unassigned_targets_from_legacy(&config));
-    if unassigned_targets.len() > input_lane_count {
-        return Err(OutputTopologyError::TooManyUnassigned {
+    if !unassigned_targets.is_empty() && unassigned_targets.len() != input_lane_count {
+        return Err(OutputTopologyError::UnassignedArityMismatch {
             supplied: unassigned_targets.len(),
             input_arity: input_lane_count,
         }

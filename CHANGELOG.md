@@ -11,6 +11,18 @@ Initial public release. It includes the preprint functionality plus the
 post-preprint correctness, usability, and performance work reviewed for this
 release.
 
+- Make `seqproc run` require an exact, nonempty primary-output topology while
+  preserving the deprecated flag-only prefix behavior for one compatibility
+  cycle. Unassigned outputs likewise require exactly one target per input lane,
+  and primary outputs combined with demultiplexing are rejected rather than
+  silently ignored.
+- Propagate ANTISEQUENCE's single-use graph lifecycle and fallible finalization:
+  malformed input, output flush/footer failures, and repeated execution now
+  produce typed nonzero errors instead of panic, silent truncation, or false
+  success.
+- Fix mixed-length Hamming seed planning so a fast-path seed is used only when
+  it is guaranteed for every literal; this removes a silent false-negative
+  case while retaining safe indexed matching.
 - Make seqproc's executable default architecture-tuned while preserving
   ANTISEQUENCE's library-safe baseline: distributed x86_64 binaries target
   x86-64-v3/AVX2, aarch64 artifacts use fixed platform targets, and local

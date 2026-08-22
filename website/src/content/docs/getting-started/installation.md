@@ -26,7 +26,8 @@ cargo build --release --locked
 Using `--locked` prevents Cargo from silently selecting dependency versions
 other than those recorded in `Cargo.lock`.
 
-After the crate is published, the corresponding Cargo installation is:
+After the coordinated seqproc and ANTISEQUENCE 0.1.0 crates from this release
+are published, the corresponding Cargo installation is:
 
 ```console
 cargo install --locked seqproc

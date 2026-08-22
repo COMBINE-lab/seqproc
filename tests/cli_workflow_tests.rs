@@ -1231,7 +1231,7 @@ fn unassigned2_on_single_lane_is_rejected_instead_of_ignored() {
         .assert()
         .failure()
         .stderr(predicates::str::contains(
-            "2 unassigned output targets were supplied for 1 input lanes",
+            "unassigned output arity is 2, but input arity is 1",
         ));
     assert_eq!(fs::read_to_string(unassigned2).unwrap(), "sentinel\n");
     assert!(!output.exists());
@@ -1892,4 +1892,82 @@ fn typed_configuration_errors_have_stable_nonzero_cli_status() {
         .stderr(predicates::str::contains(
             "dynamic batch planning requires a nonzero memory budget",
         ));
+}
+
+#[test]
+fn unassigned_outputs_require_exact_input_lane_arity() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("paired.geom");
+    let read1 = directory.path().join("r1.fastq");
+    let read2 = directory.path().join("r2.fastq");
+    let output1 = directory.path().join("out1.fastq");
+    let output2 = directory.path().join("out2.fastq");
+    let rejected1 = directory.path().join("rejected1.fastq");
+    fs::write(&geometry, "1{r:}\n2{r:}\n").unwrap();
+    fs::write(&read1, "@r/1\nACGT\n+\nIIII\n").unwrap();
+    fs::write(&read2, "@r/2\nTGCA\n+\nIIII\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            read1.to_str().unwrap(),
+            "--read2",
+            read2.to_str().unwrap(),
+            "--out1",
+            output1.to_str().unwrap(),
+            "--out2",
+            output2.to_str().unwrap(),
+            "--unassigned1",
+            rejected1.to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "unassigned output arity is 1, but input arity is 2",
+        ));
+
+    assert!(!output1.exists());
+    assert!(!output2.exists());
+    assert!(!rejected1.exists());
+}
+
+#[test]
+fn demultiplexing_rejects_primary_output_targets_instead_of_ignoring_them() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("simple.geom");
+    let input = directory.path().join("reads.fastq");
+    let map = directory.path().join("samples.tsv");
+    let primary = directory.path().join("silently-lost.fastq");
+    let demux_dir = directory.path().join("demux");
+    fs::write(&geometry, "1{r:}\n").unwrap();
+    fs::write(&input, "@r1\nACGT\n+\nIIII\n").unwrap();
+    fs::write(&map, "ACGT\tsample\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            input.to_str().unwrap(),
+            "--out1",
+            primary.to_str().unwrap(),
+            "--demux-map",
+            map.to_str().unwrap(),
+            "--demux-out-dir",
+            demux_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "primary FASTQ outputs cannot be combined with demultiplexing",
+        ));
+
+    assert!(!primary.exists());
+    assert!(!demux_dir.exists());
 }
