@@ -37,16 +37,16 @@ The implementation work is concentrated in these commits:
 | seqproc | `1fca512`, `6b6da77`, `c49a90e`, `1925425`, final blocker repair `2c26678`, second-pass closure `9ed2d87`, demux-provenance correction `ef4dee7` | `1141162`, final ANTISEQUENCE pin/pre-tag cleanup `770499d`, cargo-dist-compatible baseline selection `388777b`, exact final pin `4566953` |
 | ANTISEQUENCE | `5b30b5c`, `053b924`, `5672682`, `46065aa`, `5468b3f`, `0c16ed2`, sticky finalization `3617472`, hot-path refinement `773e1ce` | `477462b`, `1d1c10d`, final review cleanup `272ba77` |
 
-The previously hosted fast paths were green before the final local blocker
-closure; the final `dev` pushes will be checked again by the next review pass:
+The final implementation boundaries have independent hosted fast-path
+coverage:
 
 - ANTISEQUENCE Fast CI run
-  [32552480133](https://github.com/COMBINE-lab/ANTISEQUENCE/actions/runs/32552480133)
-  on `b5fecee`.
+  [32585043975](https://github.com/COMBINE-lab/ANTISEQUENCE/actions/runs/32585043975)
+  on final implementation head `773e1ce`.
 - seqproc Fast CI run
-  [32587272717](https://github.com/COMBINE-lab/seqproc/actions/runs/32587272717)
-  on pre-correction head `e3eafa0`; the final `ef4dee7` correction is covered
-  by the local exact-boundary gates below and awaits the final pushed-head CI.
+  [32589986018](https://github.com/COMBINE-lab/seqproc/actions/runs/32589986018)
+  passed in 27m23s on report head `5d8e5d6`, which contains exact
+  implementation boundary `ef4dee7` and its unchanged dependency lockfile.
 
 ### Decision ownership
 
@@ -500,6 +500,7 @@ independently reviewed by the other — no fix in this pass shipped unreviewed.
 | `scripts/verify_simd_equivalence.sh`, executed end to end | 9/9 fixtures byte-identical between SSE2 and x86-64-v3/AVX2, both lanes compared for the paired untransformed fixtures |
 | `cargo fmt --check`, `cargo dist plan`, `cargo dist generate --check` | clean / exit 0 / exit 0 |
 | Warning-denied seqproc all-target clippy | clean after all second-pass source and dependency-pin changes |
+| Hosted seqproc Fast CI on the corrected implementation | run `32589986018` passed formatting, high-value tests, and warning-denied clippy in 27m23s on report head `5d8e5d6`, containing exact implementation `ef4dee7` |
 | Explicit target-feature provenance probe | split `-C target-cpu=x86-64-v3` plus joined `-Ctarget-feature=+aes,-sse4.2` records `aes`, removes `sse4.2`, and retains the CPU preset's remaining features |
 | Final cargo-dist x86_64 Linux archive | rebuilt from `ef4dee7` under the fixed release config; SHA-256 `d4def76f7069aed934665322d169ab7e654e8c7a2fc3c50895781f64691af023`; packaged binary reports x86-64-v3/AVX2 provenance |
 | ELF ISA note in that packaged binary | present, mask `0x7`, `verify_x86_64_v3_elf.py` passes; absent (as expected and documented) under rust-lld local builds |
@@ -832,7 +833,7 @@ this host:
 | Formatting and manifests | `cargo fmt --check`, `git diff --check`, locked metadata (including seqproc all-features), `cargo dist plan`, and `cargo dist generate --check` pass |
 | Package boundaries | seqproc lists exactly 87 intended files (including the new build script/provenance module); ANTISEQUENCE lists 67. Planning documents, the Astro site, generated dependencies, and build output do not enter either source package |
 | Documentation site | Astro production build passes under Node 22.22.3 (20 generated pages plus search index) |
-| Hosted fast CI before final demux-provenance correction | ANTISEQUENCE run `32585043975` passed on final head `773e1ce`; seqproc run `32587272717` passed on pre-correction head `e3eafa0`. The final reviewer should confirm the pushed `ef4dee7` seqproc boundary; the exact correction is already covered by the local gates in this table. |
+| Hosted fast CI on final implementation boundaries | ANTISEQUENCE run `32585043975` passed on final head `773e1ce`; seqproc run `32589986018` passed in 27m23s on report head `5d8e5d6`, containing exact implementation `ef4dee7` and the unchanged lockfile. |
 
 The only package gate that cannot be completed before publication ordering is
 seqproc's registry-resolved `cargo publish --dry-run`: its manifest correctly
