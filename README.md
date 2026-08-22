@@ -163,7 +163,7 @@ older x86_64 hosts:
 
 ```console
 RUSTFLAGS="" cargo build --release --locked --no-default-features \
-  --features baseline-simd
+  --features antisequence/baseline-simd
 ```
 
 Do not label a `target-cpu=native` local build as a generic release artifact:
@@ -208,7 +208,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
 # Exercise the generic SSE2 compatibility control as well:
 cargo test --locked --no-default-features \
-  --features baseline-simd --lib
+  --features antisequence/baseline-simd --lib
 ```
 
 Comprehensive CI also builds both variants and requires every checked-in FASTQ

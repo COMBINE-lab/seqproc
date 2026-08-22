@@ -66,9 +66,6 @@ default = ["release-simd"]
 # seqproc is an executable application, so its supported x86_64 release floor
 # is AVX2/x86-64-v3. ANTISEQUENCE itself retains a lower SSE2 library default.
 release-simd = ["antisequence/release-simd"]
-# First-class compatibility build used by portable source distributions such
-# as Bioconda. Keep mutually exclusive with the default `release-simd` feature.
-baseline-simd = ["antisequence/baseline-simd"]
 # Forward allocator features to antisequence so you can run: cargo bench --features mimalloc|jemalloc
 mimalloc = ["antisequence/mimalloc"]
 jemalloc = ["antisequence/jemalloc"]

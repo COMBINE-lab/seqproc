@@ -75,7 +75,7 @@ jobs:
       - name: Test generic SSE2 compatibility backend
         run: >-
           cargo test --locked --lib --bins --no-default-features
-          --features baseline-simd
+          --features antisequence/baseline-simd
       - name: Compare baseline and release-SIMD FASTQ bytes
         run: bash scripts/verify_simd_equivalence.sh
 

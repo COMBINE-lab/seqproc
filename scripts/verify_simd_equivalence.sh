@@ -12,7 +12,7 @@ release_binary="$work_dir/seqproc-release"
 echo "Building generic SSE2/NEON control"
 RUSTFLAGS="-D warnings" CARGO_TARGET_DIR="$build_target" \
     cargo build --manifest-path "$repo_dir/Cargo.toml" --locked \
-    --no-default-features --features baseline-simd
+    --no-default-features --features antisequence/baseline-simd
 cp "$build_target/debug/seqproc" "$baseline_binary"
 
 echo "Building x86-64-v3/AVX2 candidate"

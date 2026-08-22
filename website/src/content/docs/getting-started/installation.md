@@ -53,7 +53,7 @@ override the repository's native code-generation setting:
 
 ```console
 RUSTFLAGS="" cargo build --release --locked --no-default-features \
-  --features baseline-simd
+  --features antisequence/baseline-simd
 ```
 
 To put the local build on your path:
