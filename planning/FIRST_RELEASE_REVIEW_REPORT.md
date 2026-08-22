@@ -78,9 +78,11 @@ deleting that historical record. The original review-fix heads were
 ANTISEQUENCE `a10d990ed5c66dd8a4edb61b36dc3cce74543238` and seqproc
 `1925425b0ace241be09e8d70880104979c3228a5`. The later, explicitly approved
 release-architecture decision advanced ANTISEQUENCE to
-`1d1c10d84e7ca67fd1f67f61f44abd530ecb7e82` and the compiled seqproc
-implementation to `1141162225a6a4f978a94aa2ffe164d5e194326d`. This report-only
-follow-up does not alter compiled source, manifests, or tests.
+`a835e66aa8978a0e4ab3261286bf87e58b56f761` and the pinned seqproc
+implementation to `85c3d21c2f0160f874346079b6a24ec733205d54`. The latter follows
+the dist-smoked implementation with only an ANTISEQUENCE pin advance that
+removes two redundant imports. This report-only follow-up does not alter
+compiled source, manifests, or tests.
 
 **P0 resolution:**
 
@@ -143,8 +145,9 @@ contract auditable. Cargo multiversioning remains deferred until measurements
 show enough v3-versus-v4 benefit to justify multiple implementations.
 
 Note: seqproc pins ANTISEQUENCE by git `rev` in `Cargo.toml`; the pin and
-lockfile resolve to `1d1c10d84e7ca67fd1f67f61f44abd530ecb7e82`, which defines
-the library-baseline/application-release SIMD feature split.
+lockfile resolve to `a835e66aa8978a0e4ab3261286bf87e58b56f761`, which defines the
+library-baseline/application-release SIMD feature split and passes the
+warning-denied all-target check used by CI.
 
 ### Post-fix verification evidence
 
@@ -159,7 +162,7 @@ this host:
 | ANTISEQUENCE release-SIMD library tests | **388/388 pass**, locked, using the mutually exclusive AVX2 backend |
 | ANTISEQUENCE clippy/docs/downstream package gate | Warning-denied clippy and docs pass; README doc-test passes; the packaged crate builds and runs from an extracted clean-room downstream project |
 | seqproc complete all-target test run | **Pass**: 276 library, 9 anchor-set, 27 annotation, 19 benchmark-regression, 24 CLI, 58 compile, 1 differential, 6 error-contract, 2 error-handling, 12 layout, 12 lexer, 69 paper-chemistry, and 31 parser tests; both benchmark binaries also complete their smoke workloads |
-| seqproc SIMD artifact gate | **278/278** tuned-default library tests and **25/25** CLI/report tests pass against ANTISEQUENCE `1d1c10d`; warning-denied all-target clippy passes; verbose version provenance identifies both builds; all 9 checked-in FASTQ transformation fixtures are byte-identical between generic SSE2 and fixed x86-64-v3/AVX2 binaries and match expected output. |
+| seqproc SIMD artifact gate | **278/278** tuned-default library tests and **25/25** CLI/report tests pass against ANTISEQUENCE `1d1c10d`; the final import-only pin `a835e66` passes the exact warning-denied all-target check. Warning-denied all-target clippy passes; verbose version provenance identifies both builds; all 9 checked-in FASTQ transformation fixtures are byte-identical between generic SSE2 and fixed x86-64-v3/AVX2 binaries and match expected output. |
 | seqproc cargo-dist profile smoke | The optimized `dist` profile built successfully from implementation commit `1141162`; the executable reports target `x86_64-unknown-linux-gnu`, compiler CPU target and floor `x86-64-v3`, SIMD backend `x86-avx2`, and the expected v3 target-feature set. |
 | seqproc clippy/docs/MSRV | Warning-denied all-target clippy and docs pass; all-target check passes on Rust 1.88 |
 | Formatting and manifests | `cargo fmt --check`, `git diff --check`, locked metadata (including seqproc all-features), `cargo dist plan`, and `cargo dist generate --check` pass |
