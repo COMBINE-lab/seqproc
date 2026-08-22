@@ -1149,6 +1149,95 @@ fn legacy_single_output_preserves_paired_no_transform_behavior() {
 }
 
 #[test]
+fn modern_run_requires_exact_paired_outputs() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("paired.geom");
+    let read1 = directory.path().join("r1.fastq");
+    let read2 = directory.path().join("r2.fastq");
+    let output = directory.path().join("r1-out.fastq");
+    fs::write(&geometry, "1{r:}2{r:}\n").unwrap();
+    fs::write(&read1, "@pair/1\nAAAA\n+\nIIII\n").unwrap();
+    fs::write(&read2, "@pair/2\nTTTT\n+\nIIII\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            read1.to_str().unwrap(),
+            "--read2",
+            read2.to_str().unwrap(),
+            "--out1",
+            output.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "1 primary output targets were supplied, but the geometry emits 2 reads",
+        ));
+    assert!(!output.exists());
+}
+
+#[test]
+fn modern_run_rejects_an_all_discard_primary_topology() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("single.geom");
+    let input = directory.path().join("input.fastq");
+    fs::write(&geometry, "1{r:}\n").unwrap();
+    fs::write(&input, "@read\nAAAA\n+\nIIII\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            input.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "at least one primary FASTQ output target must not be discard",
+        ));
+}
+
+#[test]
+fn unassigned2_on_single_lane_is_rejected_instead_of_ignored() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("single.geom");
+    let input = directory.path().join("input.fastq");
+    let output = directory.path().join("output.fastq");
+    let unassigned2 = directory.path().join("unassigned2.fastq");
+    fs::write(&geometry, "1{r:}\n").unwrap();
+    fs::write(&input, "@read\nAAAA\n+\nIIII\n").unwrap();
+    fs::write(&unassigned2, "sentinel\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--read1",
+            input.to_str().unwrap(),
+            "--out1",
+            output.to_str().unwrap(),
+            "--unassigned2",
+            unassigned2.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "2 unassigned output targets were supplied for 1 input lanes",
+        ));
+    assert_eq!(fs::read_to_string(unassigned2).unwrap(), "sentinel\n");
+    assert!(!output.exists());
+}
+
+#[test]
 fn out2_on_a_single_output_geometry_is_not_silently_ignored() {
     let directory = tempdir().unwrap();
     let geometry = directory.path().join("single.geom");

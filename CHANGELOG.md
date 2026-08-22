@@ -9,8 +9,10 @@ All notable changes to seqproc are documented here. This project follows
   ANTISEQUENCE's library-safe baseline: distributed x86_64 binaries target
   x86-64-v3/AVX2, aarch64 artifacts use fixed platform targets, and local
   repository builds use `target-cpu=native`.
-- Add an early raw-CPUID compatibility check, `--version --verbose` build
-  provenance, and build/SIMD provenance in summary schema 1.13.0.
+- Add exact target-feature CPUID/XGETBV compatibility checks, Linux ELF loader
+  ISA notes, `--version --verbose` build provenance, and build/SIMD provenance
+  in summary schema 1.13.0. Release CI inspects the packaged cargo-dist binary
+  before hosting it.
 - Add comprehensive byte-equivalence gates between generic SSE2 and tuned
   AVX2 builds.
 

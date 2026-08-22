@@ -115,9 +115,13 @@ fn malformed_fastq_returns_a_typed_runtime_error() {
     let directory = tempdir().unwrap();
     let input = directory.path().join("truncated.fastq");
     fs::write(&input, "@r1\nACGT\n+\n").unwrap();
+    let output = directory.path().join("output.fastq");
+    fs::write(&output, "sentinel\n").unwrap();
 
     let compiled = compile_geom_typed("1{r:}").unwrap();
-    let result = run(RunConfig::new(input), compiled);
+    let mut config = RunConfig::new(input);
+    config.output1 = Some(output.clone());
+    let result = run(config, compiled);
     assert!(
         matches!(
             result,
@@ -128,4 +132,5 @@ fn malformed_fastq_returns_a_typed_runtime_error() {
         ),
         "unexpected result: {result:?}"
     );
+    assert_eq!(fs::read_to_string(output).unwrap(), "sentinel\n");
 }

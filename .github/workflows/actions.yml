@@ -54,4 +54,9 @@ jobs:
           --test anchor_set_tests
           --test layout_algebra_tests
           --test lexer_tests
+          --test paper_chemistry_tests
+          --test diff_tests
           --no-fail-fast
+
+      - name: clippy (library, binaries, and tests)
+        run: cargo clippy --locked --workspace --lib --bins --tests

@@ -145,9 +145,14 @@ with:
 seqproc --version --verbose
 ```
 
-seqproc performs a best-effort early x86-64-v3 compatibility check with raw
-CPUID before processing. ANTISEQUENCE remains a library-safe SSE2/NEON crate
-by default; seqproc deliberately selects its `release-simd` AVX2/NEON backend.
+Linux x86_64 artifacts carry a GNU x86 ISA property, so a modern loader rejects
+an incompatible executable before any v3 instruction can run. seqproc also
+checks the exact compiler-enabled x86 feature set with raw CPUID/XGETBV before
+processing; this keeps host-native builds honest when they include features
+beyond v3. (On macOS, where the ELF loader property is unavailable, this
+startup check is necessarily best effort.) ANTISEQUENCE remains a library-safe
+SSE2/NEON crate by default; seqproc deliberately selects its `release-simd`
+AVX2/NEON backend.
 A generic SSE2 compatibility build is available for controlled testing or
 older x86_64 hosts:
 
@@ -156,7 +161,9 @@ RUSTFLAGS="" cargo build --release --locked --no-default-features \
   --features antisequence/baseline-simd
 ```
 
-Do not label a `target-cpu=native` local build as a generic release artifact.
+Do not label a `target-cpu=native` local build as a generic release artifact:
+its verbose provenance identifies it as non-portable and records its exact
+target features.
 
 ## Ambiguous barcode matches
 

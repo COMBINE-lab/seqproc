@@ -1,5 +1,34 @@
 use std::process::exit;
 
+// GNU_PROPERTY_X86_ISA_1_NEEDED is a loader-visible contract, unlike a CPU
+// check in ordinary v3-compiled Rust code (which could itself execute AVX
+// before reporting an error). Bits 0x1 | 0x2 | 0x4 declare the cumulative
+// x86-64 baseline, v2, and v3 psABI levels. Emitting the standard note here
+// works with older GNU linkers that predate `ld -z x86-64-v3`; compatible
+// linkers merge it with the properties emitted by startup objects.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", feature = "release-simd"))]
+std::arch::global_asm!(
+    r#"
+    .pushsection .note.gnu.property, "a"
+    .p2align 3
+    .long 1f - 0f
+    .long 4f - 1f
+    .long 5
+0:
+    .asciz "GNU"
+1:
+    .p2align 3
+    .long 0xc0008002
+    .long 3f - 2f
+2:
+    .long 0x7
+3:
+    .p2align 3
+4:
+    .popsection
+"#
+);
+
 use std::fs::File;
 use std::io;
 use std::path::PathBuf;
@@ -10,7 +39,7 @@ use seqproc::{
     build_info::{build_provenance, ensure_runtime_cpu_compatible},
     demux::DemuxConfig,
     error::{render_geometry_diagnostics, SeqprocError},
-    execute::{compile_geom_typed, run, RunConfig},
+    execute::{compile_geom_typed, run, OutputCompatibility, RunConfig},
     io_config::{InputLane, InputSource, OutputTarget},
     resources::ResourceBindings,
 };
@@ -346,7 +375,7 @@ fn main() {
         )
         .init();
 
-    let args = match cli.command {
+    let (args, output_compatibility) = match cli.command {
         Some(Command::Validate { geometry }) => {
             let source = read_geometry(&geometry);
             match compile_geom_typed(&source) {
@@ -379,12 +408,12 @@ fn main() {
                 }
             }
         }
-        Some(Command::Run(args)) => args,
+        Some(Command::Run(args)) => (args, OutputCompatibility::Strict),
         None => {
             eprintln!(
                 "warning: the flag-only invocation is deprecated; use `seqproc run ...` instead"
             );
-            cli.legacy
+            (cli.legacy, OutputCompatibility::LegacyPrefix)
         }
     };
 
@@ -474,6 +503,7 @@ fn main() {
         Ok(geom) => {
             report_warnings(&geom.warnings);
             let mut config = RunConfig::new(file1.clone());
+            config.output_compatibility = output_compatibility;
             config.input2 = read2.first().cloned();
             if interleaved_input.is_empty() {
                 let mut input_lanes = vec![InputLane::new(

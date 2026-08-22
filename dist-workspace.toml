@@ -9,6 +9,9 @@ members = ["cargo:."]
 github-build-setup = "../build-setup.yml"
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
+# Refuse to host or publish unless the packaged Linux executable reports the
+# intended SIMD/CPU provenance and carries an ELF loader-enforced ISA floor.
+global-artifacts-jobs = ["./verify-release-provenance"]
 # Release archives build seqproc's architecture-tuned default feature set.
 # ANTISEQUENCE retains a separate library-safe baseline feature, tested in
 # comprehensive CI but intentionally absent from cargo-dist feature metadata.

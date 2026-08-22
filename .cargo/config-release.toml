@@ -2,7 +2,14 @@
 # aarch64 artifacts use one documented target per operating system. Local
 # development uses target-cpu=native from config.toml instead.
 
+[env]
+# Cargo does not pass target-specific rustflags to build scripts. This marker
+# lets build.rs record the fixed artifact CPU target and its expanded feature
+# set in `seqproc --version --verbose`.
+SEQPROC_RELEASE_BUILD = "1"
+
 [target.x86_64-unknown-linux-gnu]
+linker = "gcc"
 rustflags = ["-C", "target-cpu=x86-64-v3"]
 
 [target.x86_64-apple-darwin]

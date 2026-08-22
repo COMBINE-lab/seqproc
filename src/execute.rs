@@ -129,10 +129,9 @@ fn output_targets_from_legacy(config: &RunConfig) -> Vec<OutputTarget> {
     targets
 }
 
-fn unassigned_targets_from_legacy(config: &RunConfig, input_arity: usize) -> Vec<OutputTarget> {
+fn unassigned_targets_from_legacy(config: &RunConfig) -> Vec<OutputTarget> {
     let Some(last) = [config.unassigned1.as_ref(), config.unassigned2.as_ref()]
         .into_iter()
-        .take(input_arity)
         .rposition(|path| path.is_some())
     else {
         return Vec::new();
@@ -257,6 +256,15 @@ pub struct FifoSeqprocData {
     pub join_handle: thread::JoinHandle<AnyResult<SeqprocStats>>,
 }
 
+/// Compatibility policy for the deprecated flag-only output topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputCompatibility {
+    /// Require output arity to match the geometry exactly.
+    Strict,
+    /// Allow the historical untransformed prefix behavior for one release.
+    LegacyPrefix,
+}
+
 #[derive(Debug, Clone)]
 pub struct RunConfig {
     pub input1: PathBuf,
@@ -271,6 +279,9 @@ pub struct RunConfig {
     pub output2: Option<PathBuf>,
     /// Primary output representation. `None` uses `output1`/`output2`.
     pub outputs: Option<Vec<OutputTarget>>,
+    /// Whether to retain the deprecated flag-only prefix-output behavior.
+    /// Library callers and the `seqproc run` command are strict by default.
+    pub output_compatibility: OutputCompatibility,
     pub unassigned1: Option<PathBuf>,
     pub unassigned2: Option<PathBuf>,
     /// Unassigned output representation. `None` uses the legacy fields.
@@ -346,6 +357,7 @@ impl RunConfig {
             output1: None,
             output2: None,
             outputs: None,
+            output_compatibility: OutputCompatibility::Strict,
             unassigned1: None,
             unassigned2: None,
             unassigned_outputs: None,
@@ -656,13 +668,23 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
         }
     }
 
+    // Resolve the geometry's declared resources before output-topology
+    // validation so missing or invalid bindings retain their typed error
+    // precedence even when no output has yet been selected.
+    let resolved_resources = compiled_data.resolve_resources(
+        &config.additional_args,
+        &config.resource_bindings,
+        config.geometry_base.as_deref(),
+    )?;
+
     let output_arity = compiled_data
         .transformation
         .as_ref()
         .map_or(input_lane_count, Vec::len);
     if config.demux.is_none() {
         if let Some(transformations) = &compiled_data.transformation {
-            if config.outputs.is_none()
+            if config.output_compatibility == OutputCompatibility::LegacyPrefix
+                && config.outputs.is_none()
                 && transformations.len() == 2
                 && (config.output1.is_none() || config.output2.is_none())
             {
@@ -674,12 +696,21 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
         .outputs
         .clone()
         .unwrap_or_else(|| output_targets_from_legacy(&config));
+    if config.demux.is_none()
+        && !primary_targets
+            .iter()
+            .any(|target| !matches!(target, OutputTarget::Discard))
+    {
+        return Err(OutputTopologyError::MissingPrimaryOutput.into());
+    }
     // Before explicit output transformations existed, the flag-only CLI
     // allowed a prefix of the input lanes to be written. In particular, a
     // paired geometry plus only `-o` wrote read 1. Preserve that EFGDL 1
     // contract for one compatibility cycle; transformed and explicitly typed
     // output lists retain exact arity checking.
-    let legacy_untransformed_prefix = config.outputs.is_none()
+    let legacy_untransformed_prefix = config.output_compatibility
+        == OutputCompatibility::LegacyPrefix
+        && config.outputs.is_none()
         && compiled_data.transformation.is_none()
         && !primary_targets.is_empty()
         && primary_targets.len() <= output_arity;
@@ -696,7 +727,7 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
     let unassigned_targets = config
         .unassigned_outputs
         .clone()
-        .unwrap_or_else(|| unassigned_targets_from_legacy(&config, input_lane_count));
+        .unwrap_or_else(|| unassigned_targets_from_legacy(&config));
     if unassigned_targets.len() > input_lane_count {
         return Err(OutputTopologyError::TooManyUnassigned {
             supplied: unassigned_targets.len(),
@@ -729,11 +760,6 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
         return Err(InputTopologyError::AcceleratedGzipStdin.into());
     }
 
-    let resolved_resources = compiled_data.resolve_resources(
-        &config.additional_args,
-        &config.resource_bindings,
-        config.geometry_base.as_deref(),
-    )?;
     let mut graph = Graph::new();
     let input_layout = if interleaved_sources.is_some() {
         "interleaved"

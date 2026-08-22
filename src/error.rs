@@ -72,6 +72,8 @@ pub enum InputTopologyError {
 
 #[derive(Debug, Error)]
 pub enum OutputTopologyError {
+    #[error("at least one primary FASTQ output target must not be discard")]
+    MissingPrimaryOutput,
     #[error("geometry transforms into two reads; both output1 and output2 are required")]
     LegacyPairedOutputRequired,
     #[error(
