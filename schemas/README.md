@@ -1,6 +1,6 @@
 # seqproc report schemas
 
-`seqproc-summary-1.3.0.schema.json` is the current versioned schema emitted by
+`seqproc-summary-1.13.0.schema.json` is the current versioned schema emitted by
 `seqproc run --summary`; the 1.0.0 and 1.1.0 files remain immutable for existing
 consumers. Schema versions are independent of the seqproc binary version so
 consumers can negotiate report compatibility explicitly.
@@ -11,8 +11,9 @@ For schema 1.0.0:
 - `rejected_fragments = failed_parsing` while the legacy field name is retained;
 - rejection-reason counts sum to `rejected_fragments`;
 - `ordering_mode = input-order` only when the effective thread count is one;
-- `geometry_digest` includes its algorithm prefix (currently `md5:`) and is a
-  content/provenance identifier, not a security primitive;
+- `geometry_digest` includes its algorithm prefix. Current releases emit
+  `blake3:`; early reports emitted `md5:`. It is a content/provenance
+  identifier rather than a substitute for archiving the geometry;
 - read-length vectors contain one entry per FASTQ input.
 
 Schema 1.1.0 adds the required `gzip_compression_level` and
@@ -33,6 +34,45 @@ Detailed reports also include counts of ambiguous equal-best matches and the
 outcome of the configured ambiguity policy. Basic reports retain run-level
 input, output, and rejection totals while leaving `match_distance_stats` and
 the three read-length vectors empty.
+
+Schema 1.4.0 adds the conservative graph-optimization report and the effective
+execution plan. These identify the requested mode and selected execution
+backend, bounded-pipeline parameters, graph cost classes, planner reason codes,
+and the compile-time passes that changed the graph. They are optional only for
+legacy Rust API paths that cannot reconstruct the frozen graph decision;
+ordinary `seqproc run --summary` reports include both objects.
+
+Schema 1.5.0 separates equal-best pattern ambiguity from equal-best positional
+ambiguity. It adds position totals, drops, and leftmost/rightmost resolution
+counts to every detailed match-stage ambiguity object.
+
+Schema 1.6.0 adds `position_resolved_quality`, which counts equal-best
+placements selected by the position-quality policy.
+
+Schema 1.7.0 adds resolved EFGDL resources, their binding source and BLAKE3
+content digest, plus declared resources that were not used by the geometry.
+
+Schema 1.8.0 adds per-lane, per-shard FASTQ record counts.
+
+Schema 1.9.0 adds typed `input_topology` and `output_topology` provenance so
+streamed stdin/stdout runs are distinguishable from path-backed and discarded
+lanes without exposing path names.
+
+Schema 1.10.0 adds `input_layout`, distinguishing separate logical lanes from
+one physical interleaved input stream.
+
+Schema 1.11.0 adds the validated `input_arity` and `output_arity` (currently
+bounded to one, two, or three).
+
+Schema 1.12.0 adds `execution_plan.batch_planning`, including static planning
+inputs, exact-override flags, selected batch/queue/in-flight bounds, estimated
+fragment/batch/peak bytes, the memory budget, and stable reason codes.
+
+Schema 1.13.0 adds a required `build` object containing the compiler target,
+enabled target features, compiler CPU target, build profile, Rust compiler
+version, CPU floor, and ANTISEQUENCE SIMD backend. This makes
+performance-affecting artifact selection part of every statistics report
+rather than external bookkeeping.
 
 Additive fields require a schema minor version. Removing fields, changing their
 meaning, or changing types requires a schema major version and a new file.

@@ -6,9 +6,31 @@ rust-version = "1.88"
 description = "A fast, programmable preprocessing engine for sequencing reads"
 license = "BSD-3-Clause"
 repository = "https://github.com/COMBINE-lab/seqproc"
+homepage = "https://combine-lab.github.io/seqproc"
+documentation = "https://combine-lab.github.io/seqproc"
 readme = "README.md"
+include = [
+    "/build.rs",
+    "/src/**",
+    "/tests/**",
+    "/benches/**",
+    "/schemas/README.md",
+    "/schemas/seqproc-summary-1.13.0.schema.json",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/CITATION.cff",
+    "/LICENSE",
+]
 keywords = ["bioinformatics", "fastq", "sequencing", "preprocessing"]
 categories = ["command-line-utilities", "science"]
+
+[package.metadata.docs.rs]
+# Document the same tuned matcher API used by seqproc binaries. docs.rs does
+# not execute the AVX2 backend.
+all-features = false
+features = ["release-simd"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -20,7 +42,7 @@ name = "seqproc"
 path = "src/bin/bin.rs"
 
 [dependencies]
-antisequence = { version = "0.1.0", git = "https://github.com/COMBINE-lab/ANTISEQUENCE", rev = "5efba5aedc3ffa2bcfbd4d7816c31935426618c6" }
+antisequence = { version = "0.1.0", default-features = false, features = ["accelerated-gzip"] }
 rustc-hash = "1.1.0"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tracing = "0.1.37"
@@ -29,14 +51,21 @@ chumsky = "0.12.0"
 clap = { version = "4.4.8", features = ["derive"] }
 anyhow = "1.0.103"
 tempfile = "3.5.0"
-nix = { version = "0.26.2", features = ["fs"] }
 csv = "1.3.0"
 serde = {version = "1.0.207", features = ["derive"]}
 serde_json = "1.0"
-md5 = "0.7"
+blake3 = "1.8.7"
+thiserror = "2.0"
+flate2 = { version = "1.0", features = ["zlib-rs"], default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = ["fs"] }
 
 [features]
-default = []
+default = ["release-simd"]
+# seqproc is an executable application, so its supported x86_64 release floor
+# is AVX2/x86-64-v3. ANTISEQUENCE itself retains a lower SSE2 library default.
+release-simd = ["antisequence/release-simd"]
 # Forward allocator features to antisequence so you can run: cargo bench --features mimalloc|jemalloc
 mimalloc = ["antisequence/mimalloc"]
 jemalloc = ["antisequence/jemalloc"]
@@ -46,7 +75,8 @@ assert_cmd = "2.0.12"
 similar-asserts = "1.5.0"
 criterion = { version = "0.5" }
 proptest = "1.4"
-flate2 = { version = "1.0", features = ["zlib-rs"], default-features = false }
+predicates = "3.1"
+jsonschema = { version = "0.50", default-features = false }
 
 [lints.rust]
 rust_2018_idioms = "warn"
@@ -56,6 +86,10 @@ semicolon_if_nothing_returned = "warn"
 
 [[bench]]
 name = "antisequence_benches"
+harness = false
+
+[[bench]]
+name = "protocol_feature_benches"
 harness = false
 
 [profile.bench]

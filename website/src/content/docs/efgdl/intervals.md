@@ -50,8 +50,17 @@ uses the same numbered layout notation:
 -> 1{<bc><umi>} 2{<bio>}
 ```
 
-An output can contain only extracted labels; it need not reproduce consumed
-anchors or discarded sequence.
+An output need not reproduce consumed anchors or discarded sequence. In EFGDL
+2 it may combine extracted labels with constructed `f[...]` literals:
+
+```text
+header { efgdl = 2 }
+1{b<bc>[16]u<umi>[10]r<bio>:}
+-> 1{f[ACGT]<bc><umi>} 2{<bio>}
+```
+
+Constructed bases receive `I` quality scores. See [EFGDL 2](../version-2/)
+for output FASTQ-name templates and the complete versioned-output behavior.
 
 ## Definitions and references
 

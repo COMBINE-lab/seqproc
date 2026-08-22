@@ -33,6 +33,17 @@ This directory contains Criterion benchmarks for the `seqproc` API on top of the
   - Defaults to 100,000 synthetic read pairs. Override with
     `ANTISEQ_STATS_BENCH_READS`.
 
+- `protocol_feature_benches`
+  - Measures ordered-layout success in the first arm, late fallback, and total
+    rejection separately.
+  - Compares headerless EFGDL 1 with an EFGDL 2 document that uses no new
+    runtime feature.
+  - Compares statically indexed repetition with a manually expanded equivalent
+    geometry.
+  - Measures exact anchor sets at 8 and 1,024 entries.
+  - Defaults to 20,000 in-memory reads; override with
+    `SEQPROC_FEATURE_BENCH_READS`.
+
 - `antisequence_sci_rna_seq3_disk`
   - On-disk gzipped FASTQs (ENA subsets).
   - Uses env vars `SCI3_R1` and `SCI3_R2` if set; otherwise defaults to `data/sci3/SRR7827206_{1,2}_10k.fastq.gz` under `CARGO_MANIFEST_DIR`.
@@ -53,6 +64,7 @@ This directory contains Criterion benchmarks for the `seqproc` API on top of the
 - Run only these benches:
   ```bash
   cargo bench --bench antisequence_benches
+  cargo bench --bench protocol_feature_benches
   ```
 
 - Filter to specific groups/functions:

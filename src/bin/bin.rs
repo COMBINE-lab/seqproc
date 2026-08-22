@@ -1,14 +1,47 @@
 use std::process::exit;
 
+// GNU_PROPERTY_X86_ISA_1_NEEDED is a loader-visible contract, unlike a CPU
+// check in ordinary v3-compiled Rust code (which could itself execute AVX
+// before reporting an error). Bits 0x1 | 0x2 | 0x4 declare the cumulative
+// x86-64 baseline, v2, and v3 psABI levels. Emitting the standard note here
+// works with older GNU linkers that predate `ld -z x86-64-v3`; compatible
+// linkers merge it with the properties emitted by startup objects.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", feature = "release-simd"))]
+std::arch::global_asm!(
+    r#"
+    .pushsection .note.gnu.property, "a"
+    .p2align 3
+    .long 1f - 0f
+    .long 4f - 1f
+    .long 5
+0:
+    .asciz "GNU"
+1:
+    .p2align 3
+    .long 0xc0008002
+    .long 3f - 2f
+2:
+    .long 0x7
+3:
+    .p2align 3
+4:
+    .popsection
+"#
+);
+
 use std::fs::File;
 use std::io;
 use std::path::PathBuf;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
-use antisequence::graph::StatisticsLevel;
+use antisequence::graph::{ExecutionMode, PipelineInputMode, StatisticsLevel};
 use seqproc::{
+    build_info::{build_provenance, ensure_runtime_cpu_compatible},
     demux::DemuxConfig,
-    execute::{compile_geom, run, RunConfig},
+    error::{render_geometry_diagnostics, SeqprocError},
+    execute::{compile_geom_typed, run, OutputCompatibility, RunConfig},
+    io_config::{InputLane, InputSource, OutputTarget},
+    resources::ResourceBindings,
 };
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -26,14 +59,60 @@ impl From<StatisticsLevelArg> for StatisticsLevel {
     }
 }
 
-/// General puprose sequence preprocessor
+#[derive(Debug, Default, Clone, Copy, clap::ValueEnum)]
+enum ExecutionModeArg {
+    #[default]
+    Auto,
+    WholeGraph,
+    Pipeline,
+}
+
+impl From<ExecutionModeArg> for ExecutionMode {
+    fn from(value: ExecutionModeArg) -> Self {
+        match value {
+            ExecutionModeArg::Auto => Self::Auto,
+            ExecutionModeArg::WholeGraph => Self::WholeGraph,
+            ExecutionModeArg::Pipeline => Self::Pipeline,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, clap::ValueEnum)]
+enum PipelineInputModeArg {
+    #[default]
+    WorkerLocal,
+    DedicatedReader,
+}
+
+impl From<PipelineInputModeArg> for PipelineInputMode {
+    fn from(value: PipelineInputModeArg) -> Self {
+        match value {
+            PipelineInputModeArg::WorkerLocal => Self::WorkerLocal,
+            PipelineInputModeArg::DedicatedReader => Self::DedicatedReader,
+        }
+    }
+}
+
+/// General purpose sequence preprocessor.
 #[derive(Debug, clap::Parser)]
+// Load-bearing compatibility boundary: legacy top-level flags (including
+// `--file1`) must conflict with `run` rather than being accepted as global
+// arguments that could bypass the subcommand's strict output contract.
 #[command(
     name = "seqproc",
+    disable_version_flag = true,
     about = "Geometry-driven FASTQ preprocessing",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
+    /// Print seqproc's version and exit.
+    #[arg(short = 'V', long, global = true)]
+    version: bool,
+
+    /// Include compiler, target, CPU-floor, and SIMD-backend provenance.
+    #[arg(long, global = true, requires = "version")]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 
@@ -62,12 +141,34 @@ pub struct RunArgs {
     geom: Option<PathBuf>,
 
     /// r1 fastq file
-    #[arg(short = '1', long)]
+    #[arg(short = '1', long, conflicts_with = "read1")]
     file1: Option<PathBuf>,
 
+    /// Ordered R1 FASTQ shards; repeat the option or separate paths with commas.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read1: Vec<PathBuf>,
+
     /// r2 fastq file
-    #[arg(short = '2', long)]
+    #[arg(short = '2', long, conflicts_with = "read2")]
     file2: Option<PathBuf>,
+
+    /// Ordered R2 FASTQ shards; repeat the option or separate paths with commas.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read2: Vec<PathBuf>,
+
+    /// Ordered R3 FASTQ shards; repeat the option or separate paths with commas.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read3: Vec<PathBuf>,
+
+    /// Ordered FASTQ shards containing interleaved complete fragments. The
+    /// geometry determines whether each fragment contains 1, 2, or 3 records.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        action = clap::ArgAction::Append,
+        conflicts_with_all = ["file1", "read1", "file2", "read2", "read3"]
+    )]
+    interleaved_input: Vec<PathBuf>,
 
     /// r1 out fastq file
     #[arg(short = 'o', long)]
@@ -76,6 +177,14 @@ pub struct RunArgs {
     /// r2 out fastq file
     #[arg(short = 'w', long)]
     out2: Option<PathBuf>,
+
+    /// r3 out fastq file
+    #[arg(long)]
+    out3: Option<PathBuf>,
+
+    /// Gzip-compress a FASTQ output lane directed to stdout (`-`).
+    #[arg(long)]
+    stdout_gzip: bool,
 
     /// number of threads to use
     #[arg(short, long, default_value_t = 1)]
@@ -95,6 +204,34 @@ pub struct RunArgs {
     #[arg(long)]
     staged_pipeline: bool,
 
+    /// Select execution planning explicitly. `auto` preserves the measured
+    /// low-overhead whole-graph default unless ordering requires a pipeline.
+    #[arg(long, value_enum, default_value = "auto")]
+    execution_mode: ExecutionModeArg,
+
+    /// Disable conservative compile-time graph optimization. Intended for
+    /// byte-equivalence tests and controlled performance comparisons.
+    #[arg(long)]
+    no_graph_optimization: bool,
+
+    /// Disable only the proof-backed dead-label elimination pass.
+    #[arg(long)]
+    no_dead_label_elimination: bool,
+
+    /// Disable only conservative early placement of selective filters.
+    #[arg(long)]
+    no_early_filter_placement: bool,
+
+    /// Select where FASTQ parsing occurs when the pipeline backend is used.
+    #[arg(long, value_enum, default_value = "worker-local")]
+    pipeline_input_mode: PipelineInputModeArg,
+
+    /// Materialize terminal projected reads instead of rendering them directly.
+    /// Intended for validation and performance comparisons; direct rendering is
+    /// enabled by default whenever the staged planner proves it safe.
+    #[arg(long)]
+    no_direct_output_rendering: bool,
+
     /// Capacity of each pipeline hand-off queue, in batches. By default this
     /// is tuned from the worker count.
     #[arg(long)]
@@ -108,6 +245,15 @@ pub struct RunArgs {
     /// Reads per batch in staged execution.
     #[arg(long)]
     batch_size: Option<usize>,
+
+    /// Retain the fixed pipeline defaults instead of deterministic graph- and
+    /// geometry-aware batch planning.
+    #[arg(long)]
+    no_dynamic_batch_planning: bool,
+
+    /// Memory budget in MiB for admitted record batches and codec buffers.
+    #[arg(long, default_value_t = 256)]
+    batch_memory_budget_mib: usize,
 
     /// Gzip compression level for output paths ending in `.gz`. Level 3 is a
     /// fast default; use 6 for the previous size/speed tradeoff.
@@ -162,6 +308,10 @@ pub struct RunArgs {
     #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     additional: Vec<String>,
 
+    /// Bind a declared EFGDL 2 resource as NAME=PATH. May be repeated.
+    #[arg(long = "bind", value_name = "NAME=PATH")]
+    bindings: Vec<String>,
+
     // Demultiplexing options
     /// Path to TSV file mapping barcodes to sample names (enables demultiplexing)
     #[arg(long = "demux-map")]
@@ -183,9 +333,38 @@ pub struct RunArgs {
     /// R2 output file for reads that failed processing (unassigned)
     #[arg(long = "unassigned2")]
     unassigned2: Option<PathBuf>,
+
+    /// R3 output file for reads that failed processing (unassigned)
+    #[arg(long = "unassigned3")]
+    unassigned3: Option<PathBuf>,
+}
+
+fn cli_output_targets(paths: [Option<PathBuf>; 3]) -> Vec<OutputTarget> {
+    let Some(last) = paths.iter().rposition(Option::is_some) else {
+        return Vec::new();
+    };
+    paths
+        .into_iter()
+        .take(last + 1)
+        .map(|path| {
+            path.map(OutputTarget::from_cli_path)
+                .unwrap_or(OutputTarget::Discard)
+        })
+        .collect()
 }
 
 fn main() {
+    if let Err(error) = ensure_runtime_cpu_compatible() {
+        eprintln!("error: {error}");
+        exit(78);
+    }
+
+    let cli = <Cli as clap::Parser>::parse();
+    if cli.version {
+        print_version(cli.verbose);
+        return;
+    }
+
     // set up the logging. Here we will take the
     // logging level from the environment variable if
     // it is set. Otherwise we will set the default
@@ -199,25 +378,26 @@ fn main() {
         )
         .init();
 
-    let cli = <Cli as clap::Parser>::parse();
-    let args = match cli.command {
+    let (args, output_compatibility) = match cli.command {
         Some(Command::Validate { geometry }) => {
             let source = read_geometry(&geometry);
-            match compile_geom(source.clone()) {
-                Ok(_) => {
+            match compile_geom_typed(&source) {
+                Ok(compiled) => {
+                    report_warnings(&compiled.warnings);
                     println!("valid: {}", geometry.display());
                     return;
                 }
-                Err(errors) => {
-                    report_geometry_errors(&source, &errors);
-                    exit(1);
+                Err(error) => {
+                    report_seqproc_error(Some(&source), &error);
+                    exit(error.exit_code());
                 }
             }
         }
         Some(Command::Explain { geometry }) => {
             let source = read_geometry(&geometry);
-            match compile_geom(source.clone()) {
+            match compile_geom_typed(&source) {
                 Ok(compiled) => {
+                    report_warnings(&compiled.warnings);
                     let representation = format!("{compiled:#?}");
                     let normalized = compiled.get_simplified_description_string();
                     println!(
@@ -225,18 +405,18 @@ fn main() {
                     );
                     return;
                 }
-                Err(errors) => {
-                    report_geometry_errors(&source, &errors);
-                    exit(1);
+                Err(error) => {
+                    report_seqproc_error(Some(&source), &error);
+                    exit(error.exit_code());
                 }
             }
         }
-        Some(Command::Run(args)) => args,
+        Some(Command::Run(args)) => (args, OutputCompatibility::Strict),
         None => {
             eprintln!(
                 "warning: the flag-only invocation is deprecated; use `seqproc run ...` instead"
             );
-            cli.legacy
+            (cli.legacy, OutputCompatibility::LegacyPrefix)
         }
     };
 
@@ -244,24 +424,54 @@ fn main() {
         eprintln!("error: --geom is required for a run");
         exit(2);
     });
-    let file1 = args.file1.unwrap_or_else(|| {
-        eprintln!("error: --file1 is required for a run");
+    let interleaved_input = args.interleaved_input.clone();
+    let read1 = if args.read1.is_empty() {
+        args.file1.clone().into_iter().collect::<Vec<_>>()
+    } else {
+        args.read1.clone()
+    };
+    if read1.is_empty() && interleaved_input.is_empty() {
+        eprintln!("error: --read1 (or legacy --file1) is required for a run");
         exit(2);
-    });
+    }
+    let read2 = if args.read2.is_empty() {
+        args.file2.clone().into_iter().collect::<Vec<_>>()
+    } else {
+        args.read2.clone()
+    };
+    let read3 = args.read3.clone();
+    if !read3.is_empty() && read2.is_empty() {
+        eprintln!("error: --read3 requires --read2; input lane indices must be contiguous");
+        exit(2);
+    }
+    let Some(file1) = interleaved_input.first().or_else(|| read1.first()).cloned() else {
+        eprintln!("error: no FASTQ input remained after CLI validation");
+        exit(2);
+    };
 
     let geom = read_geometry(&geom_path);
-    let geometry_digest = format!("md5:{:x}", md5::compute(geom.as_bytes()));
+    let geometry_digest = format!("blake3:{}", blake3::hash(geom.as_bytes()).to_hex());
+    let geometry_base = std::fs::canonicalize(&geom_path)
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .or_else(|| geom_path.parent().map(std::path::Path::to_path_buf));
 
     // Validate input FASTQ paths up front so a missing file surfaces as a clean
     // error instead of a panic from deep inside the read-processing engine.
-    for f in std::iter::once(&file1).chain(args.file2.iter()) {
+    for f in read1
+        .iter()
+        .chain(&read2)
+        .chain(&read3)
+        .chain(&interleaved_input)
+        .filter(|path| *path != std::path::Path::new("-"))
+    {
         if !f.exists() {
             eprintln!("error: input FASTQ not found: {:?}", f);
             std::process::exit(1);
         }
     }
 
-    let compiled_efgdl = compile_geom(geom.clone());
+    let compiled_efgdl = compile_geom_typed(&geom);
 
     let threads = args.threads;
 
@@ -270,6 +480,21 @@ fn main() {
         .iter()
         .map(|a| a.as_str())
         .collect::<Vec<_>>();
+    let mut resource_bindings = ResourceBindings::new();
+    for binding in &args.bindings {
+        let Some((name, path)) = binding.split_once('=') else {
+            eprintln!("error: malformed --bind `{binding}`; expected NAME=PATH");
+            exit(2);
+        };
+        if name.is_empty() || path.is_empty() {
+            eprintln!("error: malformed --bind `{binding}`; expected NAME=PATH");
+            exit(2);
+        }
+        if let Err(error) = resource_bindings.insert(name, path) {
+            eprintln!("error: {error}");
+            exit(2);
+        }
+    }
 
     // Build demux config if demux-map is provided
     let demux_config = args.demux_map.as_ref().map(|map_path| {
@@ -279,18 +504,76 @@ fn main() {
 
     match compiled_efgdl {
         Ok(geom) => {
+            report_warnings(&geom.warnings);
             let mut config = RunConfig::new(file1.clone());
-            config.input2 = args.file2.clone();
+            config.output_compatibility = output_compatibility;
+            config.input2 = read2.first().cloned();
+            if interleaved_input.is_empty() {
+                let mut input_lanes = vec![InputLane::new(
+                    read1.iter().cloned().map(InputSource::from_cli_path),
+                )];
+                if !read2.is_empty() {
+                    input_lanes.push(InputLane::new(
+                        read2.iter().cloned().map(InputSource::from_cli_path),
+                    ));
+                }
+                if !read3.is_empty() {
+                    input_lanes.push(InputLane::new(
+                        read3.iter().cloned().map(InputSource::from_cli_path),
+                    ));
+                }
+                config.input_lanes = Some(input_lanes);
+            } else {
+                config.interleaved_input = Some(
+                    interleaved_input
+                        .iter()
+                        .cloned()
+                        .map(InputSource::from_cli_path)
+                        .collect(),
+                );
+            }
             config.output1 = args.out1.clone();
             config.output2 = args.out2.clone();
             config.unassigned1 = args.unassigned1.clone();
             config.unassigned2 = args.unassigned2.clone();
+            if args.out3.is_some()
+                || args.out1.as_deref() == Some(std::path::Path::new("-"))
+                || args.out2.as_deref() == Some(std::path::Path::new("-"))
+            {
+                config.outputs = Some(cli_output_targets([
+                    args.out1.clone(),
+                    args.out2.clone(),
+                    args.out3.clone(),
+                ]));
+            }
+            if args.unassigned3.is_some()
+                || args.unassigned1.as_deref() == Some(std::path::Path::new("-"))
+                || args.unassigned2.as_deref() == Some(std::path::Path::new("-"))
+            {
+                config.unassigned_outputs = Some(cli_output_targets([
+                    args.unassigned1.clone(),
+                    args.unassigned2.clone(),
+                    args.unassigned3.clone(),
+                ]));
+            }
+            config.stdout_gzip = args.stdout_gzip;
             config.threads = threads;
             config.preserve_order = args.preserve_order;
             config.staged_pipeline = args.staged_pipeline;
+            config.execution_mode = args.execution_mode.into();
+            config.graph_optimization = !args.no_graph_optimization;
+            config.graph_optimization_passes.dead_label_elimination =
+                !args.no_dead_label_elimination;
+            config
+                .graph_optimization_passes
+                .early_selective_filter_placement = !args.no_early_filter_placement;
+            config.pipeline_input_mode = args.pipeline_input_mode.into();
+            config.direct_output_rendering = !args.no_direct_output_rendering;
             config.queue_capacity = args.queue_capacity;
             config.max_in_flight_batches = args.max_in_flight_batches;
             config.batch_size = args.batch_size;
+            config.dynamic_batch_planning = !args.no_dynamic_batch_planning;
+            config.batch_memory_budget = args.batch_memory_budget_mib.saturating_mul(1024 * 1024);
             config.gzip_level = args.gzip_level;
             config.parallel_gzip = args.parallel_gzip;
             config.parallel_gzip_stream = args.parallel_gzip_stream;
@@ -300,6 +583,8 @@ fn main() {
             config.gzip_input_threads = args.gzip_input_threads;
             config.gzip_input_chunk_size = args.gzip_input_chunk_size;
             config.additional_args = additional_args.into_iter().map(str::to_owned).collect();
+            config.resource_bindings = resource_bindings;
+            config.geometry_base = geometry_base;
             config.demux = demux_config;
             config.statistics_level = if args.summary.is_some() {
                 args.statistics_level
@@ -308,14 +593,21 @@ fn main() {
             } else {
                 StatisticsLevel::Off
             };
-            config.call = Some(std::env::args().collect::<Vec<_>>().join(" "));
+            // args_os: non-UTF-8 arguments are legal on Unix and must not panic.
+            config.call = Some(
+                std::env::args_os()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
             config.geometry_digest = Some(geometry_digest);
 
             let report = match run(config, geom) {
                 Ok(report) => report,
+                Err(SeqprocError::StdoutBrokenPipe { .. }) => exit(0),
                 Err(error) => {
-                    eprintln!("error: seqproc execution failed: {error}");
-                    exit(1);
+                    report_seqproc_error(None, &error);
+                    exit(error.exit_code());
                 }
             };
 
@@ -324,23 +616,42 @@ fn main() {
                     eprintln!("error: summary statistics were not collected");
                     exit(1);
                 };
-                let file = File::create(&summary_path).unwrap_or_else(|error| {
-                    eprintln!(
-                        "error: failed to create summary {:?}: {error}",
-                        summary_path
-                    );
-                    exit(1);
-                });
-                if let Err(error) = serde_json::to_writer_pretty(file, &statistics) {
+                let result = if summary_path == std::path::Path::new("-") {
+                    serde_json::to_writer_pretty(io::stderr().lock(), &statistics)
+                } else {
+                    let file = File::create(&summary_path).unwrap_or_else(|error| {
+                        eprintln!(
+                            "error: failed to create summary {:?}: {error}",
+                            summary_path
+                        );
+                        exit(1);
+                    });
+                    serde_json::to_writer_pretty(file, &statistics)
+                };
+                if let Err(error) = result {
                     eprintln!("error: failed to write summary {:?}: {error}", summary_path);
                     exit(1);
                 }
             }
         }
-        Err(errs) => {
-            report_geometry_errors(&geom, &errs);
-            exit(1);
+        Err(error) => {
+            report_seqproc_error(Some(&geom), &error);
+            exit(error.exit_code());
         }
+    }
+}
+
+fn print_version(verbose: bool) {
+    let build = build_provenance();
+    println!("seqproc {}", build.seqproc_version);
+    if verbose {
+        println!("rustc: {}", build.rustc_version);
+        println!("target: {}", build.target_triple);
+        println!("compiler CPU target: {}", build.compiler_cpu_target);
+        println!("build profile: {}", build.build_profile);
+        println!("CPU floor: {}", build.cpu_floor);
+        println!("SIMD backend: {}", build.simd_backend);
+        println!("target features: {}", build.target_features.join(","));
     }
 }
 
@@ -351,19 +662,18 @@ fn read_geometry(path: &PathBuf) -> String {
     })
 }
 
-fn report_geometry_errors(source: &str, errors: &[chumsky::error::Rich<'static, String>]) {
-    use ariadne::{Color, Label, Report, ReportKind, Source};
-    for error in errors {
-        Report::build(ReportKind::Error, ((), error.span().into_range()))
-            .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
-            .with_message(error.to_string())
-            .with_label(
-                Label::new(((), error.span().into_range()))
-                    .with_message(error.reason().to_string())
-                    .with_color(Color::Red),
-            )
-            .finish()
-            .print(Source::from(source))
-            .unwrap();
+fn report_seqproc_error(source: Option<&str>, error: &SeqprocError) {
+    if let (Some(source), Some((_, diagnostics))) = (source, error.geometry_diagnostics()) {
+        if let Err(render_error) = render_geometry_diagnostics(source, diagnostics) {
+            eprintln!("error: could not render geometry diagnostics: {render_error}");
+        }
+    } else {
+        eprintln!("error: {error}");
+    }
+}
+
+fn report_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("warning: {warning}");
     }
 }

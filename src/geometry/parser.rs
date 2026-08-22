@@ -8,6 +8,51 @@ use crate::{lexer::Token, Nucleotide, S};
 
 use super::Span;
 
+/// A file-backed resource referenced by a geometry operation.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ResourceRef {
+    /// A quoted path embedded in the geometry.
+    Literal(String),
+    /// A legacy zero-based `$0`, `$1`, ... runtime resource.
+    Positional(usize),
+    /// A declared `$name` runtime resource.
+    Named(String),
+}
+
+impl fmt::Display for ResourceRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Literal(path) => write!(f, "\"{path}\""),
+            Self::Positional(index) => write!(f, "${index}"),
+            Self::Named(name) => write!(f, "${name}"),
+        }
+    }
+}
+
+impl From<String> for ResourceRef {
+    fn from(value: String) -> Self {
+        Self::Literal(value)
+    }
+}
+
+impl From<&str> for ResourceRef {
+    fn from(value: &str) -> Self {
+        Self::Literal(value.to_owned())
+    }
+}
+
+impl PartialEq<str> for ResourceRef {
+    fn eq(&self, other: &str) -> bool {
+        matches!(self, Self::Literal(path) if path == other)
+    }
+}
+
+impl PartialEq<&str> for ResourceRef {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
 /// The length of a nucleotide interval,
 /// and whether it must match a specific sequence.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -68,19 +113,19 @@ pub enum Function {
     /// `norm(I)`
     Normalize,
     /// `map(I, A, F)`
-    Map(String, S<Box<Expr>>),
+    Map(ResourceRef, S<Box<Expr>>),
     /// `map_with_mismatch(I, A, F, n)`
-    MapWithMismatch(String, S<Box<Expr>>, usize),
+    MapWithMismatch(ResourceRef, S<Box<Expr>>, usize),
     /// `filter(I, A)`
-    Filter(String),
+    Filter(ResourceRef),
     /// `filter_within_dist(I, A, n)`
-    FilterWithinDist(String, usize),
+    FilterWithinDist(ResourceRef, usize),
     /// `hamming(F, n)`
     Hamming(usize),
     /// `edit(F, n)` - edit distance (Levenshtein) matching
     Edit(usize),
     /// `map_with_edit(I, A, F, n)` - map with edit distance tolerance
-    MapWithEdit(String, S<Box<Expr>>, usize),
+    MapWithEdit(ResourceRef, S<Box<Expr>>, usize),
     /// `anchor_relative(F)` - search for anchor from position 0 and extract preceding elements with flexible length
     Anchor,
 }
@@ -156,6 +201,10 @@ pub enum Expr {
     /// An inline variable reference/binding: `<my_label>`.
     Label(S<String>),
 
+    /// A one-based reference to one occurrence of a statically bounded
+    /// repeated capture: `<my_label[2]>`.
+    IndexedLabel(S<String>, S<usize>),
+
     /// An interval, with a specifier and a length: `b[10]`, `u[11-13]`, `f[AUCG]`, `r:`.
     GeomPiece(IntervalKind, IntervalShape),
 
@@ -170,6 +219,19 @@ pub enum Expr {
     ///
     /// `.1` is the first argument.
     Function(S<Function>, S<Box<Self>>),
+
+    /// Ordered concatenation in an EFGDL 2 input layout.
+    LayoutConcat(Vec<S<Self>>),
+
+    /// Ordered alternatives in an EFGDL 2 input layout. The first successful
+    /// alternative wins at runtime.
+    LayoutChoice(Vec<S<Self>>),
+
+    /// An optional EFGDL 2 input-layout term.
+    LayoutOptional(S<Box<Self>>),
+
+    /// A fixed-count EFGDL 2 input-layout repetition.
+    LayoutRepeat(S<Box<Self>>, S<usize>),
 }
 
 impl fmt::Display for Expr {
@@ -178,11 +240,29 @@ impl fmt::Display for Expr {
         match self {
             Self_ => write!(f, "self"),
             Label(S(s, _)) => write!(f, "<{s}>"),
+            IndexedLabel(S(s, _), S(index, _)) => write!(f, "<{s}[{index}]>"),
             GeomPiece(t, s) => write!(f, "{t}{s}"),
             LabeledGeomPiece(S(l, _), S(expr, _)) => {
                 write!(f, "{l}={expr}")
             }
             Function(S(fn_, _), S(expr, _)) => fn_.fmt(f, format_args!("{expr}")),
+            LayoutConcat(parts) => {
+                for S(part, _) in parts {
+                    write!(f, "{part}")?;
+                }
+                Ok(())
+            }
+            LayoutChoice(arms) => {
+                for (index, S(arm, _)) in arms.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(" | ")?;
+                    }
+                    write!(f, "{arm}")?;
+                }
+                Ok(())
+            }
+            LayoutOptional(S(expr, _)) => write!(f, "({expr})?"),
+            LayoutRepeat(S(expr, _), S(count, _)) => write!(f, "({expr})*{count}"),
         }
     }
 }
@@ -219,10 +299,64 @@ pub struct AnnotationValueArg {
     pub value: S<String>,
 }
 
+/// A scalar value in the version-neutral EFGDL document header.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum HeaderValue {
+    Number(usize),
+    String(String),
+    Identifier(String),
+}
+
+/// One entry in an EFGDL document header, such as `efgdl = 2`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct HeaderField {
+    pub name: S<String>,
+    pub value: S<HeaderValue>,
+}
+
+/// Version-neutral metadata at the beginning of an EFGDL document.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DocumentHeader {
+    pub fields: Vec<S<HeaderField>>,
+}
+
+/// One declaration in an EFGDL 2 `resources` block.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ResourceDeclaration {
+    pub name: S<String>,
+    /// A quoted default path, resolved relative to the geometry file.
+    pub default: Option<S<String>>,
+}
+
+/// How an EFGDL 2 output transformation modifies a FASTQ record name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OutputHeaderMode {
+    Append,
+    Prepend,
+    Replace,
+}
+
+/// One component of an output FASTQ-header template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum OutputHeaderPart {
+    Literal(String),
+    Label(S<String>),
+    IndexedLabel(S<String>, S<usize>),
+}
+
+/// An optional output-record header transformation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct OutputHeader {
+    pub mode: S<OutputHeaderMode>,
+    pub parts: Vec<S<OutputHeaderPart>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// A read, with optional annotations, index, and expressions: `#[match_ori(either)] 1{...}`.
 pub struct Read {
     pub annotations: Vec<S<Annotation>>,
+    /// Only populated for reads on the output side of `->`.
+    pub output_header: Option<S<OutputHeader>>,
     pub index: S<usize>,
     pub exprs: Vec<S<Expr>>,
 }
@@ -244,6 +378,11 @@ pub enum TransformOutput {
 /// A full EFGDL file: 0+ definitions, then input reads, then transformed reads.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Description {
+    /// Optional document header. Headerless files retain legacy EFGDL 1
+    /// semantics; new EFGDL 2 documents declare `header { efgdl = 2 }`.
+    pub header: Option<S<DocumentHeader>>,
+    /// Optional named resource declarations for EFGDL 2.
+    pub resources: Option<S<Vec<S<ResourceDeclaration>>>>,
     /// The list of definitions at the top of an EFGDL file:
     /// `brc = b[10] foo = f[CAGAGC]`.
     pub definitions: S<Vec<S<Definition>>>,
@@ -395,8 +534,65 @@ pub fn parser<'tokens>(
     let label = select! { Token::Label(x) => x.clone() };
     let num = select! {Token::Num(n) => n };
     let file = select! {Token::File(f) => f.clone() };
-    let argument = select! {Token::Arg(n) => n.to_string() };
+    let argument = select! {Token::Arg(n) => format!("${n}") };
+    let resource_ref = choice((
+        select! { Token::File(path) => ResourceRef::Literal(path.clone()) },
+        select! { Token::Arg(index) => ResourceRef::Positional(index) },
+        select! { Token::NamedArg(name) => ResourceRef::Named(name.clone()) },
+    ))
+    .boxed();
     let self_ = select! { Token::Self_ => Expr::Self_ };
+
+    // The document header intentionally uses a small, version-neutral scalar
+    // grammar so it can select the grammar/semantics of the body that follows.
+    let header_key = select! { Token::Label(key) => key.clone() };
+    let header_value = choice((
+        select! { Token::Num(value) => HeaderValue::Number(value) },
+        select! { Token::File(value) => HeaderValue::String(value.clone()) },
+        select! { Token::Label(value) => HeaderValue::Identifier(value.clone()) },
+    ));
+    let header_field = header_key
+        .map_with(|name, state| S(name, state.span()))
+        .then_ignore(just(Token::Equals))
+        .then(header_value.map_with(|value, state| S(value, state.span())))
+        .map_with(|(name, value), state| S(HeaderField { name, value }, state.span()));
+    let document_header = select! {
+        Token::Label(name) if name == "header" => (),
+    }
+    .ignore_then(
+        header_field
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .at_least(1)
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+    )
+    .map_with(|fields, state| S(DocumentHeader { fields }, state.span()))
+    .or_not()
+    .boxed();
+
+    let resource_declaration = label
+        .map_with(|name, state| S(name, state.span()))
+        .then(
+            just(Token::Equals)
+                .ignore_then(file.map_with(|path, state| S(path, state.span())))
+                .or_not(),
+        )
+        .map_with(|(name, default), state| S(ResourceDeclaration { name, default }, state.span()));
+    let resources = select! {
+        Token::Label(name) if name == "resources" => (),
+    }
+    .ignore_then(
+        resource_declaration
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .at_least(1)
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+    )
+    .map_with(|declarations, state| S(declarations, state.span()))
+    .or_not()
+    .boxed();
 
     let piece_type = select! {
         Token::Barcode => IntervalKind::Barcode,
@@ -414,13 +610,29 @@ pub fn parser<'tokens>(
         Token::U => Nucleotide::U,
     };
 
-    let inline_label = label
+    let inline_binding = label
         .delimited_by(
             just(Token::LAngle).labelled("opening '<'"),
             just(Token::RAngle).labelled("closing '>'"),
         )
         .map_with(|l, span: &mut _| Expr::Label(S(l, span.span())))
         .labelled("inline label");
+
+    let capture_reference = label
+        .then(
+            num.map_with(|index, state| S(index, state.span()))
+                .delimited_by(just(Token::LBracket), just(Token::RBracket))
+                .or_not(),
+        )
+        .delimited_by(
+            just(Token::LAngle).labelled("opening '<'"),
+            just(Token::RAngle).labelled("closing '>'"),
+        )
+        .map_with(|(label, index), state| match index {
+            Some(index) => Expr::IndexedLabel(S(label, state.span()), index),
+            None => Expr::Label(S(label, state.span())),
+        })
+        .labelled("capture reference");
 
     // interval shape parsers
     let range = num
@@ -448,7 +660,7 @@ pub fn parser<'tokens>(
 
     // geom piece parsers
     let unbounded = piece_type
-        .then(inline_label.clone().or_not())
+        .then(inline_binding.clone().or_not())
         .then_ignore(just(Token::Colon))
         .map_with(|(kind, label), span| {
             make_geom_piece(kind, IntervalShape::UnboundedLen, label, span.span())
@@ -456,22 +668,29 @@ pub fn parser<'tokens>(
         .labelled("Unbounded geometry peice: e.g. 'r:'")
         .as_context();
 
-    let ranged = parse_geometry_piece!(piece_type, inline_label.clone(), range)
+    let ranged = parse_geometry_piece!(piece_type, inline_binding.clone(), range)
         .labelled("Variable length geometry piece: e.g. 'b[9-10]'")
         .as_context();
     let fixed_seq = parse_geometry_piece!(
         just(Token::FixedSeq).to(IntervalKind::FixedSeq),
-        inline_label.clone(),
+        inline_binding.clone(),
         nuc_seq
     )
     .labelled("Fixed sequence geometry piece: e.g. 'f[ATGC]'")
     .as_context();
-    let fixed = parse_geometry_piece!(piece_type, inline_label.clone(), fixed_len)
+    let fixed = parse_geometry_piece!(piece_type, inline_binding.clone(), fixed_len)
         .labelled("Fixed length geometry piece: e.g. 'b[10]'")
         .as_context();
 
     // what constitutes a valid geometry peice
-    let geom_piece = choice((unbounded, ranged, fixed, fixed_seq, inline_label, self_));
+    let geom_piece = choice((
+        unbounded,
+        ranged,
+        fixed,
+        fixed_seq,
+        capture_reference.clone(),
+        self_,
+    ));
 
     // transformed peices
     let transformed_pieces = recursive(|tp| {
@@ -506,8 +725,7 @@ pub fn parser<'tokens>(
                 function_arguments!(
                     tp.clone()
                         .labelled("geometry piece as argument to 'filter'"),
-                    file.labelled("file name")
-                        .or(argument.labelled("argument from commandline"))
+                    resource_ref.clone().labelled("resource reference")
                 )
             ),
             nary_functions!(
@@ -527,8 +745,7 @@ pub fn parser<'tokens>(
                 ternary_function,
                 function_arguments!(
                     tp.clone().labelled("geometry piece to 'map'"),
-                    file.labelled("file name")
-                        .or(argument.labelled("argument from commandline")),
+                    resource_ref.clone().labelled("resource reference"),
                     tp.clone()
                         .labelled("geometry piece after mapping")
                         .map_with(|transf_p, state| S(Box::new(transf_p), state.span()))
@@ -540,8 +757,7 @@ pub fn parser<'tokens>(
                 function_arguments!(
                     tp.clone()
                         .labelled("geometry piece to 'filter_within_dist'"),
-                    file.labelled("file name")
-                        .or(argument.labelled("argument from commandline")),
+                    resource_ref.clone().labelled("resource reference"),
                     num.labelled("numerical argument")
                 )
             ),
@@ -549,8 +765,7 @@ pub fn parser<'tokens>(
                 quaternary_function,
                 function_arguments!(
                     tp.clone().labelled("geometry piece to 'map_with_mismatch'"),
-                    file.labelled("file name")
-                        .or(argument.labelled("argument from commandline")),
+                    resource_ref.clone().labelled("resource reference"),
                     tp.clone()
                         .labelled("geometry piece after mapping")
                         .map_with(|transf_p, state| S(Box::new(transf_p), state.span())),
@@ -567,6 +782,62 @@ pub fn parser<'tokens>(
         ))
     })
     .map_with(|s, state| S(s, state.span()));
+
+    // EFGDL 2 input-layout algebra. Concatenation remains implicit, `|` is
+    // an ordered choice, `?` makes a term optional, and `*N` repeats a term a
+    // fixed number of times. The compiler rejects these constructs in
+    // headerless (legacy EFGDL 1) documents and bounds their normalization.
+    let input_layout = recursive(|layout| {
+        let grouped = layout
+            .clone()
+            .delimited_by(just(Token::LParen), just(Token::RParen));
+        let atom = choice((transformed_pieces.clone(), grouped));
+
+        let postfix = atom
+            .then(
+                choice((
+                    just(Token::Question).to(None),
+                    just(Token::Star).ignore_then(num).map(Some),
+                ))
+                .or_not(),
+            )
+            .map_with(|(term, modifier), state| match modifier {
+                None => term,
+                Some(None) => S(
+                    Expr::LayoutOptional(S(Box::new(term.0), term.1)),
+                    state.span(),
+                ),
+                Some(Some(count)) => S(
+                    Expr::LayoutRepeat(S(Box::new(term.0), term.1), S(count, state.span())),
+                    state.span(),
+                ),
+            });
+
+        let concat =
+            postfix
+                .repeated()
+                .at_least(1)
+                .collect::<Vec<_>>()
+                .map_with(|mut parts, state| {
+                    if parts.len() == 1 {
+                        parts.pop().expect("one layout part")
+                    } else {
+                        S(Expr::LayoutConcat(parts), state.span())
+                    }
+                });
+
+        concat
+            .separated_by(just(Token::Pipe))
+            .at_least(1)
+            .collect::<Vec<_>>()
+            .map_with(|mut arms, state| {
+                if arms.len() == 1 {
+                    arms.pop().expect("one layout arm")
+                } else {
+                    S(Expr::LayoutChoice(arms), state.span())
+                }
+            })
+    });
 
     // Annotation name: accepts Label tokens and keyword tokens that may appear
     // as annotation names (e.g., edit, hamming, match).
@@ -587,6 +858,9 @@ pub fn parser<'tokens>(
     // accepted as a name should also be accepted as an argument.
     let annotation_arg = choice((
         label,
+        file,
+        argument,
+        select! { Token::NamedArg(name) => format!("${name}") },
         num.map(|n: usize| n.to_string()),
         just(Token::Edit).to("edit".to_string()),
         just(Token::Hamming).to("hamming".to_string()),
@@ -619,12 +893,14 @@ pub fn parser<'tokens>(
                 None => (None, first),
             };
             S(AnnotationValueArg { name, value }, state.span())
-        });
+        })
+        .boxed();
 
     let assignment_value = spanned_annotation_arg
         .clone()
         .then(
             assignment_value_arg
+                .clone()
                 .separated_by(just(Token::Comma))
                 .collect::<Vec<_>>()
                 .delimited_by(just(Token::LParen), just(Token::RParen))
@@ -638,7 +914,8 @@ pub fn parser<'tokens>(
                 },
                 state.span(),
             )
-        });
+        })
+        .boxed();
 
     // Parse either an operation annotation (`#[name(args)]`) or a property
     // assignment (`#[name = variant(args)]`). Each annotation name can choose
@@ -656,12 +933,57 @@ pub fn parser<'tokens>(
                         .map_with(|a, state| S(a, state.span()))
                         .separated_by(just(Token::Comma))
                         .collect::<Vec<_>>()
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map(|args| (args, None)),
+                        .map(|args| (args, None))
+                        .delimited_by(just(Token::LParen), just(Token::RParen)),
                 )))
                 .then_ignore(just(Token::RBracket)),
         )
-        .map_with(|(name, (args, value)), state| S(Annotation { name, args, value }, state.span()));
+        .map_with(|(name, (args, value)), state| S(Annotation { name, args, value }, state.span()))
+        .boxed();
+
+    // Output FASTQ-name templates are parsed separately from general
+    // annotations because their arguments are typed literals and captured
+    // labels rather than annotation-policy scalars.
+    let output_header_mode = select! {
+        Token::Label(mode) if mode == "append" => OutputHeaderMode::Append,
+        Token::Label(mode) if mode == "prepend" => OutputHeaderMode::Prepend,
+        Token::Label(mode) if mode == "replace" => OutputHeaderMode::Replace,
+    }
+    .map_with(|mode, state| S(mode, state.span()));
+    let output_header_capture = label
+        .map_with(|name, state| S(name, state.span()))
+        .then(
+            num.map_with(|index, state| S(index, state.span()))
+                .delimited_by(just(Token::LBracket), just(Token::RBracket))
+                .or_not(),
+        )
+        .delimited_by(just(Token::LAngle), just(Token::RAngle))
+        .map(|(label, index)| match index {
+            Some(index) => OutputHeaderPart::IndexedLabel(label, index),
+            None => OutputHeaderPart::Label(label),
+        });
+    let output_header_part = choice((
+        file.map(OutputHeaderPart::Literal)
+            .map_with(|part, state| S(part, state.span())),
+        output_header_capture.map_with(|part, state| S(part, state.span())),
+    ));
+    let output_header = just(Token::HashBracket)
+        .ignore_then(select! {
+            Token::Label(name) if name == "header" => (),
+        })
+        .then_ignore(just(Token::Equals))
+        .ignore_then(
+            output_header_mode.then(
+                output_header_part
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .at_least(1)
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LParen), just(Token::RParen)),
+            ),
+        )
+        .then_ignore(just(Token::RBracket))
+        .map_with(|(mode, parts), state| S(OutputHeader { mode, parts }, state.span()));
 
     // define the basic peices of an EFGDL description
     // Definitions may be preceded by annotations: #[edit(5)] foo = f[ABC]
@@ -698,18 +1020,19 @@ pub fn parser<'tokens>(
             num.labelled("read number")
                 .map_with(|n, state| S(n, state.span()))
                 .then(
-                    transformed_pieces
-                        .clone()
-                        .repeated()
-                        .at_least(1)
-                        .collect()
-                        .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+                    input_layout
+                        .delimited_by(just(Token::LBrace), just(Token::RBrace))
+                        .map(|S(expr, span)| match expr {
+                            Expr::LayoutConcat(parts) => parts,
+                            expr => vec![S(expr, span)],
+                        }),
                 ),
         )
         .map_with(|(annotations, (index, exprs)), span| {
             S(
                 Read {
                     annotations,
+                    output_header: None,
                     index,
                     exprs,
                 },
@@ -718,23 +1041,28 @@ pub fn parser<'tokens>(
         })
         .repeated()
         .at_least(1)
+        .at_most(3)
         .collect::<Vec<_>>()
         .map_with(|v, span| S(v, span.span()));
 
-    let transform_read = num
-        .labelled("read number")
-        .map_with(|n, state| S(n, state.span()))
+    let transform_read = output_header
+        .or_not()
         .then(
-            transformed_pieces
-                .repeated()
-                .at_least(1)
-                .collect()
-                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            num.labelled("read number")
+                .map_with(|n, state| S(n, state.span()))
+                .then(
+                    transformed_pieces
+                        .repeated()
+                        .at_least(1)
+                        .collect()
+                        .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+                ),
         )
-        .map_with(|(index, exprs), state| {
+        .map_with(|(output_header, (index, exprs)), state| {
             S(
                 Read {
                     annotations: vec![],
+                    output_header,
                     index,
                     exprs,
                 },
@@ -762,6 +1090,7 @@ pub fn parser<'tokens>(
                         .clone()
                         .repeated()
                         .at_least(1)
+                        .at_most(3)
                         .collect::<Vec<_>>(),
                 )
                 .then_ignore(just(Token::Comma))
@@ -773,6 +1102,7 @@ pub fn parser<'tokens>(
                                 .clone()
                                 .repeated()
                                 .at_least(1)
+                                .at_most(3)
                                 .collect::<Vec<_>>(),
                         ),
                 )
@@ -796,7 +1126,7 @@ pub fn parser<'tokens>(
                 transform_read
                     .repeated()
                     .at_least(1)
-                    .at_most(2)
+                    .at_most(3)
                     .collect::<Vec<_>>()
                     .then(end())
                     .map(|(val, _)| TransformOutput::Direct(val)),
@@ -805,14 +1135,20 @@ pub fn parser<'tokens>(
     ));
 
     Box::new(
-        definitions
+        document_header
+            .then(resources)
+            .then(definitions)
             .then(reads)
             .then(transformations)
-            .map(|((defs, reads), transforms)| Description {
-                definitions: defs,
-                reads,
-                transforms,
-            }),
+            .map(
+                |((((header, resources), defs), reads), transforms)| Description {
+                    header,
+                    resources,
+                    definitions: defs,
+                    reads,
+                    transforms,
+                },
+            ),
     )
 }
 
@@ -992,7 +1328,7 @@ mod tests {
             S(Function::Filter("test".into()), span()),
             S(Box::new(inner.clone()), span()),
         );
-        assert_eq!(format!("{}", filter), "filter(b[16], test)");
+        assert_eq!(format!("{}", filter), "filter(b[16], \"test\")");
 
         let filter_within = Expr::Function(
             S(Function::FilterWithinDist("test".into(), 2), span()),
@@ -1000,7 +1336,7 @@ mod tests {
         );
         assert_eq!(
             format!("{}", filter_within),
-            "filter_within_dist(b[16], test, 2)"
+            "filter_within_dist(b[16], \"test\", 2)"
         );
     }
 

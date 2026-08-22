@@ -20,13 +20,22 @@ barcodes, UMIs, biological reads, anchors, and discarded sequence occur;
 
 This keeps protocol logic out of ad hoc scripts while supporting fixed and
 variable intervals, approximate matching, barcode correction, filtering,
-orientation-aware processing, demultiplexing, ordered output, compressed I/O,
-and versioned run summaries.
+orientation-aware and conditional processing, constructed output sequence,
+FASTQ-name templates, demultiplexing, ordered output, compressed I/O, and
+versioned run summaries.
 
 - **Documentation:** <https://combine-lab.github.io/seqproc/>
 - **EFGDL language specification:** <https://efgdl-spec.readthedocs.io/>
 - **Preprint:** <https://www.biorxiv.org/content/10.64898/2026.07.28.741211v1>
 - **Reproducible paper analysis:** <https://github.com/COMBINE-lab/seqproc-paper-analysis>
+
+Install the released crate and its locked dependency set with
+`cargo install --locked seqproc`. Checksummed prebuilt archives and a shell
+installer are published on the
+[GitHub Releases page](https://github.com/COMBINE-lab/seqproc/releases).
+For development, use the repository checkout and
+`cargo install --locked --path .`; its checked-in local configuration tunes
+that build for the current host, so do not redistribute it as a generic binary.
 
 ## A first geometry
 
@@ -35,6 +44,11 @@ FASTQ contains a 16-base cell barcode followed by a 10-base UMI, and the second
 contains the biological read.
 
 ```efgdl
+header {
+  efgdl = 2,
+  name = "10x Chromium v2",
+}
+
 bc = b[16]
 umi = u[10]
 bio = r:
@@ -51,7 +65,7 @@ run it:
 seqproc validate 10x-v2.geom
 seqproc explain 10x-v2.geom
 seqproc run --geom 10x-v2.geom \
-  --file1 reads_R1.fastq.gz --file2 reads_R2.fastq.gz \
+  --read1 reads_R1.fastq.gz --read2 reads_R2.fastq.gz \
   --out1 processed_R1.fastq.gz --out2 processed_R2.fastq.gz \
   --threads 8
 ```
@@ -62,10 +76,68 @@ discarded rather than written to standard output. See the
 and [command-line reference](https://combine-lab.github.io/seqproc/getting-started/command-line/)
 for paired-end, compressed-I/O, demultiplexing, and reporting examples.
 
-## Install from source
+Logical read lanes may be split across files without pre-concatenation. Repeat
+`--read1`/`--read2` or use comma-separated paths; seqproc opens corresponding
+shards lazily and verifies their record counts at every shard boundary.
 
-Tagged binary releases are planned. During the pre-release phase, build the
-pinned dependency set from source with Rust 1.88 or newer:
+`-` denotes stdin for one input lane and stdout for one output lane. For
+example, `seqproc run --geom protocol.geom --read1 - --out1 -` is a clean FASTQ
+filter in a Unix pipeline; diagnostics remain on stderr. Add `--stdout-gzip`
+when stdout itself should be gzip-compressed. If the downstream stdout consumer
+closes early, seqproc exits 0 without a diagnostic; ENOSPC, quota exhaustion,
+and file or named-pipe output failures remain nonzero.
+
+For FASTQ files that alternate complete fragment segments in one stream, use
+`--interleaved-input`. Its arity is derived from the geometry, and ordered file
+shards are opened lazily just like separate read lanes.
+
+The bounded public lane model supports one, two, or three segments, including
+`--read3`, `--out3`, and `--unassigned3` for protocols such as scATAC-seq.
+
+Library callers should use `compile_geom_typed` and `run`; both return the
+matchable `SeqprocError` hierarchy rather than stringly typed `anyhow` errors.
+
+Pipeline runs use deterministic, graph- and geometry-aware batch planning by
+default. The planner chooses batch size, queue capacity, and the maximum
+in-flight batches under a 256 MiB memory budget without sampling input reads.
+Exact `--batch-size`, `--queue-capacity`, and `--max-in-flight-batches` values
+remain authoritative; use `--batch-memory-budget-mib` to change the bound or
+`--no-dynamic-batch-planning` to retain the fixed compatibility defaults. The
+effective choices and stable reason codes are recorded in run summaries.
+
+New geometry files should declare EFGDL 2 in the general document header.
+Optional metadata fields accept integers, quoted strings, or bare identifiers
+and are retained for provenance tooling. Headerless files continue to use
+legacy EFGDL 1 semantics.
+
+EFGDL 2 input reads also support bounded layout algebra: ordered choice (`|`),
+optional structure (`?`), fixed repetition (`*N`), and grouping. Alternatives
+are normalized and validated at compile time, then retried through copy-on-write
+graphs. See the [layout algebra guide](https://combine-lab.github.io/seqproc/efgdl/layout-algebra/)
+for expansion limits, capture compatibility, and zero-runtime-overhead indexed
+references such as `<round[2]>` for repeated named captures.
+
+EFGDL 2 output layouts can construct fixed sequence with `f[...]`; for example,
+`-> 1{f[ACGT]<bc><umi>}` prefixes those bases and assigns them `I` quality
+scores while retaining qualities from captured intervals. They can also add
+captured data to FASTQ names without an auxiliary tool:
+
+```efgdl
+-> #[header = append(" CB:Z:", <bc>, " UB:Z:", <umi>)]
+   1{f[ACGT]<bc><umi>}
+```
+
+`append`, `prepend`, and `replace` templates are supported independently on
+each output read. Header work is absent from the execution graph when no such
+template is used. The [EFGDL 2 guide](https://combine-lab.github.io/seqproc/efgdl/version-2/)
+documents the complete syntax, quality behavior, migration boundary, and a
+runnable paired-end example.
+
+## Installation
+
+Use the checksummed archive or shell installer from the
+[latest GitHub release](https://github.com/COMBINE-lab/seqproc/releases/latest),
+or build the pinned dependency set from source with Rust 1.88 or newer:
 
 ```console
 git clone https://github.com/COMBINE-lab/seqproc.git
@@ -74,12 +146,43 @@ cargo build --release --locked
 ./target/release/seqproc --help
 ```
 
+Repository builds use `target-cpu=native` so local development and profiling
+exercise the current host. Tagged artifacts use fixed, reproducible targets:
+x86-64-v3 (including AVX2) for x86_64 Linux and macOS, Neoverse N1 for aarch64
+Linux, and Apple A14 for aarch64 macOS. Confirm the binary selected on a host
+with:
+
+```console
+seqproc --version --verbose
+```
+
+Linux x86_64 artifacts carry a GNU x86 ISA property, so a modern loader rejects
+an incompatible executable before any v3 instruction can run. seqproc also
+checks the exact compiler-enabled x86 feature set with raw CPUID/XGETBV before
+processing; this keeps host-native builds honest when they include features
+beyond v3. (On macOS, where the ELF loader property is unavailable, this
+startup check is necessarily best effort.) ANTISEQUENCE remains a library-safe
+SSE2/NEON crate by default; seqproc deliberately selects its `release-simd`
+AVX2/NEON backend.
+A generic SSE2 compatibility build is available for controlled testing or
+older x86_64 hosts:
+
+```console
+RUSTFLAGS="" cargo build --release --locked --no-default-features \
+  --features antisequence/baseline-simd
+```
+
+Do not label a `target-cpu=native` local build as a generic release artifact:
+its verbose provenance identifies it as non-portable and records its exact
+target features.
+
 ## Ambiguous barcode matches
 
 Equal-best matches against distinct whitelist or mapping entries use an
 operation-specific default: filters accept set membership, while mapping
 operations follow their no-match fallback. A geometry can select an explicit
-policy:
+policy. Assignment syntax is recommended; the equivalent simple call form
+(`#[ambig_policy(accept)]`) is accepted for compatibility:
 
 ```efgdl
 #[ambig_policy = accept]
@@ -93,6 +196,12 @@ Supported policies are `accept`, `no_match`, `first`, `random`, `quality`, and
 `error`. The [ambiguity guide](https://combine-lab.github.io/seqproc/efgdl/annotations-and-ambiguity/)
 documents their semantics and reproducibility guarantees.
 
+Search anchors independently support `best`, `leftmost`, `rightmost`,
+`quality`, `no_match`, and `error` position policies. A one-pattern-per-line
+anchor whitelist can be attached with `#[anchor_set($0)]`, avoiding externally
+expanded geometry or input preprocessing. Pattern ties and repeated-position
+ties remain separate events and receive separate detailed-statistics counters.
+
 ## Development and reproducibility
 
 Fast pull-request CI runs formatting, linting, core tests, and generated test
@@ -101,9 +210,15 @@ test, feature, benchmark-compilation, and sanitizer matrix.
 
 ```console
 cargo fmt --all --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+# Exercise the generic SSE2 compatibility control as well:
+cargo test --locked --no-default-features \
+  --features antisequence/baseline-simd --lib
 ```
+
+Comprehensive CI also builds both variants and requires every checked-in FASTQ
+fixture to remain byte-identical across the SIMD backends.
 
 The documentation site requires Node.js 22.12 or newer and has its own locked
 build:
@@ -117,6 +232,24 @@ npm run build
 The JSON emitted by `--summary` follows the versioned schemas in
 [`schemas/`](schemas/). Runtime statistics are disabled unless requested, so
 headline performance measurements do not silently include instrumentation.
+Geometry provenance uses an algorithm-tagged BLAKE3 digest of the complete
+geometry text, including its EFGDL header.
+
+Compilation now emits an inspectable optimization report, and the execution
+planner records why it selected the whole-graph or bounded-pipeline backend.
+`--execution-mode` forces either backend for controlled comparisons, while
+`--no-graph-optimization` provides a structural-optimization oracle.
+Proof-backed dead-label elimination and early selective-filter placement can
+also be ablated independently with `--no-dead-label-elimination` and
+`--no-early-filter-placement`; stable pass-level change counts are included in
+the run report. The
+bounded pipeline can render a proven-safe terminal FASTQ projection directly
+into recycled output buffers, avoiding intermediate record materialization
+while preserving byte-identical output. The automatic planner keeps the
+measured low-overhead whole-graph default unless ordered output requires the
+pipeline. See the
+[performance guide](https://combine-lab.github.io/seqproc/guides/performance/)
+for selection rules and the validation escape hatch.
 
 Please report bugs and feature requests through
 [GitHub Issues](https://github.com/COMBINE-lab/seqproc/issues).

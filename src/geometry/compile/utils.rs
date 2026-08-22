@@ -9,7 +9,41 @@ use super::functions::{ChangeAs, CompiledFunction};
 
 pub type Geometry = Vec<Vec<(Interval, usize)>>;
 
-pub type Transformation = Vec<Vec<String>>;
+/// One component of an output read transformation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TransformSegment {
+    /// A captured interval, numbered with its source read after compilation.
+    Label(String),
+    /// Fixed bases constructed directly in an EFGDL 2 output read.
+    Literal(Vec<u8>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CompiledHeaderMode {
+    Append,
+    Prepend,
+    Replace,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum HeaderSegment {
+    Literal(Vec<u8>),
+    Label(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct HeaderTransformation {
+    pub mode: CompiledHeaderMode,
+    pub parts: Vec<HeaderSegment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ReadTransformation {
+    pub sequence: Vec<TransformSegment>,
+    pub header: Option<HeaderTransformation>,
+}
+
+pub type Transformation = Vec<ReadTransformation>;
 
 fn log4_roundup(n: usize) -> usize {
     (n.ilog2() + 1).div_ceil(2) as usize
@@ -99,6 +133,17 @@ impl fmt::Display for GeometryPiece {
 impl GeometryMeta {
     pub fn validate_expr(&self) -> Result<(), Error> {
         let S(expr, expr_span) = &self.expr;
+
+        if let IntervalShape::RangedLen(S((a, b), span)) = &expr.size {
+            if a > b {
+                return Err(Error {
+                    span: *span,
+                    msg: format!(
+                        "invalid range [{a}-{b}]: the lower bound exceeds the upper bound"
+                    ),
+                });
+            }
+        }
 
         let expr_type = {
             if let IntervalKind::Discard = expr.type_ {
@@ -230,6 +275,18 @@ pub fn validate_composition(
         },
         CompiledFunction::Map(..) | CompiledFunction::MapWithMismatch(..) | CompiledFunction::MapWithEdit(..) => match return_type {
             ReturnType::Ranged | ReturnType::FixedLen | ReturnType::FixedSeq => {
+                if let CompiledFunction::MapWithMismatch(_, _, dist)
+                | CompiledFunction::MapWithEdit(_, _, dist) = fn_
+                {
+                    if *dist > max {
+                        return Err(Error {
+                            span: fn_span,
+                            msg: format!(
+                                "mismatch distance {dist} exceeds the maximum interval length {max}"
+                            ),
+                        });
+                    }
+                }
                 Ok(S(ReturnType::FixedLen, fn_span))
             }
             _ => Err(Error {
@@ -239,10 +296,18 @@ pub fn validate_composition(
                 ),
             }),
         },
-        CompiledFunction::FilterWithinDist(..) => match return_type {
-            ReturnType::FixedLen => Ok(S(ReturnType::FixedLen, fn_span)),
-            ReturnType::Ranged => Ok(S(ReturnType::Ranged, fn_span)),
-            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+        CompiledFunction::FilterWithinDist(_, dist) => match return_type {
+            ReturnType::FixedLen | ReturnType::Ranged | ReturnType::FixedSeq => {
+                if dist > max {
+                    return Err(Error {
+                        span: fn_span,
+                        msg: format!(
+                            "filter distance {dist} exceeds the maximum interval length {max}"
+                        ),
+                    });
+                }
+                Ok(S(return_type, fn_span))
+            }
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
@@ -250,9 +315,29 @@ pub fn validate_composition(
                 ),
             }),
         },
-        CompiledFunction::AmbiguityPolicy(_) => Ok(S(return_type, fn_span)),
-        CompiledFunction::Hamming(_) => match return_type {
+        CompiledFunction::AmbiguityPolicy(_)
+        | CompiledFunction::PositionAmbiguityPolicy(_) => Ok(S(return_type, fn_span)),
+        CompiledFunction::AnchorSet(_) => match return_type {
             ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+            _ => Err(Error {
+                span: return_type_span,
+                msg: format!(
+                    "anchor_set must annotate a FixedSeq anchor, found: {return_type}"
+                ),
+            }),
+        },
+        CompiledFunction::Hamming(dist) => match return_type {
+            ReturnType::FixedSeq => {
+                if dist > max {
+                    return Err(Error {
+                        span: fn_span,
+                        msg: format!(
+                            "hamming distance {dist} exceeds the sequence length {max}"
+                        ),
+                    });
+                }
+                Ok(S(ReturnType::FixedSeq, fn_span))
+            }
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(
@@ -260,8 +345,16 @@ pub fn validate_composition(
                 ),
             }),
         },
-        CompiledFunction::Edit(_) => match return_type {
-            ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
+        CompiledFunction::Edit(dist) => match return_type {
+            ReturnType::FixedSeq => {
+                if dist > max {
+                    return Err(Error {
+                        span: fn_span,
+                        msg: format!("edit distance {dist} exceeds the sequence length {max}"),
+                    });
+                }
+                Ok(S(ReturnType::FixedSeq, fn_span))
+            }
             _ => Err(Error {
                 span: return_type_span,
                 msg: format!(

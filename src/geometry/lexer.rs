@@ -28,6 +28,12 @@ pub enum Token {
     RAngle,
     /// `,`.
     Comma,
+    /// `|`, used for ordered layout alternatives in EFGDL 2.
+    Pipe,
+    /// `?`, used for optional layout terms in EFGDL 2.
+    Question,
+    /// `*`, used for fixed layout repetition in EFGDL 2.
+    Star,
     /// `label_text`.
     Label(String),
     /// `"file_path"`.
@@ -108,6 +114,8 @@ pub enum Token {
     TransformTo,
     /// `$n`, where `n` is a numeric literal.
     Arg(usize),
+    /// `$name`, where `name` is a declared resource identifier.
+    NamedArg(String),
     /// Nucleotide `U`.
     U,
     /// Nucleotide `G`.
@@ -140,6 +148,9 @@ impl fmt::Display for Token {
             LAngle => f.write_char('<'),
             RAngle => f.write_char('>'),
             Comma => f.write_char(','),
+            Pipe => f.write_char('|'),
+            Question => f.write_char('?'),
+            Star => f.write_char('*'),
             Label(s) => write!(f, "{s}"),
             A => f.write_char('A'),
             T => f.write_char('T'),
@@ -185,66 +196,13 @@ impl fmt::Display for Token {
             TransformTo => f.write_str("->"),
             Self_ => f.write_str("self"),
             Arg(n) => write!(f, "${n}"),
+            NamedArg(name) => write!(f, "${name}"),
         }
     }
 }
 
-/// Returns a lexer for EFGDL.
-pub fn lexer<'src>(
-) -> impl Parser<'src, &'src str, Vec<(Token, Span)>, extra::Err<Rich<'src, char>>> {
-    let int = text::int(10).from_str().unwrapped().map(Token::Num);
-
-    let ctrl = choice((
-        just('(').to(Token::LParen),
-        just(')').to(Token::RParen),
-        just('[').to(Token::LBracket),
-        just(']').to(Token::RBracket),
-        just('{').to(Token::LBrace),
-        just('}').to(Token::RBrace),
-        just(',').to(Token::Comma),
-        just('<').to(Token::LAngle),
-        just('>').to(Token::RAngle),
-    ));
-
-    let special = choice((
-        just('=').to(Token::Equals),
-        just('-').to(Token::Dash),
-        just(':').to(Token::Colon),
-        just('.').to(Token::Dot),
-    ));
-
-    let file = just('"')
-        .ignored()
-        .then(
-            any()
-                .and_is(just('"').not())
-                .repeated()
-                .collect::<Vec<_>>()
-                .then(just('"')),
-        )
-        // .then(take_until(just('"').ignored()))
-        .padded()
-        .map(|((), (f, _))| Token::File(f.into_iter().collect::<String>()));
-
-    let transformto = just('-').then(just('>')).to(Token::TransformTo);
-
-    let fatarrow = just('=').then(just('>')).to(Token::FatArrow);
-
-    let hash_bracket = just('#').then(just('[')).to(Token::HashBracket);
-
-    let argument = just('$')
-        .then(text::int(10).from_str().unwrapped())
-        .map(|(_, n)| Token::Arg(n));
-
-    let nucs = choice((
-        just('A').to(Token::A),
-        just('T').to(Token::T),
-        just('G').to(Token::G),
-        just('C').to(Token::C),
-        just('U').to(Token::U),
-    ));
-
-    let ident = text::ident().map(|s: &str| match s {
+fn identifier_token(s: &str) -> Token {
+    match s {
         "rev" => Token::Reverse,
         "revcomp" => Token::ReverseComp,
         "remove" => Token::Remove,
@@ -275,19 +233,109 @@ pub fn lexer<'src>(
         "r" => Token::ReadSeq,
         "x" => Token::Discard,
         "f" => Token::FixedSeq,
-        _ => {
-            if s.starts_with('_') {
-                Token::Reserved(s.to_owned())
-            } else {
-                Token::Label(s.to_owned())
-            }
+        _ if s.starts_with('_') => Token::Reserved(s.to_owned()),
+        _ => Token::Label(s.to_owned()),
+    }
+}
+
+/// Returns a lexer for EFGDL.
+pub fn lexer<'src>(
+) -> impl Parser<'src, &'src str, Vec<(Token, Span)>, extra::Err<Rich<'src, char>>> {
+    let integer = || {
+        text::int(10).try_map(|digits: &str, span| {
+            digits.parse::<usize>().map_err(|_| {
+                Rich::custom(
+                    span,
+                    "integer literal exceeds the maximum supported platform value",
+                )
+            })
+        })
+    };
+    let int = integer().map(Token::Num);
+
+    let ctrl = choice((
+        just('(').to(Token::LParen),
+        just(')').to(Token::RParen),
+        just('[').to(Token::LBracket),
+        just(']').to(Token::RBracket),
+        just('{').to(Token::LBrace),
+        just('}').to(Token::RBrace),
+        just(',').to(Token::Comma),
+        just('|').to(Token::Pipe),
+        just('?').to(Token::Question),
+        just('*').to(Token::Star),
+        just('<').to(Token::LAngle),
+        just('>').to(Token::RAngle),
+    ));
+
+    let special = choice((
+        just('=').to(Token::Equals),
+        just('-').to(Token::Dash),
+        just(':').to(Token::Colon),
+        just('.').to(Token::Dot),
+    ));
+
+    let file = just('"')
+        .ignored()
+        .then(
+            any()
+                .and_is(just('"').not())
+                .repeated()
+                .collect::<Vec<_>>()
+                .then(just('"')),
+        )
+        // .then(take_until(just('"').ignored()))
+        .padded()
+        .map(|((), (f, _))| Token::File(f.into_iter().collect::<String>()));
+
+    let transformto = just('-').then(just('>')).to(Token::TransformTo);
+
+    let fatarrow = just('=').then(just('>')).to(Token::FatArrow);
+
+    let hash_bracket = just('#').then(just('[')).to(Token::HashBracket);
+
+    let argument = just('$').then(integer()).map(|(_, n)| Token::Arg(n));
+
+    let named_argument = just('$')
+        .ignore_then(text::ident())
+        .map(|name: &str| Token::NamedArg(name.to_owned()));
+
+    let nucs = choice((
+        just('A').to(Token::A),
+        just('T').to(Token::T),
+        just('G').to(Token::G),
+        just('C').to(Token::C),
+        just('U').to(Token::U),
+    ));
+
+    let ident = text::ident().map(identifier_token);
+
+    // A fixed sequence such as `ACGT` must remain four nucleotide tokens,
+    // while an identifier such as `Anchor1` must remain one label. Because
+    // nucleotide tokens otherwise win after their first character, recognize
+    // the latter class before the single-nucleotide parser.
+    let nucleotide_prefixed_ident = text::ident().try_map(|s: &str, span| {
+        let starts_with_nucleotide = s
+            .as_bytes()
+            .first()
+            .is_some_and(|base| matches!(base, b'A' | b'C' | b'G' | b'T' | b'U'));
+        let is_fixed_sequence = s
+            .as_bytes()
+            .iter()
+            .all(|base| matches!(base, b'A' | b'C' | b'G' | b'T' | b'U'));
+        if starts_with_nucleotide && !is_fixed_sequence {
+            Ok(identifier_token(s))
+        } else {
+            Err(Rich::custom(span, "not a nucleotide-prefixed identifier"))
         }
     });
 
     // TODO: remove recovery
     let token = choice((
+        nucleotide_prefixed_ident,
         nucs,
         argument,
+        named_argument,
         ident,
         hash_bracket,
         fatarrow,

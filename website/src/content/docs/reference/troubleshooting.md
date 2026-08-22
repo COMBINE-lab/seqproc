@@ -16,9 +16,15 @@ Check that definitions precede their references, paired read numbers match the
 provided files, every transformation output label exists, and annotations are
 attached to the relevant definition or read.
 
-For ambiguity policies, use property syntax such as
-`#[ambig_policy = quality(min_delta = 2)]`. Call syntax is reserved for
-operation annotations such as `#[edit(2)]`.
+For ambiguity policies, prefer property syntax such as
+`#[ambig_policy = quality(min_delta = 2)]`. Simple call syntax such as
+`#[ambig_policy(no_match)]` is also supported; parameterized call syntax uses
+flat positional arguments, for example `#[ambig_policy(random, 42)]`.
+
+The CLI uses broad stable exit classes: status 2 for geometry/configuration,
+status 3 for malformed runtime FASTQ input, and status 1 for graph or output
+execution failures. Library callers receive the corresponding structured
+`SeqprocError` variant and source chain.
 
 ## A whitelist or map cannot be loaded
 
@@ -44,8 +50,8 @@ Inspect rejection reasons and match-stage attrition. Common causes are short or
 truncated reads, an anchor threshold that is too strict, a whitelist mismatch,
 or `no_match` behavior for equal-best candidates.
 
-For paired input, provide both unassigned paths if both rejected mates must be
-retained.
+For paired input, the unassigned topology must name both lanes. Provide both
+paths, or use `/dev/null` explicitly for a rejected mate you do not need.
 
 ## Output is missing
 
@@ -54,7 +60,8 @@ emits two reads, `--out2`. A two-read transformation without both paths is an
 error.
 
 Demultiplexing uses `--demux-out-dir` instead of fixed primary outputs and
-currently emits per-sample `.fastq` files.
+currently emits per-sample `.fastq` files. Combining `--out1`/`--out2` with
+`--demux-map` is an error rather than silently ignoring either destination.
 
 ## A gzip consumer sees only part of a file
 

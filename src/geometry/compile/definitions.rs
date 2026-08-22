@@ -5,28 +5,145 @@ use crate::{
         functions::{compile_fn, CompiledFunction},
         utils::*,
     },
-    parser::{Annotation, Definition, Expr},
+    parser::{Annotation, AnnotationValueArg, Definition, Expr, ResourceRef},
     S,
 };
-use antisequence::AmbiguityPolicy;
+use antisequence::{AmbiguityPolicy, PositionAmbiguityPolicy};
+
+fn parse_position_ambiguity_policy(
+    annotation: &Annotation,
+    span: crate::Span,
+) -> Result<PositionAmbiguityPolicy, Error> {
+    let call_args = annotation
+        .args
+        .iter()
+        .skip(1)
+        .map(|value| {
+            S(
+                AnnotationValueArg {
+                    name: None,
+                    value: value.clone(),
+                },
+                value.1,
+            )
+        })
+        .collect::<Vec<_>>();
+    let (variant, args): (&str, &[S<AnnotationValueArg>]) = if let Some(value) =
+        annotation.value.as_ref()
+    {
+        (value.0.variant.0.as_str(), &value.0.args)
+    } else if !annotation.args.is_empty() {
+        (annotation.args[0].0.as_str(), &call_args)
+    } else {
+        return Err(Error {
+            span,
+            msg: "write #[position_policy = leftmost] or #[position_policy(leftmost)]".to_string(),
+        });
+    };
+    let no_args = || {
+        if args.is_empty() {
+            Ok(())
+        } else {
+            Err(Error {
+                span,
+                msg: format!("position policy `{variant}` does not accept arguments"),
+            })
+        }
+    };
+
+    match variant {
+        "leftmost" | "best" => {
+            no_args()?;
+            // Every matcher first minimizes distance. `best` makes that
+            // invariant explicit and uses the deterministic leftmost
+            // placement only to resolve a remaining equal-best tie.
+            Ok(PositionAmbiguityPolicy::Leftmost)
+        }
+        "rightmost" => {
+            no_args()?;
+            Ok(PositionAmbiguityPolicy::Rightmost)
+        }
+        "quality" => {
+            let min_delta = if args.is_empty() {
+                1
+            } else if args.len() == 1 {
+                let arg = &args[0].0;
+                if let Some(name) = &arg.name {
+                    if name.0 != "min_delta" {
+                        return Err(Error {
+                            span,
+                            msg: format!(
+                                "unknown `{}` argument for position policy `quality`; expected `min_delta`",
+                                name.0
+                            ),
+                        });
+                    }
+                }
+                let value = arg.value.0.parse::<u64>().map_err(|_| Error {
+                    span,
+                    msg: "`min_delta` for position policy `quality` must be a non-negative integer"
+                        .to_string(),
+                })?;
+                u8::try_from(value).map_err(|_| Error {
+                    span,
+                    msg: "`min_delta` for position policy `quality` must be between 0 and 255"
+                        .to_string(),
+                })?
+            } else {
+                return Err(Error {
+                    span,
+                    msg: "position policy `quality` accepts at most one `min_delta` argument"
+                        .to_string(),
+                });
+            };
+            Ok(PositionAmbiguityPolicy::Quality { min_delta })
+        }
+        "no_match" => {
+            no_args()?;
+            Ok(PositionAmbiguityPolicy::NoMatch)
+        }
+        "error" => {
+            no_args()?;
+            Ok(PositionAmbiguityPolicy::Error)
+        }
+        variant => Err(Error {
+            span,
+            msg: format!(
+                "unknown position policy `{variant}`; expected best, leftmost, rightmost, quality, no_match, or error"
+            ),
+        }),
+    }
+}
 
 fn parse_ambiguity_policy(
     annotation: &Annotation,
     span: crate::Span,
 ) -> Result<AmbiguityPolicy, Error> {
-    let value = annotation.value.as_ref().ok_or_else(|| Error {
-        span,
-        msg: "`ambig_policy` uses assignment syntax; write #[ambig_policy = no_match]".to_string(),
-    })?;
-    if !annotation.args.is_empty() {
-        return Err(Error {
-            span,
-            msg: "`ambig_policy` cannot combine call and assignment syntax".to_string(),
-        });
-    }
-
-    let variant = value.0.variant.0.as_str();
-    let args = &value.0.args;
+    let call_args = annotation
+        .args
+        .iter()
+        .skip(1)
+        .map(|value| {
+            S(
+                AnnotationValueArg {
+                    name: None,
+                    value: value.clone(),
+                },
+                value.1,
+            )
+        })
+        .collect::<Vec<_>>();
+    let (variant, args): (&str, &[S<AnnotationValueArg>]) =
+        if let Some(value) = annotation.value.as_ref() {
+            (value.0.variant.0.as_str(), &value.0.args)
+        } else if !annotation.args.is_empty() {
+            (annotation.args[0].0.as_str(), &call_args)
+        } else {
+            return Err(Error {
+                span,
+                msg: "write #[ambig_policy = no_match] or #[ambig_policy(no_match)]".to_string(),
+            });
+        };
     let no_args = || {
         if args.is_empty() {
             Ok(())
@@ -144,6 +261,7 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
         }
     }
 
+    let expr_span = expr.1;
     let gp = if let S(Expr::GeomPiece(type_, size), span) = expr {
         S(
             GeometryPiece {
@@ -154,7 +272,13 @@ fn validate_definition(mut expr: S<Expr>, label: &str) -> Result<GeometryMeta, E
             span,
         )
     } else {
-        unreachable!()
+        return Err(Error {
+            span: expr_span,
+            msg: format!(
+                "definition `{label}` must be a geometry piece, optionally wrapped in \
+                 functions; indexed or compound references are not valid here"
+            ),
+        });
     };
 
     let gp = GeometryMeta { expr: gp, stack }; // Now we have the geometry piece and the stack of functions
@@ -240,11 +364,43 @@ fn annotations_to_compiled_functions(
                 }
                 result.push(S(CompiledFunction::Anchor, *span));
             }
+            "anchor_set" => {
+                if ann.value.is_some() || ann.args.len() != 1 {
+                    return Err(Error {
+                        span: *span,
+                        msg: "`anchor_set` uses call syntax with one path: #[anchor_set($0)]"
+                            .to_string(),
+                    });
+                }
+                let value = &ann.args[0].0;
+                let resource = if let Some(name) = value.strip_prefix('$') {
+                    match name.parse::<usize>() {
+                        Ok(index) => ResourceRef::Positional(index),
+                        Err(_) => ResourceRef::Named(name.to_owned()),
+                    }
+                } else {
+                    ResourceRef::Literal(value.clone())
+                };
+                result.push(S(CompiledFunction::AnchorSet(resource), *span));
+            }
             "ambig_policy" => result.push(S(
                 CompiledFunction::AmbiguityPolicy(parse_ambiguity_policy(ann, *span)?),
                 *span,
             )),
-            _ => {}
+            "position_policy" => result.push(S(
+                CompiledFunction::PositionAmbiguityPolicy(parse_position_ambiguity_policy(
+                    ann, *span,
+                )?),
+                *span,
+            )),
+            unknown => {
+                return Err(Error {
+                    span: *span,
+                    msg: format!(
+                        "unknown definition annotation `{unknown}`; expected hamming, edit, search, anchor_set, ambig_policy, or position_policy"
+                    ),
+                });
+            }
         }
     }
 
@@ -314,13 +470,14 @@ fn validate_ambiguity_policy_target(
         CompiledFunction::MapWithMismatch(..) => Some("map_with_mismatch"),
         CompiledFunction::MapWithEdit(..) => Some("map_with_edit"),
         CompiledFunction::FilterWithinDist(..) => Some("filter_within_dist"),
+        CompiledFunction::AnchorSet(..) => Some("anchor_set"),
         _ => None,
     });
     let Some(target) = target else {
         return Err(Error {
             span,
             msg: format!(
-                "#[ambig_policy = ...] on definition `{definition}` requires a map or filter operation"
+                "#[ambig_policy = ...] on definition `{definition}` requires a map, filter, or anchor_set operation"
             ),
         });
     };
@@ -332,6 +489,66 @@ fn validate_ambiguity_policy_target(
             span,
             msg: format!(
                 "quality ambiguity resolution on `{target}` is not supported; use equal-length Hamming matching"
+            ),
+        });
+    }
+    if matches!(policies[0], AmbiguityPolicy::Quality { .. })
+        && target == "anchor_set"
+        && stack
+            .iter()
+            .any(|S(function, _)| matches!(function, CompiledFunction::Edit(_)))
+    {
+        return Err(Error {
+            span,
+            msg: "quality ambiguity resolution on `anchor_set` requires exact or Hamming search; edit-distance gap qualities are not defined"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_position_policy_target(
+    stack: &[S<CompiledFunction>],
+    definition: &str,
+    span: crate::Span,
+) -> Result<(), Error> {
+    let policies = stack
+        .iter()
+        .filter(|S(function, _)| matches!(function, CompiledFunction::PositionAmbiguityPolicy(_)))
+        .count();
+    if policies == 0 {
+        return Ok(());
+    }
+    if policies > 1 {
+        return Err(Error {
+            span,
+            msg: format!("definition `{definition}` specifies `position_policy` more than once"),
+        });
+    }
+    if !stack
+        .iter()
+        .any(|S(function, _)| matches!(function, CompiledFunction::Anchor))
+    {
+        return Err(Error {
+            span,
+            msg: format!(
+                "#[position_policy = ...] on definition `{definition}` requires #[search(relative)]"
+            ),
+        });
+    }
+    if stack.iter().any(|S(function, _)| {
+        matches!(
+            function,
+            CompiledFunction::PositionAmbiguityPolicy(PositionAmbiguityPolicy::Quality { .. })
+        )
+    }) && stack
+        .iter()
+        .any(|S(function, _)| matches!(function, CompiledFunction::Edit(_)))
+    {
+        return Err(Error {
+            span,
+            msg: format!(
+                "position quality resolution on definition `{definition}` requires exact or Hamming search; edit-distance gap qualities are not defined"
             ),
         });
     }
@@ -408,6 +625,24 @@ pub fn compile_definitions(
             }
         };
         if !ann_fns.is_empty() {
+            let annotation_distance_count = ann_fns
+                .iter()
+                .filter(|S(function, _)| {
+                    matches!(
+                        function,
+                        CompiledFunction::Hamming(_) | CompiledFunction::Edit(_)
+                    )
+                })
+                .count();
+            if annotation_distance_count > 1 {
+                err = Some(Error {
+                    span: label_span,
+                    msg: format!(
+                        "definition `{label_str}` must choose exactly one distance metric; #[hamming] and #[edit] cannot be combined"
+                    ),
+                });
+                break;
+            }
             // Detect conflict: definition already has a matching modifier
             // from old function-call syntax (e.g., hamming(), edit(),
             // anchor_relative()), and the annotation tries to add another.
@@ -427,6 +662,10 @@ pub fn compile_definitions(
             }
             gm.stack.extend(ann_fns);
             if let Err(e) = validate_ambiguity_policy_target(&gm.stack, &label_str, label_span) {
+                err = Some(e);
+                break;
+            }
+            if let Err(e) = validate_position_policy_target(&gm.stack, &label_str, label_span) {
                 err = Some(e);
                 break;
             }

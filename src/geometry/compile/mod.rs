@@ -1,26 +1,32 @@
 pub mod definitions;
 pub mod functions;
+pub mod layout;
 pub mod reads;
 mod transformation;
 pub mod utils;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use definitions::compile_definitions;
-use reads::compile_reads;
+use reads::{
+    compile_read_layouts, CaptureRegistry, ReadLayoutReport, StandardizedLayoutAlternatives,
+};
 use transformation::compile_transformation;
 use utils::Error;
 
 use crate::{
-    parser::{Annotation, Description, TransformOutput},
+    parser::{
+        Annotation, Description, DocumentHeader, HeaderValue, ResourceDeclaration, ResourceRef,
+        TransformOutput,
+    },
     S,
 };
 
 use self::{
     reads::standardize_geometry,
     transformation::label_transformation,
-    utils::{GeometryMeta, Interval, Transformation},
+    utils::{GeometryMeta, Interval, TransformSegment, Transformation},
 };
 
 /// Identifies the element an annotation is attached to.
@@ -129,7 +135,20 @@ pub struct CompiledMatchBlock {
 
 #[derive(Debug)]
 pub struct CompiledData {
+    /// Effective EFGDL language version. Headerless legacy documents are v1.
+    pub efgdl_version: usize,
+    /// User-provided document metadata, if an EFGDL header was present.
+    pub document_header: Option<DocumentHeader>,
+    /// Declared EFGDL 2 runtime resources.
+    pub resource_declarations: Vec<ResourceDeclaration>,
     pub geometry: Vec<Vec<GeometryMeta>>,
+    /// Bounded, source-ordered alternatives for each input read. Linear
+    /// geometries contain exactly one alternative.
+    pub layout_alternatives: StandardizedLayoutAlternatives,
+    /// Observable normalization details for validation/explain tooling.
+    pub layout_report: Vec<ReadLayoutReport>,
+    /// Fixed-cardinality public captures and their compiler-lowered labels.
+    pub capture_registry: CaptureRegistry,
     pub transformation: Option<Transformation>,
     /// Per-element annotations (reads and definitions) from the input geometry.
     pub element_annotations: Vec<ElementAnnotations>,
@@ -137,6 +156,133 @@ pub struct CompiledData {
     pub match_block: Option<CompiledMatchBlock>,
     /// Deprecation warnings collected during compilation.
     pub warnings: Vec<String>,
+}
+
+fn validate_document_header(header: &Option<S<DocumentHeader>>) -> Result<usize, Error> {
+    let Some(S(header, header_span)) = header else {
+        return Ok(1);
+    };
+
+    let mut seen = HashSet::with_capacity(header.fields.len());
+    let mut version = None;
+    for S(field, field_span) in &header.fields {
+        if !seen.insert(field.name.0.as_str()) {
+            return Err(Error {
+                span: *field_span,
+                msg: format!("duplicate EFGDL header field `{}`", field.name.0),
+            });
+        }
+        if field.name.0 == "efgdl" {
+            match field.value.0 {
+                HeaderValue::Number(value) => version = Some((value, field.value.1)),
+                _ => {
+                    return Err(Error {
+                        span: field.value.1,
+                        msg: "EFGDL header field `efgdl` must be an integer version".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    let Some((version, span)) = version else {
+        return Err(Error {
+            span: *header_span,
+            msg: "EFGDL header must contain `efgdl = 2`".to_string(),
+        });
+    };
+    if version != 2 {
+        return Err(Error {
+            span,
+            msg: format!(
+                "unsupported EFGDL version {version}; this seqproc build supports EFGDL 2, while headerless files use legacy EFGDL 1 semantics"
+            ),
+        });
+    }
+    Ok(version)
+}
+
+fn validate_resource_declarations(
+    resources: Option<S<Vec<S<ResourceDeclaration>>>>,
+    efgdl_version: usize,
+) -> Result<Vec<ResourceDeclaration>, Error> {
+    let Some(S(resources, span)) = resources else {
+        return Ok(Vec::new());
+    };
+    if efgdl_version != 2 {
+        return Err(Error {
+            span,
+            msg: "named resources require `header { efgdl = 2 }`".to_owned(),
+        });
+    }
+    let mut seen = HashSet::with_capacity(resources.len());
+    let mut declarations = Vec::with_capacity(resources.len());
+    for S(declaration, declaration_span) in resources {
+        if !seen.insert(declaration.name.0.clone()) {
+            return Err(Error {
+                span: declaration_span,
+                msg: format!("duplicate resource declaration `{}`", declaration.name.0),
+            });
+        }
+        declarations.push(declaration);
+    }
+    Ok(declarations)
+}
+
+fn visit_function_resources(
+    function: &functions::CompiledFunction,
+    visit: &mut impl FnMut(&ResourceRef),
+) {
+    use functions::CompiledFunction;
+    let fallback = match function {
+        CompiledFunction::Map(resource, fallback)
+        | CompiledFunction::MapWithMismatch(resource, fallback, _)
+        | CompiledFunction::MapWithEdit(resource, fallback, _) => {
+            visit(resource);
+            Some(fallback)
+        }
+        CompiledFunction::FilterWithinDist(resource, _) | CompiledFunction::AnchorSet(resource) => {
+            visit(resource);
+            None
+        }
+        _ => None,
+    };
+    if let Some(fallback) = fallback {
+        for S(function, _) in fallback {
+            visit_function_resources(function, visit);
+        }
+    }
+}
+
+fn validate_resource_references(
+    geometry: &[Vec<utils::GeometryMeta>],
+    declarations: &[ResourceDeclaration],
+) -> Result<(), Error> {
+    let declared = declarations
+        .iter()
+        .map(|declaration| declaration.name.0.as_str())
+        .collect::<HashSet<_>>();
+    for meta in geometry.iter().flatten() {
+        for S(function, span) in &meta.stack {
+            let mut error = None;
+            visit_function_resources(function, &mut |resource| {
+                if let ResourceRef::Named(name) = resource {
+                    if !declared.contains(name.as_str()) {
+                        error = Some(Error {
+                            span: *span,
+                            msg: format!(
+                                "resource `${name}` is referenced but not declared in the `resources` block"
+                            ),
+                        });
+                    }
+                }
+            });
+            if let Some(error) = error {
+                return Err(error);
+            }
+        }
+    }
+    Ok(())
 }
 
 impl CompiledData {
@@ -162,21 +308,25 @@ impl CompiledData {
                 }
             }
 
-            transformation
-                .into_iter()
-                .enumerate()
-                .fold(String::new(), |mut acc, (i, labels)| {
-                    let geom_desc = labels
+            transformation.into_iter().enumerate().fold(
+                String::new(),
+                |mut acc, (i, read_transform)| {
+                    let geom_desc = read_transform
+                        .sequence
                         .into_iter()
-                        .map(|l| {
-                            let key = l
-                                .split('.')
-                                .collect::<Vec<&str>>()
-                                .get(1)
-                                .unwrap()
-                                .to_string();
-
-                            map.get(&key).unwrap().clone()
+                        .map(|segment| match segment {
+                            TransformSegment::Label(label) => {
+                                let key =
+                                    label.split_once('.').map(|(_, key)| key).unwrap_or(&label);
+                                // Labels whose simplified description is empty (fixed
+                                // sequences and anchors) are normalized away entirely.
+                                map.get(key).cloned().unwrap_or_default()
+                            }
+                            TransformSegment::Literal(bytes) => format!(
+                                "f[{}]",
+                                std::str::from_utf8(&bytes)
+                                    .expect("compiled EFGDL literals are valid ASCII")
+                            ),
                         })
                         .collect::<String>();
 
@@ -184,7 +334,8 @@ impl CompiledData {
                         .expect("Should have been able to format!");
 
                     acc
-                })
+                },
+            )
         } else {
             self.geometry
                 .into_iter()
@@ -213,26 +364,84 @@ impl CompiledData {
 /// Returns CompiledData { geometry, transformation } or Error.
 pub fn compile(
     Description {
+        header,
+        resources,
         definitions,
         reads,
         transforms,
     }: Description,
 ) -> Result<CompiledData, Error> {
+    let efgdl_version = validate_document_header(&header)?;
+    let document_header = header.map(|S(header, _)| header);
+    let resource_declarations = validate_resource_declarations(resources, efgdl_version)?;
     // Extract per-element annotations (reads + definitions).
     let mut element_annotations: Vec<ElementAnnotations> = Vec::new();
 
-    // Read-level annotations.
-    for S(r, _) in reads.0.iter() {
-        if let Some(S(_, span)) = r
-            .annotations
-            .iter()
-            .find(|S(annotation, _)| annotation.name.0 == "ambig_policy")
-        {
+    // The interpreter addresses input lanes by their declaration position.
+    // Enforce the corresponding 1-based spelling so annotations and runtime
+    // metadata cannot silently attach to a different lane.
+    for (position, S(read, span)) in reads.0.iter().enumerate() {
+        if u8::try_from(read.index.0).is_err() {
             return Err(Error {
                 span: *span,
-                msg: "`ambig_policy` must be attached to the definition containing the map or filter operation"
-                    .to_string(),
+                msg: format!(
+                    "read index {} exceeds the supported lane-metadata maximum of {}",
+                    read.index.0,
+                    u8::MAX
+                ),
             });
+        }
+        let expected = position + 1;
+        if read.index.0 != expected {
+            return Err(Error {
+                span: *span,
+                msg: format!(
+                    "input reads must be numbered contiguously in declaration order; expected read {expected}, found read {}",
+                    read.index.0
+                ),
+            });
+        }
+    }
+
+    // Read-level annotations.
+    for S(r, _) in reads.0.iter() {
+        let mut seen = std::collections::HashSet::new();
+        for S(annotation, span) in &r.annotations {
+            if !seen.insert(annotation.name.0.as_str()) {
+                return Err(Error {
+                    span: *span,
+                    msg: format!(
+                        "read {} specifies annotation `{}` more than once",
+                        r.index.0, annotation.name.0
+                    ),
+                });
+            }
+            match annotation.name.0.as_str() {
+                "match_ori" => {
+                    if annotation.value.is_some()
+                        || annotation.args.len() != 1
+                        || annotation.args[0].0 != "either"
+                    {
+                        return Err(Error {
+                            span: *span,
+                            msg: "`match_ori` requires exactly #[match_ori(either)]".to_string(),
+                        });
+                    }
+                }
+                "ambig_policy" => {
+                    return Err(Error {
+                        span: *span,
+                        msg: "`ambig_policy` must be attached to the definition containing the map or filter operation"
+                            .to_string(),
+                    });
+                }
+                unknown => {
+                    return Err(Error {
+                        span: *span,
+                        msg: format!("unknown read annotation `{unknown}`; expected match_ori"),
+                    });
+                }
+            }
         }
         if !r.annotations.is_empty() {
             element_annotations.push(ElementAnnotations {
@@ -284,9 +493,11 @@ pub fn compile(
             def_res.ok().unwrap()
         }
     };
-    let validate_read_res = compile_reads(reads, map);
+    let validate_read_res = compile_read_layouts(reads, map, efgdl_version);
 
-    let Ok((map, geometry)) = validate_read_res else {
+    let Ok((map, geometry, layout_alternatives, layout_report, capture_registry)) =
+        validate_read_res
+    else {
         return Err(validate_read_res.err().unwrap());
     };
 
@@ -299,15 +510,27 @@ pub fn compile(
 
     match transforms {
         Some(S(TransformOutput::Direct(transform_reads), span)) => {
-            let (transformation, map) =
-                compile_transformation(S(transform_reads, span), map, &numbered_labels)?;
+            let (transformation, map) = compile_transformation(
+                S(transform_reads, span),
+                map,
+                &numbered_labels,
+                efgdl_version,
+                &capture_registry,
+            )?;
 
             let transformation = label_transformation(transformation, &numbered_labels);
 
             let geometry = standardize_geometry(map, geometry);
+            validate_resource_references(&geometry, &resource_declarations)?;
 
             Ok(CompiledData {
+                efgdl_version,
+                document_header,
+                resource_declarations: resource_declarations.clone(),
                 geometry,
+                layout_alternatives,
+                layout_report,
+                capture_registry,
                 transformation: Some(transformation),
                 element_annotations,
                 match_block: None,
@@ -324,10 +547,20 @@ pub fn compile(
             span,
         )) => {
             // Compile both arms as separate transformations.
-            let (fw_transformation, fw_map) =
-                compile_transformation(S(fw_arm, span), map.clone(), &numbered_labels)?;
-            let (rc_transformation, rc_map) =
-                compile_transformation(S(rc_arm, span), map.clone(), &numbered_labels)?;
+            let (fw_transformation, fw_map) = compile_transformation(
+                S(fw_arm, span),
+                map.clone(),
+                &numbered_labels,
+                efgdl_version,
+                &capture_registry,
+            )?;
+            let (rc_transformation, rc_map) = compile_transformation(
+                S(rc_arm, span),
+                map.clone(),
+                &numbered_labels,
+                efgdl_version,
+                &capture_registry,
+            )?;
             let base_map = map;
 
             let fw_transformation = label_transformation(fw_transformation, &numbered_labels);
@@ -338,37 +571,60 @@ pub fn compile(
             // correct arm based on the runtime attribute value (e.g., ori).
             // When arms are identical, the behavior is the same as before.
 
-            // Validate: the read referenced by the match block must have an
-            // annotation that sets the branching attribute at runtime.
-            // Currently the only supported attribute is "ori" from
-            // #[match_ori(either)]. Without this annotation, the attribute
-            // would never be set and both SelectOp arms would silently fail,
-            // producing untransformed output (data corruption).
-            if attr.0 == "ori" {
-                let read_has_match_ori = element_annotations.iter().any(|ea| {
-                    ea.element_id == ElementId::Read(read_ref.0)
-                        && ea.annotations.iter().any(|S(ann, _)| {
-                            ann.name.0 == "match_ori"
-                                && ann.args.first().map(|a| a.0.as_str()) == Some("either")
-                        })
+            // Runtime branch metadata currently has one producer: the `ori`
+            // lane attribute emitted by `#[match_ori(either)]`. Accepting an
+            // arbitrary spelling here would compile a switch whose arms can
+            // never be selected, silently passing through untransformed reads.
+            if attr.0 != "ori" {
+                return Err(Error {
+                    span,
+                    msg: format!(
+                        "match blocks currently support only the 'ori' attribute; \
+                         '{}.{}' has no runtime producer",
+                        read_ref.0, attr.0
+                    ),
                 });
-                if !read_has_match_ori {
-                    return Err(Error {
-                        span,
-                        msg: format!(
-                            "match block branches on '{}.{}' but read {} does not have \
-                             #[match_ori(either)] annotation; the '{}' attribute would \
-                             never be set at runtime",
-                            read_ref.0, attr.0, read_ref.0, attr.0
-                        ),
-                    });
-                }
+            }
+            if u8::try_from(read_ref.0).is_err() {
+                return Err(Error {
+                    span,
+                    msg: format!(
+                        "match block read index {} exceeds the supported lane-metadata range 0..={}",
+                        read_ref.0,
+                        u8::MAX
+                    ),
+                });
+            }
+            let read_has_match_ori = element_annotations.iter().any(|ea| {
+                ea.element_id == ElementId::Read(read_ref.0)
+                    && ea.annotations.iter().any(|S(ann, _)| {
+                        ann.name.0 == "match_ori"
+                            && ann.args.first().map(|a| a.0.as_str()) == Some("either")
+                    })
+            });
+            if !read_has_match_ori {
+                return Err(Error {
+                    span,
+                    msg: format!(
+                        "match block branches on '{}.{}' but read {} does not have \
+                         #[match_ori(either)] annotation; the '{}' attribute would \
+                         never be set at runtime",
+                        read_ref.0, attr.0, read_ref.0, attr.0
+                    ),
+                });
             }
 
             let geometry = standardize_geometry(fw_map.clone(), geometry);
+            validate_resource_references(&geometry, &resource_declarations)?;
 
             Ok(CompiledData {
+                efgdl_version,
+                document_header,
+                resource_declarations: resource_declarations.clone(),
                 geometry,
+                layout_alternatives,
+                layout_report,
+                capture_registry,
                 transformation: Some(fw_transformation.clone()),
                 element_annotations,
                 match_block: Some(CompiledMatchBlock {
@@ -385,9 +641,16 @@ pub fn compile(
         }
         None => {
             let geometry = standardize_geometry(map, geometry);
+            validate_resource_references(&geometry, &resource_declarations)?;
 
             Ok(CompiledData {
+                efgdl_version,
+                document_header,
+                resource_declarations,
                 geometry,
+                layout_alternatives,
+                layout_report,
+                capture_registry,
                 transformation: None,
                 element_annotations,
                 match_block: None,
@@ -415,6 +678,7 @@ mod tests {
         S(
             Read {
                 annotations: vec![annotation],
+                output_header: None,
                 index: S(read_idx, span),
                 exprs: vec![S(
                     Expr::GeomPiece(IntervalKind::Barcode, IntervalShape::FixedLen(S(10, span))),
@@ -432,6 +696,8 @@ mod tests {
         // index exceeds u8::MAX.
         let span = (0..1).into();
         let desc = Description {
+            header: None,
+            resources: None,
             definitions: S(vec![], span),
             reads: S(vec![make_annotated_read(256)], span),
             transforms: None,
@@ -456,6 +722,8 @@ mod tests {
         // missing geometry, but not due to index overflow).
         let span = (0..1).into();
         let desc = Description {
+            header: None,
+            resources: None,
             definitions: S(vec![], span),
             reads: S(vec![make_annotated_read(255)], span),
             transforms: None,

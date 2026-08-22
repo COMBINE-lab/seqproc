@@ -16,15 +16,15 @@ Usage:
   ./scripts/bump_and_publish.sh <version> [--publish] [--dry-run] [--skip-tests]
 
 Validates seqproc, updates Cargo.toml and Cargo.lock when <version> differs from
-the current version, commits the bump, and creates and pushes v<version>. The
-tag triggers cargo-dist binary builds. With --publish, the crate is also
-published to crates.io. Publish the required ANTISEQUENCE version first.
+the current version, commits and pushes the bump, publishes to crates.io when
+requested, and only then creates and pushes v<version>. The tag triggers
+cargo-dist binary builds. Publish the required ANTISEQUENCE version first.
 
 Passing the current version is supported for the first release and creates the
 tag without a version-bump commit.
 
 Options:
-  --publish     Publish seqproc to crates.io after pushing the commit and tag
+  --publish     Publish seqproc to crates.io before creating the public tag
   --dry-run     Validate packaging and print release actions without modifying,
                 committing, tagging, pushing, publishing, or triggering dist
   --skip-tests  Skip cargo test --locked --all-targets (use only after running it yourself)
@@ -110,6 +110,10 @@ fi
 ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
 [[ "$ORIGIN_URL" == "https://github.com/COMBINE-lab/seqproc.git" || "$ORIGIN_URL" == "git@github.com:COMBINE-lab/seqproc.git" ]] || \
     die "origin is not the COMBINE-lab/seqproc GitHub repository"
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$CURRENT_BRANCH" != "main" && "$DRY_RUN" == false ]]; then
+    die "releases must be tagged from main (currently on $CURRENT_BRANCH); merge the reviewed branch first, or use --dry-run to validate from here"
+fi
 
 echo "Current version : $CURRENT_VERSION"
 echo "Release version : $VERSION"
@@ -152,11 +156,11 @@ echo "Preflight: cargo package --list"
 if [[ "$DRY_RUN" == true && "$CURRENT_VERSION" != "$VERSION" ]]; then
     echo "Dry-run validates the current package contents; the version rewrite is only printed"
 fi
-cargo package --allow-dirty --list >/dev/null
+cargo package --locked --allow-dirty --list >/dev/null
 
-echo "Preflight: cargo publish --dry-run"
+echo "Preflight: cargo publish --dry-run --locked"
 PUBLISH_CHECK_LOG="$(mktemp "${TMPDIR:-/tmp}/seqproc-publish-check.XXXXXX")"
-if ! cargo publish --dry-run --allow-dirty 2>&1 | tee "$PUBLISH_CHECK_LOG"; then
+if ! cargo publish --dry-run --locked --allow-dirty 2>&1 | tee "$PUBLISH_CHECK_LOG"; then
     if [[ "$PUBLISH" == false ]] && grep -Eq \
         'no matching package named [`'\''"]?antisequence|failed to select a version for the requirement [`'\''"]?antisequence' \
         "$PUBLISH_CHECK_LOG"; then
@@ -184,15 +188,16 @@ if [[ "$MANIFEST_UPDATED" == true ]]; then
     COMMIT_CREATED=true
 fi
 
-run git tag -a "$TAG" -m "Release ${VERSION}"
 run git push origin HEAD
-run git push origin "$TAG"
 
 if [[ "$PUBLISH" == true ]]; then
-    run cargo publish
+    run cargo publish --locked
 else
     echo "Skipping crates.io publication; pass --publish to publish v${VERSION}"
 fi
+
+run git tag -a "$TAG" -m "Release ${VERSION}"
+run git push origin "$TAG"
 
 echo
 echo "seqproc release preparation complete for v${VERSION}"

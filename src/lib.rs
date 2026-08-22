@@ -18,11 +18,14 @@
 //! - `geometry`: Geometry file parsing and compilation
 //! - `processors`: Read processing operations
 
+pub mod build_info;
 pub mod demux;
 pub mod error;
 pub mod execute;
 mod geometry;
+pub mod io_config;
 mod processors;
+pub mod resources;
 
 pub use crate::geometry::*;
 pub use crate::processors::*;

@@ -19,7 +19,7 @@ jobs:
       CARGO_NET_RETRY: 10
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
-      RUSTFLAGS: -D warnings
+      RUSTFLAGS: -C target-cpu=x86-64-v3 -D warnings
       RUSTDOCFLAGS: -D warnings
       RUSTUP_MAX_RETRIES: 10
 
@@ -49,3 +49,54 @@ jobs:
 
       - name: doc
         run: cargo doc --locked --workspace --no-deps
+
+      - name: Inspect source package contents
+        # Full verification resolves the registry form of ANTISEQUENCE and is
+        # performed by bump_and_publish.sh after that crate is published.
+        run: cargo package --locked --list > /dev/null
+
+      - name: Verify x86-64-v3 release contract
+        run: |
+          cargo build --release --locked --bin seqproc
+          target/release/seqproc --version --verbose
+          target/release/seqproc --version --verbose | grep -F "compiler CPU target: x86-64-v3"
+          target/release/seqproc --version --verbose | grep -F "SIMD backend: x86-avx2"
+
+  baseline:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: seqproc-comprehensive-baseline
+      - name: Test generic SSE2 compatibility backend
+        run: >-
+          cargo test --locked --lib --bins --no-default-features
+          --features antisequence/baseline-simd
+      - name: Compare baseline and release-SIMD FASTQ bytes
+        run: bash scripts/verify_simd_equivalence.sh
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: seqproc-msrv-1.88
+      - run: cargo check --locked --all-targets
+
+  macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: seqproc-macos-arm64
+      - run: cargo test --locked --lib --bins

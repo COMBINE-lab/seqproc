@@ -1,7 +1,6 @@
 use std::{
     fs::File,
-    io::BufWriter,
-    panic,
+    io::{self, BufWriter, Write},
     path::{Path, PathBuf},
     thread,
 };
@@ -9,57 +8,357 @@ use std::{
 use antisequence::expr::fmt_expr;
 use antisequence::graph::TryOp;
 use antisequence::graph::*;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Result as AnyResult};
 use chumsky::{error::Rich, input::Input, Parser};
-use nix::sys::stat;
-use nix::unistd;
+use flate2::{write::GzEncoder, Compression};
+#[cfg(unix)]
+use nix::{sys::stat, unistd};
 use serde::Serialize;
 use tempfile::tempdir;
 use tracing::info;
 
 use crate::{
+    build_info::{build_provenance, BuildProvenance},
     compile::{compile, CompiledData},
     demux::DemuxConfig,
+    error::{
+        ExecutionConfigError, GeometryDiagnostic, GeometryStage, InputTopologyError,
+        OutputTopologyError, SeqprocError, SeqprocResult,
+    },
+    io_config::{InputLane, InputSource, OutputTarget, MAX_INPUT_LANES},
     lexer,
     parser::parser,
+    parser::IntervalShape,
+    resources::{ResourceBindings, ResourceResolutionReport},
 };
 
 const MIN_PARALLEL_GZIP_BLOCK_SIZE: usize = 32 * 1024;
+const DEFAULT_BATCH_MEMORY_BUDGET: usize = 256 * 1024 * 1024;
+const MAX_EFGDL_NESTING_DEPTH: usize = 128;
+
+fn estimated_geometry_bases(compiled: &CompiledData) -> usize {
+    compiled
+        .geometry
+        .iter()
+        .map(|read| {
+            read.iter()
+                .map(|piece| match &piece.expr.0.size {
+                    IntervalShape::FixedSeq(sequence) => sequence.0.len(),
+                    IntervalShape::FixedLen(length) => length.0,
+                    IntervalShape::RangedLen(range) => range.0 .1,
+                    IntervalShape::UnboundedLen => 150,
+                })
+                .sum::<usize>()
+                .max(1)
+        })
+        .sum::<usize>()
+        .max(1)
+}
+
+fn path_is_gzip(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("gz"))
+}
+
+fn graph_error_contains(
+    error: &antisequence::errors::Error,
+    predicate: &impl Fn(&antisequence::errors::Error) -> bool,
+) -> bool {
+    predicate(error)
+        || match error {
+            antisequence::errors::Error::WorkerFailures { errors, .. } => errors
+                .iter()
+                .any(|error| graph_error_contains(error, predicate)),
+            _ => false,
+        }
+}
+
+fn is_fastq_input_error(error: &antisequence::errors::Error) -> bool {
+    graph_error_contains(error, &|error| {
+        matches!(
+            error,
+            antisequence::errors::Error::ParseRecord { .. }
+                | antisequence::errors::Error::UnpairedRead(_)
+                | antisequence::errors::Error::ShardCountMismatch { .. }
+                | antisequence::errors::Error::ShardRecordCountMismatch { .. }
+                | antisequence::errors::Error::IncompleteInterleavedFragment { .. }
+        )
+    })
+}
+
+#[derive(Debug)]
+struct StdoutPipeClosed;
+
+impl std::fmt::Display for StdoutPipeClosed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("stdout consumer closed its pipe")
+    }
+}
+
+impl std::error::Error for StdoutPipeClosed {}
+
+fn tag_stdout_error(error: io::Error) -> io::Error {
+    if error.kind() == io::ErrorKind::BrokenPipe {
+        io::Error::new(io::ErrorKind::BrokenPipe, StdoutPipeClosed)
+    } else {
+        error
+    }
+}
+
+fn is_stdout_broken_pipe_error(error: &antisequence::errors::Error) -> bool {
+    graph_error_contains(error, &|error| {
+        let source = match error {
+            antisequence::errors::Error::BytesIo(source) => source.as_ref(),
+            antisequence::errors::Error::FileIo { source, .. } => source.as_ref(),
+            _ => return false,
+        };
+        source.downcast_ref::<io::Error>().is_some_and(|error| {
+            error.kind() == io::ErrorKind::BrokenPipe
+                && error
+                    .get_ref()
+                    .is_some_and(|source| source.is::<StdoutPipeClosed>())
+        })
+    })
+}
+
+struct StdoutWriter<W> {
+    inner: W,
+}
+
+impl<W> StdoutWriter<W> {
+    fn new(inner: W) -> Self {
+        Self { inner }
+    }
+}
+
+impl<W: Write> Write for StdoutWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.inner.write(buffer).map_err(tag_stdout_error)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush().map_err(tag_stdout_error)
+    }
+}
 
 fn configure_fastq_output(
     output: OutputFastqFileOp,
     config: &RunConfig,
     gzip_threads: usize,
-) -> Result<OutputFastqFileOp> {
-    let output = output.try_with_gzip_level(config.gzip_level)?;
+) -> SeqprocResult<OutputFastqFileOp> {
+    let output = output
+        .try_with_gzip_level(config.gzip_level)
+        .map_err(|source| SeqprocError::FastqOutput { source })?;
     if config.parallel_gzip_stream {
-        Ok(output.try_with_parallel_gzip_stream(gzip_threads, config.gzip_block_size)?)
+        output
+            .try_with_parallel_gzip_stream(gzip_threads, config.gzip_block_size)
+            .map_err(|source| SeqprocError::FastqOutput { source })
     } else {
         Ok(output.with_parallel_gzip_members(config.parallel_gzip))
     }
+}
+
+fn output_targets_from_legacy(config: &RunConfig) -> Vec<OutputTarget> {
+    let mut targets = vec![config
+        .output1
+        .clone()
+        .map(OutputTarget::Path)
+        .unwrap_or(OutputTarget::Discard)];
+    if let Some(path) = &config.output2 {
+        targets.push(OutputTarget::Path(path.clone()));
+    }
+    targets
+}
+
+fn unassigned_targets_from_legacy(config: &RunConfig) -> Vec<OutputTarget> {
+    let Some(last) = [config.unassigned1.as_ref(), config.unassigned2.as_ref()]
+        .into_iter()
+        .rposition(|path| path.is_some())
+    else {
+        return Vec::new();
+    };
+    [config.unassigned1.as_ref(), config.unassigned2.as_ref()]
+        .into_iter()
+        .take(last + 1)
+        .map(|path| {
+            path.cloned()
+                .map(OutputTarget::Path)
+                .unwrap_or(OutputTarget::Discard)
+        })
+        .collect()
+}
+
+fn target_file_name(target: &OutputTarget) -> Option<String> {
+    match target {
+        OutputTarget::Path(path) => Some(path.to_string_lossy().into_owned()),
+        OutputTarget::Discard => Some("/dev/null".to_owned()),
+        OutputTarget::Stdout => None,
+    }
+}
+
+struct FinishingGzipWriter<W: Write> {
+    inner: GzEncoder<W>,
+    finished: bool,
+}
+
+impl<W: Write> FinishingGzipWriter<W> {
+    fn new(writer: W, level: u32) -> Self {
+        Self {
+            inner: GzEncoder::new(writer, Compression::new(level)),
+            finished: false,
+        }
+    }
+}
+
+impl<W: Write> Write for FinishingGzipWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.inner.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if !self.finished {
+            self.inner.try_finish()?;
+            self.finished = true;
+        }
+        self.inner.get_mut().flush()
+    }
+}
+
+fn writer_for_target(
+    target: &OutputTarget,
+    stdout_gzip: bool,
+    gzip_level: u32,
+) -> SeqprocResult<Box<dyn Write + Send>> {
+    match target {
+        OutputTarget::Path(path) => {
+            let file = File::create(path).map_err(|source| SeqprocError::Io {
+                operation: "create FASTQ output",
+                target: path.clone(),
+                source,
+            })?;
+            let writer = BufWriter::new(file);
+            if path.to_string_lossy().ends_with(".gz") {
+                Ok(Box::new(FinishingGzipWriter::new(writer, gzip_level)))
+            } else {
+                Ok(Box::new(writer))
+            }
+        }
+        OutputTarget::Stdout => {
+            // Preserve the output target through type-erased ANTISEQUENCE
+            // writers. Only an EPIPE tagged here is normal Unix stdout early
+            // termination; an EPIPE from a file/FIFO remains an execution
+            // failure even in a multi-output run that also uses stdout.
+            let writer = StdoutWriter::new(BufWriter::new(io::stdout()));
+            if stdout_gzip {
+                Ok(Box::new(FinishingGzipWriter::new(writer, gzip_level)))
+            } else {
+                Ok(Box::new(writer))
+            }
+        }
+        OutputTarget::Discard => Ok(Box::new(io::sink())),
+    }
+}
+
+fn add_fastq_targets(
+    graph: &mut Graph,
+    targets: &[OutputTarget],
+    config: &RunConfig,
+    gzip_threads: usize,
+) -> SeqprocResult<()> {
+    if targets.is_empty() {
+        return Ok(());
+    }
+    if targets
+        .iter()
+        .all(|target| !matches!(target, OutputTarget::Stdout))
+    {
+        let files = targets
+            .iter()
+            .filter_map(target_file_name)
+            .collect::<Vec<_>>();
+        graph.add(configure_fastq_output(
+            OutputFastqFileOp::from_files(files),
+            config,
+            gzip_threads,
+        )?);
+        return Ok(());
+    }
+    if config.parallel_gzip || config.parallel_gzip_stream {
+        return Err(OutputTopologyError::ParallelGzipStdout.into());
+    }
+    let writers = targets
+        .iter()
+        .map(|target| writer_for_target(target, config.stdout_gzip, config.gzip_level))
+        .collect::<SeqprocResult<Vec<_>>>()?;
+    graph.add(OutputFastqOp::from_writers(writers));
+    Ok(())
 }
 
 #[derive(Debug)]
 pub struct FifoSeqprocData {
     pub r1_fifo: PathBuf,
     pub r2_fifo: PathBuf,
-    pub join_handle: thread::JoinHandle<Result<SeqprocStats>>,
+    pub join_handle: thread::JoinHandle<AnyResult<SeqprocStats>>,
+}
+
+/// Compatibility policy for the deprecated flag-only output topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputCompatibility {
+    /// Require output arity to match the geometry exactly.
+    Strict,
+    /// Allow the historical untransformed prefix behavior for one release.
+    LegacyPrefix,
 }
 
 #[derive(Debug, Clone)]
 pub struct RunConfig {
     pub input1: PathBuf,
     pub input2: Option<PathBuf>,
+    /// Primary grouped input representation. `None` uses the legacy
+    /// `input1`/`input2` fields.
+    pub input_lanes: Option<Vec<InputLane>>,
+    /// Ordered shards containing complete interleaved fragments. Geometry
+    /// input arity determines the records per fragment.
+    pub interleaved_input: Option<Vec<InputSource>>,
     pub output1: Option<PathBuf>,
     pub output2: Option<PathBuf>,
+    /// Primary output representation. `None` uses `output1`/`output2`.
+    pub outputs: Option<Vec<OutputTarget>>,
+    /// Whether to retain the deprecated flag-only prefix-output behavior.
+    /// Library callers and the `seqproc run` command are strict by default.
+    pub output_compatibility: OutputCompatibility,
     pub unassigned1: Option<PathBuf>,
     pub unassigned2: Option<PathBuf>,
+    /// Unassigned output representation. `None` uses the legacy fields.
+    pub unassigned_outputs: Option<Vec<OutputTarget>>,
+    /// Compress the stdout FASTQ stream. Required because stdout has no suffix.
+    pub stdout_gzip: bool,
     pub threads: usize,
     pub preserve_order: bool,
     pub staged_pipeline: bool,
+    /// Automatic, whole-graph, or bounded-pipeline execution selection.
+    pub execution_mode: ExecutionMode,
+    /// Apply conservative compile-time graph optimization passes.
+    pub graph_optimization: bool,
+    /// Individually configurable compile-time optimization passes. The
+    /// legacy `graph_optimization` switch remains the master enable.
+    pub graph_optimization_passes: GraphOptimizationConfig,
+    /// Select whether pipeline workers parse their own batches or receive
+    /// batches from a dedicated reader thread.
+    pub pipeline_input_mode: PipelineInputMode,
+    /// Render a safe terminal FASTQ projection directly into output buffers
+    /// when staged execution can prove that intermediate records are dead.
+    pub direct_output_rendering: bool,
     pub queue_capacity: Option<usize>,
     pub max_in_flight_batches: Option<usize>,
     pub batch_size: Option<usize>,
+    /// Select deterministic graph/geometry-aware batch and queue bounds when
+    /// their corresponding exact overrides are absent.
+    pub dynamic_batch_planning: bool,
+    /// Hard planner budget for admitted record batches and declared codec
+    /// buffers.
+    pub batch_memory_budget: usize,
     /// Gzip compression level for output paths ending in `.gz`.
     pub gzip_level: u32,
     /// Compress independent batches into concatenated gzip members.
@@ -78,6 +377,10 @@ pub struct RunConfig {
     /// Decoded bytes assigned to each accelerated input handoff chunk.
     pub gzip_input_chunk_size: usize,
     pub additional_args: Vec<String>,
+    /// Named EFGDL 2 resource bindings supplied by the caller.
+    pub resource_bindings: ResourceBindings,
+    /// Base directory used for relative EFGDL 2 literal/default resources.
+    pub geometry_base: Option<PathBuf>,
     pub demux: Option<DemuxConfig>,
     /// Runtime instrumentation level. `Off` leaves data-dependent statistics
     /// collection disabled; `Basic` collects run totals; `Detailed` also
@@ -95,16 +398,29 @@ impl RunConfig {
         Self {
             input1: input1.into(),
             input2: None,
+            input_lanes: None,
+            interleaved_input: None,
             output1: None,
             output2: None,
+            outputs: None,
+            output_compatibility: OutputCompatibility::Strict,
             unassigned1: None,
             unassigned2: None,
+            unassigned_outputs: None,
+            stdout_gzip: false,
             threads: 1,
             preserve_order: false,
             staged_pipeline: false,
+            execution_mode: ExecutionMode::Auto,
+            graph_optimization: true,
+            graph_optimization_passes: GraphOptimizationConfig::default(),
+            pipeline_input_mode: PipelineInputMode::WorkerLocal,
+            direct_output_rendering: true,
             queue_capacity: None,
             max_in_flight_batches: None,
             batch_size: None,
+            dynamic_batch_planning: true,
+            batch_memory_budget: DEFAULT_BATCH_MEMORY_BUDGET,
             // Development profiling selected level 3 as the speed/size
             // default; users can request the traditional level 6 explicitly.
             gzip_level: 3,
@@ -116,6 +432,8 @@ impl RunConfig {
             gzip_input_threads: 1,
             gzip_input_chunk_size: 256 * 1024,
             additional_args: Vec::new(),
+            resource_bindings: ResourceBindings::new(),
+            geometry_base: None,
             demux: None,
             statistics_level: StatisticsLevel::Off,
             collect_statistics: false,
@@ -133,10 +451,67 @@ impl RunConfig {
             StatisticsLevel::Off
         }
     }
+
+    pub fn with_input_lanes(mut self, lanes: impl IntoIterator<Item = InputLane>) -> Self {
+        self.input_lanes = Some(lanes.into_iter().collect());
+        self
+    }
+
+    pub fn with_outputs(mut self, outputs: impl IntoIterator<Item = OutputTarget>) -> Self {
+        self.outputs = Some(outputs.into_iter().collect());
+        self
+    }
+
+    pub fn with_interleaved_input(
+        mut self,
+        sources: impl IntoIterator<Item = impl Into<InputSource>>,
+    ) -> Self {
+        self.interleaved_input = Some(sources.into_iter().map(Into::into).collect());
+        self
+    }
+
+    fn effective_input_lanes(&self) -> SeqprocResult<Vec<InputLane>> {
+        let lanes = self.input_lanes.clone().unwrap_or_else(|| {
+            let mut lanes = vec![InputLane::single(self.input1.clone())];
+            if let Some(input2) = &self.input2 {
+                lanes.push(InputLane::single(input2.clone()));
+            }
+            lanes
+        });
+        if lanes.is_empty() {
+            return Err(InputTopologyError::MissingLanes.into());
+        }
+        if lanes.len() > MAX_INPUT_LANES {
+            return Err(InputTopologyError::TooManyLanes {
+                maximum: MAX_INPUT_LANES,
+                observed: lanes.len(),
+            }
+            .into());
+        }
+        let expected_shards = lanes[0].shards.len();
+        if expected_shards == 0 {
+            return Err(InputTopologyError::EmptyLane { lane: 1 }.into());
+        }
+        for (lane, input) in lanes.iter().enumerate() {
+            if input.shards.is_empty() {
+                return Err(InputTopologyError::EmptyLane { lane: lane + 1 }.into());
+            }
+            if input.shards.len() != expected_shards {
+                return Err(InputTopologyError::ShardCountMismatch {
+                    lane: lane + 1,
+                    expected: expected_shards,
+                    observed: input.shards.len(),
+                }
+                .into());
+            }
+        }
+        Ok(lanes)
+    }
 }
 
 #[derive(Debug, Serialize)]
 pub struct RunReport {
+    pub build: BuildProvenance,
     pub effective_threads: usize,
     pub ordered_output: bool,
     pub statistics_level: StatisticsLevel,
@@ -148,6 +523,14 @@ pub struct RunReport {
     pub gzip_input_backend: String,
     pub gzip_input_threads: usize,
     pub gzip_input_chunk_size: usize,
+    pub graph_optimization: GraphOptimizationReport,
+    pub execution_plan: ExecutionPlan,
+    pub resources: ResourceResolutionReport,
+    pub input_topology: Vec<Vec<String>>,
+    pub input_layout: String,
+    pub input_arity: usize,
+    pub output_arity: usize,
+    pub output_topology: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<PipelineReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -158,6 +541,7 @@ pub struct RunReport {
 pub struct SeqprocStats {
     pub schema_version: String,
     pub seqproc_version: String,
+    pub build: BuildProvenance,
     pub statistics_level: StatisticsLevel,
     pub call: Option<String>,
     pub geometry_digest: Option<String>,
@@ -171,6 +555,16 @@ pub struct SeqprocStats {
     pub gzip_input_backend: String,
     pub gzip_input_threads: usize,
     pub gzip_input_chunk_size: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_optimization: Option<GraphOptimizationReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_plan: Option<ExecutionPlan>,
+    pub resources: ResourceResolutionReport,
+    pub input_topology: Vec<Vec<String>>,
+    pub input_layout: String,
+    pub input_arity: usize,
+    pub output_arity: usize,
+    pub output_topology: Vec<String>,
 
     pub n_fastqs: u32,
     pub n_processed: u64,
@@ -184,6 +578,7 @@ pub struct SeqprocStats {
     pub read_length_mean: Vec<f64>,
     pub read_length_min: Vec<u64>,
     pub read_length_max: Vec<u64>,
+    pub shard_read_counts: Vec<Vec<u64>>,
     pub match_distance_stats: Vec<MatchDistanceStats>,
 }
 
@@ -206,6 +601,11 @@ pub struct AmbiguityStats {
     pub resolved_first: u64,
     pub resolved_random: u64,
     pub resolved_quality: u64,
+    pub position_total: u64,
+    pub position_dropped: u64,
+    pub position_resolved_leftmost: u64,
+    pub position_resolved_rightmost: u64,
+    pub position_resolved_quality: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -222,45 +622,55 @@ pub struct RejectionReasonCount {
 
 /// Execute a compiled geometry through one pipeline for normal, summary,
 /// demultiplexed, and unassigned-read runs.
-pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> {
+pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunReport> {
     if config.threads == 0 {
-        bail!("number of threads must be greater than zero");
+        return Err(ExecutionConfigError::ThreadCount(config.threads).into());
     }
     if config.gzip_level > 9 {
-        bail!(
-            "gzip compression level must be between 0 and 9, got {}",
-            config.gzip_level
-        );
+        return Err(ExecutionConfigError::GzipLevel(config.gzip_level).into());
+    }
+    if config.dynamic_batch_planning && config.batch_memory_budget == 0 {
+        return Err(ExecutionConfigError::BatchMemoryBudget.into());
     }
     if config.parallel_gzip && config.parallel_gzip_stream {
-        bail!("--parallel-gzip and --parallel-gzip-stream are mutually exclusive");
+        return Err(ExecutionConfigError::ConflictingGzipModes.into());
+    }
+    if config.staged_pipeline && config.execution_mode == ExecutionMode::WholeGraph {
+        return Err(ExecutionConfigError::StagedWholeGraphConflict.into());
+    }
+    if config.preserve_order
+        && config.execution_mode == ExecutionMode::WholeGraph
+        && config.threads > 1
+    {
+        return Err(ExecutionConfigError::OrderedWholeGraph.into());
     }
     // The real-data crossover sweep found that letting the compression pool
     // grow to every transform worker oversubscribed short-read workloads.
     // Four is the best balanced default; explicit settings remain available.
     let gzip_threads = config.gzip_threads.unwrap_or(config.threads.min(4));
     if config.parallel_gzip_stream && gzip_threads == 0 {
-        bail!("number of gzip compression threads must be greater than zero");
+        return Err(ExecutionConfigError::GzipThreadCount.into());
     }
     if config.accelerated_gzip_input && config.gzip_input_threads == 0 {
-        bail!("number of gzip input threads must be greater than zero");
+        return Err(ExecutionConfigError::GzipInputThreadCount.into());
     }
     if config.accelerated_gzip_input && config.gzip_input_chunk_size == 0 {
-        bail!("gzip input chunk size must be greater than zero");
+        return Err(ExecutionConfigError::GzipInputChunkSize.into());
     }
     if config.parallel_gzip_stream && config.gzip_block_size < MIN_PARALLEL_GZIP_BLOCK_SIZE {
-        bail!(
-            "parallel gzip block size must be at least {}, got {}",
-            MIN_PARALLEL_GZIP_BLOCK_SIZE,
-            config.gzip_block_size
-        );
+        return Err(ExecutionConfigError::GzipBlockSize {
+            minimum: MIN_PARALLEL_GZIP_BLOCK_SIZE,
+            observed: config.gzip_block_size,
+        }
+        .into());
     }
     if config.parallel_gzip_stream
-        && (config.demux.is_some() || config.unassigned1.is_some() || config.unassigned2.is_some())
+        && (config.demux.is_some()
+            || config.unassigned_outputs.is_some()
+            || config.unassigned1.is_some()
+            || config.unassigned2.is_some())
     {
-        bail!(
-            "parallel single-stream gzip currently supports fixed primary outputs only; demultiplexed and unassigned outputs would create an unbounded number of compression pools"
-        );
+        return Err(OutputTopologyError::ParallelStreamVariableOutputs.into());
     }
     let effective_gzip_threads = if config.parallel_gzip_stream {
         gzip_threads
@@ -270,140 +680,402 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         1
     };
 
+    if config.interleaved_input.is_some() && config.input_lanes.is_some() {
+        return Err(InputTopologyError::ConflictingLayouts.into());
+    }
+    let interleaved_sources = config.interleaved_input.clone();
+    let input_lanes = if interleaved_sources.is_some() {
+        Vec::new()
+    } else {
+        config.effective_input_lanes()?
+    };
+    let input_lane_count = if interleaved_sources.is_some() {
+        compiled_data.geometry.len()
+    } else {
+        input_lanes.len()
+    };
+    if interleaved_sources.is_none() && compiled_data.geometry.len() != input_lane_count {
+        return Err(InputTopologyError::GeometryArityMismatch {
+            required: compiled_data.geometry.len(),
+            supplied: input_lane_count,
+        }
+        .into());
+    }
+    if let Some(sources) = &interleaved_sources {
+        if sources.is_empty() {
+            return Err(InputTopologyError::EmptyInterleavedInput.into());
+        }
+        if !(1..=MAX_INPUT_LANES).contains(&input_lane_count) {
+            return Err(InputTopologyError::UnsupportedInterleavedArity {
+                maximum: MAX_INPUT_LANES,
+                observed: input_lane_count,
+            }
+            .into());
+        }
+    }
+
+    // Resolve the geometry's declared resources before output-topology
+    // validation so missing or invalid bindings retain their typed error
+    // precedence even when no output has yet been selected.
+    let resolved_resources = compiled_data.resolve_resources(
+        &config.additional_args,
+        &config.resource_bindings,
+        config.geometry_base.as_deref(),
+    )?;
+
+    let output_arity = compiled_data
+        .transformation
+        .as_ref()
+        .map_or(input_lane_count, Vec::len);
     if config.demux.is_none() {
         if let Some(transformations) = &compiled_data.transformation {
-            if transformations.len() == 2 && (config.output1.is_none() || config.output2.is_none())
+            if config.output_compatibility == OutputCompatibility::LegacyPrefix
+                && config.outputs.is_none()
+                && transformations.len() == 2
+                && (config.output1.is_none() || config.output2.is_none())
             {
-                bail!("geometry transforms into two reads; both output1 and output2 are required");
+                return Err(OutputTopologyError::LegacyPairedOutputRequired.into());
             }
         }
     }
-
-    let additional_args = config
-        .additional_args
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let mut graph = Graph::new();
-    let mut input_files = vec![config.input1.to_string_lossy().into_owned()];
-    if let Some(input2) = &config.input2 {
-        input_files.push(input2.to_string_lossy().into_owned());
+    let primary_targets = config
+        .outputs
+        .clone()
+        .unwrap_or_else(|| output_targets_from_legacy(&config));
+    if config.demux.is_some()
+        && primary_targets
+            .iter()
+            .any(|target| !matches!(target, OutputTarget::Discard))
+    {
+        return Err(OutputTopologyError::PrimaryOutputsWithDemultiplexing.into());
     }
-    let input = if config.accelerated_gzip_input {
-        InputFastqOp::from_files_accelerated_gzip(
-            input_files,
-            config.gzip_input_threads,
-            config.gzip_input_chunk_size,
-        )
+    if config.demux.is_none()
+        && !primary_targets
+            .iter()
+            .any(|target| !matches!(target, OutputTarget::Discard))
+    {
+        return Err(OutputTopologyError::MissingPrimaryOutput.into());
+    }
+    // Before explicit output transformations existed, the flag-only CLI
+    // allowed a prefix of the input lanes to be written. In particular, a
+    // paired geometry plus only `-o` wrote read 1. Preserve that EFGDL 1
+    // contract for one compatibility cycle; transformed and explicitly typed
+    // output lists retain exact arity checking.
+    let legacy_untransformed_prefix = config.output_compatibility
+        == OutputCompatibility::LegacyPrefix
+        && config.outputs.is_none()
+        && compiled_data.transformation.is_none()
+        && !primary_targets.is_empty()
+        && primary_targets.len() <= output_arity;
+    if config.demux.is_none()
+        && !legacy_untransformed_prefix
+        && primary_targets.len() != output_arity
+    {
+        return Err(OutputTopologyError::ArityMismatch {
+            required: output_arity,
+            supplied: primary_targets.len(),
+        }
+        .into());
+    }
+    let unassigned_targets = config
+        .unassigned_outputs
+        .clone()
+        .unwrap_or_else(|| unassigned_targets_from_legacy(&config));
+    if !unassigned_targets.is_empty() && unassigned_targets.len() != input_lane_count {
+        return Err(OutputTopologyError::UnassignedArityMismatch {
+            supplied: unassigned_targets.len(),
+            input_arity: input_lane_count,
+        }
+        .into());
+    }
+    let stdout_targets = primary_targets
+        .iter()
+        .chain(&unassigned_targets)
+        .filter(|target| matches!(target, OutputTarget::Stdout))
+        .count();
+    if stdout_targets > 1 {
+        return Err(OutputTopologyError::MultipleStdout.into());
+    }
+    if config.stdout_gzip && stdout_targets == 0 {
+        return Err(OutputTopologyError::StdoutGzipWithoutStdout.into());
+    }
+    // Fixed outputs can report their configured target kinds directly. Demux
+    // outputs are instead created dynamically from the sample-map attribute,
+    // but still emit one path-backed FASTQ per output lane. Keep provenance
+    // aligned with the effective writer graph rather than leaking the
+    // placeholder Discard targets used when no fixed --outN paths are given.
+    let reported_output_topology = if config.demux.is_some() {
+        vec!["path".to_owned(); output_arity]
     } else {
-        InputFastqOp::from_files(input_files)
+        primary_targets
+            .iter()
+            .map(|target| target.kind().to_owned())
+            .collect()
     };
-    graph.add(input.map_err(|error| anyhow!("failed to open input FASTQ: {error}"))?);
 
-    let has_unassigned = config.unassigned1.is_some() || config.unassigned2.is_some();
+    let stdin_sources = input_lanes
+        .iter()
+        .flat_map(|lane| lane.shards.iter())
+        .chain(interleaved_sources.iter().flatten())
+        .filter(|source| matches!(source, InputSource::Stdin))
+        .count();
+    if stdin_sources > 1 {
+        return Err(InputTopologyError::MultipleStdin.into());
+    }
+    if stdin_sources > 0 && config.accelerated_gzip_input {
+        return Err(InputTopologyError::AcceleratedGzipStdin.into());
+    }
+
+    let mut graph = Graph::new();
+    let input_layout = if interleaved_sources.is_some() {
+        "interleaved"
+    } else {
+        "separate"
+    };
+    let input_topology = if let Some(sources) = &interleaved_sources {
+        vec![sources
+            .iter()
+            .map(|source| source.kind().to_owned())
+            .collect::<Vec<_>>()]
+    } else {
+        input_lanes
+            .iter()
+            .map(|lane| {
+                lane.shards
+                    .iter()
+                    .map(|source| source.kind().to_owned())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    let grouped_files = input_lanes
+        .iter()
+        .map(|lane| {
+            lane.shards
+                .iter()
+                .filter_map(|source| source.path())
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    if let Some(sources) = &interleaved_sources {
+        if stdin_sources > 0 {
+            if sources.len() != 1 {
+                return Err(InputTopologyError::InterleavedStdinWithShards.into());
+            }
+            graph.add(
+                InputFastqOp::from_interleaved_reader(io::stdin(), input_lane_count).map_err(
+                    |source| SeqprocError::FastqInput {
+                        context: "interleaved stdin",
+                        source,
+                    },
+                )?,
+            );
+        } else {
+            let files = sources
+                .iter()
+                .filter_map(InputSource::path)
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            let input = if config.accelerated_gzip_input {
+                GroupedInputFastqOp::from_interleaved_files_accelerated_gzip(
+                    files,
+                    input_lane_count,
+                    config.gzip_input_threads,
+                    config.gzip_input_chunk_size,
+                )
+            } else {
+                GroupedInputFastqOp::from_interleaved_files(files, input_lane_count)
+            };
+            graph.add(input.map_err(|source| SeqprocError::FastqInput {
+                context: "interleaved",
+                source,
+            })?);
+        }
+    } else if stdin_sources > 0 {
+        if input_lanes.iter().any(|lane| lane.shards.len() != 1) {
+            return Err(InputTopologyError::StdinWithShards.into());
+        }
+        let readers = input_lanes
+            .iter()
+            .map(|lane| match &lane.shards[0] {
+                InputSource::Path(path) => File::open(path)
+                    .map(|file| Box::new(file) as Box<dyn io::Read + Send>)
+                    .map_err(|source| SeqprocError::Io {
+                        operation: "open FASTQ input",
+                        target: path.clone(),
+                        source,
+                    }),
+                InputSource::Stdin => Ok(Box::new(io::stdin()) as Box<dyn io::Read + Send>),
+            })
+            .collect::<SeqprocResult<Vec<_>>>()?;
+        graph.add(InputFastqOp::from_readers(readers).map_err(|source| {
+            SeqprocError::FastqInput {
+                context: "streamed",
+                source,
+            }
+        })?);
+    } else if grouped_files.iter().all(|lane| lane.len() == 1) {
+        let files = grouped_files
+            .iter()
+            .map(|lane| lane[0].clone())
+            .collect::<Vec<_>>();
+        let input = if config.accelerated_gzip_input {
+            InputFastqOp::from_files_accelerated_gzip(
+                files,
+                config.gzip_input_threads,
+                config.gzip_input_chunk_size,
+            )
+        } else {
+            InputFastqOp::from_files(files)
+        };
+        graph.add(input.map_err(|source| SeqprocError::FastqInput {
+            context: "file-backed",
+            source,
+        })?);
+    } else {
+        let input = if config.accelerated_gzip_input {
+            GroupedInputFastqOp::from_files_accelerated_gzip(
+                grouped_files,
+                config.gzip_input_threads,
+                config.gzip_input_chunk_size,
+            )
+        } else {
+            GroupedInputFastqOp::from_files(grouped_files)
+        };
+        graph.add(input.map_err(|source| SeqprocError::FastqInput {
+            context: "grouped",
+            source,
+        })?);
+    }
+
+    let has_unassigned = !unassigned_targets.is_empty();
     if has_unassigned {
         let mut try_graph = Graph::new();
-        compiled_data.interpret(&mut try_graph, &additional_args);
+        compiled_data.interpret_with_resources(&mut try_graph, &resolved_resources)?;
 
         let mut catch_graph = Graph::new();
-        let mut unassigned_files = Vec::new();
-        if let Some(path) = &config.unassigned1 {
-            unassigned_files.push(path.to_string_lossy().into_owned());
-        }
-        if config.input2.is_some() {
-            if let Some(path) = &config.unassigned2 {
-                unassigned_files.push(path.to_string_lossy().into_owned());
-            }
-        }
-        if !unassigned_files.is_empty() {
-            catch_graph.add(configure_fastq_output(
-                OutputFastqFileOp::from_files(unassigned_files),
-                &config,
-                gzip_threads,
-            )?);
-        }
+        add_fastq_targets(&mut catch_graph, &unassigned_targets, &config, gzip_threads)?;
         graph.add(TryOp::new(try_graph, catch_graph));
     } else {
-        compiled_data.interpret(&mut graph, &additional_args);
+        compiled_data.interpret_with_resources(&mut graph, &resolved_resources)?;
     }
 
     if let Some(demux) = &config.demux {
-        demux
-            .add_lookup_op(&mut graph)
-            .map_err(|error| anyhow!(error))?;
-        std::fs::create_dir_all(&demux.output_dir)?;
+        demux.add_lookup_op(&mut graph)?;
+        std::fs::create_dir_all(&demux.output_dir).map_err(|source| SeqprocError::Io {
+            operation: "create demultiplexing output directory",
+            target: demux.output_dir.clone(),
+            source,
+        })?;
 
         let out_dir = demux.output_dir.to_string_lossy();
         let sample_attr_path = format!("{}.{}", demux.barcode_label, demux.sample_attr);
-        let mut expressions = vec![fmt_expr(format!(
-            "{}/{{{}}}_R1.fastq",
-            out_dir, sample_attr_path
-        ))];
-        if config.input2.is_some() {
-            expressions.push(fmt_expr(format!(
-                "{}/{{{}}}_R2.fastq",
-                out_dir, sample_attr_path
-            )));
-        }
+        let expressions = (1..=output_arity)
+            .map(|lane| {
+                fmt_expr(format!(
+                    "{}/{{{}}}_R{}.fastq",
+                    out_dir, sample_attr_path, lane
+                ))
+            })
+            .collect::<Vec<_>>();
         graph.add(configure_fastq_output(
             OutputFastqFileOp::from_files(expressions),
             &config,
             effective_gzip_threads,
         )?);
     } else {
-        let output1 = config
-            .output1
-            .as_deref()
-            .unwrap_or_else(|| Path::new("/dev/null"))
-            .to_string_lossy()
-            .into_owned();
-        match (&config.input2, &config.output2) {
-            (Some(_), Some(output2)) => {
-                graph.add(configure_fastq_output(
-                    OutputFastqFileOp::from_files([
-                        output1,
-                        output2.to_string_lossy().into_owned(),
-                    ]),
-                    &config,
-                    gzip_threads,
-                )?);
-            }
-            _ => {
-                graph.add(configure_fastq_output(
-                    OutputFastqFileOp::from_file(output1),
-                    &config,
-                    gzip_threads,
-                )?);
-            }
-        }
+        add_fastq_targets(&mut graph, &primary_targets, &config, gzip_threads)?;
     }
 
+    // Geometry compilation currently relies on the historical conditional
+    // skip behavior. Make that compatibility choice explicit before freezing
+    // the graph; future EFGDL validation can select stricter policies.
+    graph.set_missing_input_policy(MissingInputPolicy::Skip);
     let statistics_level = config.effective_statistics_level();
     graph.set_statistics_level(statistics_level);
-    let use_pipeline = config.preserve_order || config.staged_pipeline;
-    let pipeline = if use_pipeline {
-        let mut pipeline_config = PipelineConfig::new(config.threads);
-        pipeline_config.preserve_order = config.preserve_order;
-        if let Some(queue_capacity) = config.queue_capacity {
-            pipeline_config.queue_capacity = queue_capacity;
-        }
-        if let Some(max_in_flight_batches) = config.max_in_flight_batches {
-            pipeline_config.max_in_flight_batches = max_in_flight_batches;
-        }
-        if let Some(batch_size) = config.batch_size {
-            pipeline_config.batch_size = batch_size;
-        }
-        Some(
-            graph
-                .try_run_pipeline(pipeline_config)
-                .map_err(|error| anyhow!(error.to_string()))?,
-        )
-    } else {
-        graph
-            .try_run_with_threads(config.threads)
-            .map_err(|error| anyhow!(error.to_string()))?;
-        None
+    let mut graph_optimization = config.graph_optimization_passes;
+    graph_optimization.enabled &= config.graph_optimization;
+    let graph = graph
+        .compile_with(graph_optimization)
+        .map_err(|source| SeqprocError::GraphCompilation { source })?;
+    let optimization = graph.optimization_report().clone();
+    let mut execution_request = ExecutionRequest::new(config.threads);
+    let compressed_input = interleaved_sources
+        .as_ref()
+        .into_iter()
+        .flatten()
+        .chain(input_lanes.iter().flat_map(|lane| lane.shards.iter()))
+        .filter_map(InputSource::path)
+        .any(path_is_gzip);
+    let compressed_output = primary_targets.iter().any(|target| match target {
+        OutputTarget::Path(path) => path_is_gzip(path),
+        OutputTarget::Stdout => config.stdout_gzip,
+        OutputTarget::Discard => false,
+    });
+    let fixed_buffer_bytes = usize::from(config.parallel_gzip_stream)
+        .saturating_mul(effective_gzip_threads)
+        .saturating_mul(config.gzip_block_size)
+        .saturating_add(
+            usize::from(config.accelerated_gzip_input)
+                .saturating_mul(config.gzip_input_threads)
+                .saturating_mul(config.gzip_input_chunk_size)
+                .saturating_mul(input_lane_count),
+        );
+    execution_request.batch_planning = BatchPlanningHints {
+        enabled: config.dynamic_batch_planning,
+        automatic_batch_size: config.batch_size.is_none(),
+        automatic_queue_capacity: config.queue_capacity.is_none(),
+        automatic_max_in_flight: config.max_in_flight_batches.is_none(),
+        input_lanes: input_lane_count,
+        output_lanes: output_arity,
+        estimated_bases_per_fragment: estimated_geometry_bases(&compiled_data),
+        compressed_input,
+        compressed_output,
+        fixed_buffer_bytes,
+        memory_budget_bytes: config.batch_memory_budget,
     };
+    execution_request.mode =
+        if config.staged_pipeline && config.execution_mode == ExecutionMode::Auto {
+            ExecutionMode::Pipeline
+        } else {
+            config.execution_mode
+        };
+    execution_request.pipeline.preserve_order = config.preserve_order;
+    execution_request.pipeline.direct_output_rendering = config.direct_output_rendering;
+    execution_request.pipeline.input_mode = config.pipeline_input_mode;
+    if let Some(queue_capacity) = config.queue_capacity {
+        execution_request.pipeline.queue_capacity = queue_capacity;
+    }
+    if let Some(max_in_flight_batches) = config.max_in_flight_batches {
+        execution_request.pipeline.max_in_flight_batches = max_in_flight_batches;
+    }
+    if let Some(batch_size) = config.batch_size {
+        execution_request.pipeline.batch_size = batch_size;
+    }
+    let planned = graph.try_run_planned(execution_request).map_err(|source| {
+        if is_fastq_input_error(&source) {
+            return SeqprocError::FastqInput {
+                context: "runtime",
+                source,
+            };
+        }
+        if matches!(
+            &source,
+            antisequence::errors::Error::InvalidPipelineConfig(_)
+                | antisequence::errors::Error::InvalidPipelineGraph(_)
+        ) {
+            return SeqprocError::ExecutionPlanning { source };
+        }
+        if is_stdout_broken_pipe_error(&source) {
+            return SeqprocError::StdoutBrokenPipe {
+                operation: "FASTQ output",
+            };
+        }
+        SeqprocError::GraphExecution { source }
+    })?;
+    let execution_plan = planned.plan;
+    let pipeline = planned.pipeline;
 
     let statistics = statistics_level.is_enabled().then(|| {
         statistics_from_graph(
@@ -411,11 +1083,22 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
             statistics_level,
             config.call.clone(),
             config.geometry_digest.clone(),
-            &config,
-            effective_gzip_threads,
+            RuntimeProvenance {
+                config: &config,
+                gzip_compression_threads: effective_gzip_threads,
+                optimization: &optimization,
+                execution_plan: &execution_plan,
+                resources: resolved_resources.report(),
+                input_topology: &input_topology,
+                input_layout,
+                input_arity: input_lane_count,
+                output_arity,
+                output_topology: &reported_output_topology,
+            },
         )
     });
     Ok(RunReport {
+        build: build_provenance(),
         effective_threads: config.threads,
         ordered_output: config.preserve_order || config.threads == 1,
         statistics_level,
@@ -439,55 +1122,108 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> Result<RunReport> 
         } else {
             0
         },
+        graph_optimization: optimization,
+        execution_plan,
+        resources: resolved_resources.report().clone(),
+        input_topology,
+        input_layout: input_layout.to_owned(),
+        input_arity: input_lane_count,
+        output_arity,
+        output_topology: reported_output_topology,
         pipeline,
         statistics,
     })
 }
 
+struct RuntimeProvenance<'a> {
+    config: &'a RunConfig,
+    gzip_compression_threads: usize,
+    optimization: &'a GraphOptimizationReport,
+    execution_plan: &'a ExecutionPlan,
+    resources: &'a ResourceResolutionReport,
+    input_topology: &'a [Vec<String>],
+    input_layout: &'a str,
+    input_arity: usize,
+    output_arity: usize,
+    output_topology: &'a [String],
+}
+
 fn statistics_from_graph(
-    graph: &Graph,
+    graph: &CompiledGraph,
     statistics_level: StatisticsLevel,
     call: Option<String>,
     geometry_digest: Option<String>,
-    config: &RunConfig,
-    gzip_compression_threads: usize,
+    provenance: RuntimeProvenance<'_>,
 ) -> SeqprocStats {
+    let RuntimeProvenance {
+        config,
+        gzip_compression_threads,
+        optimization,
+        execution_plan,
+        resources,
+        input_topology,
+        input_layout,
+        input_arity,
+        output_arity,
+        output_topology,
+    } = provenance;
     let input_stats = graph.input_stats();
-    let (n_fastqs, n_processed, n_reads_max, read_length_min, read_length_max, read_length_mean) =
-        if let Some(stats) = input_stats {
-            let mut read_length_min = Vec::with_capacity(stats.n_fastqs);
-            let mut read_length_max = Vec::with_capacity(stats.n_fastqs);
-            let mut read_length_mean = Vec::with_capacity(stats.n_fastqs);
-            let mut max_count = 0usize;
+    let (
+        n_fastqs,
+        n_processed,
+        n_reads_max,
+        read_length_min,
+        read_length_max,
+        read_length_mean,
+        shard_read_counts,
+    ) = if let Some(stats) = input_stats {
+        let mut read_length_min = Vec::with_capacity(stats.n_fastqs);
+        let mut read_length_max = Vec::with_capacity(stats.n_fastqs);
+        let mut read_length_mean = Vec::with_capacity(stats.n_fastqs);
+        let mut max_count = 0usize;
 
-            for index in 0..stats.n_fastqs {
-                let count = *stats.read_counts.get(index).unwrap_or(&0);
-                max_count = max_count.max(count);
-                if stats.lengths_collected {
-                    let min = *stats.read_length_min.get(index).unwrap_or(&0);
-                    let max = *stats.read_length_max.get(index).unwrap_or(&0);
-                    let sum = *stats.read_length_sum.get(index).unwrap_or(&0);
-                    read_length_min.push(min as u64);
-                    read_length_max.push(max as u64);
-                    read_length_mean.push(if count == 0 {
-                        0.0
-                    } else {
-                        sum as f64 / count as f64
-                    });
-                }
+        for index in 0..stats.n_fastqs {
+            let count = *stats.read_counts.get(index).unwrap_or(&0);
+            max_count = max_count.max(count);
+            if stats.lengths_collected {
+                let min = *stats.read_length_min.get(index).unwrap_or(&0);
+                let max = *stats.read_length_max.get(index).unwrap_or(&0);
+                let sum = *stats.read_length_sum.get(index).unwrap_or(&0);
+                read_length_min.push(min as u64);
+                read_length_max.push(max as u64);
+                read_length_mean.push(if count == 0 {
+                    0.0
+                } else {
+                    sum as f64 / count as f64
+                });
             }
+        }
 
-            (
-                stats.n_fastqs as u32,
-                max_count as u64,
-                max_count as u64,
-                read_length_min,
-                read_length_max,
-                read_length_mean,
-            )
+        let shard_read_counts = if stats.shard_read_counts.is_empty() {
+            stats
+                .read_counts
+                .iter()
+                .map(|count| vec![*count as u64])
+                .collect()
         } else {
-            (0, 0, 0, Vec::new(), Vec::new(), Vec::new())
+            stats
+                .shard_read_counts
+                .iter()
+                .map(|lane| lane.iter().map(|count| *count as u64).collect())
+                .collect()
         };
+        (
+            stats.n_fastqs as u32,
+            max_count as u64,
+            max_count as u64,
+            read_length_min,
+            read_length_max,
+            read_length_mean,
+            shard_read_counts,
+        )
+    } else {
+        (0, 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    };
 
     let match_distance_stats = graph
         .match_distance_counts()
@@ -519,6 +1255,12 @@ fn statistics_from_graph(
                     resolved_first: counts.ambiguity.resolved_first as u64,
                     resolved_random: counts.ambiguity.resolved_random as u64,
                     resolved_quality: counts.ambiguity.resolved_quality as u64,
+                    position_total: counts.ambiguity.position_total as u64,
+                    position_dropped: counts.ambiguity.position_dropped as u64,
+                    position_resolved_leftmost: counts.ambiguity.position_resolved_leftmost as u64,
+                    position_resolved_rightmost: counts.ambiguity.position_resolved_rightmost
+                        as u64,
+                    position_resolved_quality: counts.ambiguity.position_resolved_quality as u64,
                 },
             }
         })
@@ -545,8 +1287,9 @@ fn statistics_from_graph(
     }
 
     SeqprocStats {
-        schema_version: "1.3.0".to_owned(),
+        schema_version: "1.13.0".to_owned(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_owned(),
+        build: build_provenance(),
         statistics_level,
         call,
         geometry_digest,
@@ -576,6 +1319,14 @@ fn statistics_from_graph(
         } else {
             0
         },
+        graph_optimization: Some(optimization.clone()),
+        execution_plan: Some(execution_plan.clone()),
+        resources: resources.clone(),
+        input_topology: input_topology.to_vec(),
+        input_layout: input_layout.to_owned(),
+        input_arity,
+        output_arity,
+        output_topology: output_topology.to_vec(),
         n_fastqs,
         n_processed,
         n_reads_max,
@@ -587,10 +1338,13 @@ fn statistics_from_graph(
         read_length_mean,
         read_length_min,
         read_length_max,
+        shard_read_counts,
         match_distance_stats,
     }
 }
 
+#[deprecated(note = "use run(RunConfig, CompiledData) for structured errors")]
+#[allow(deprecated)]
 pub fn interpret(
     file1: &Path,
     file2: Option<&Path>,
@@ -616,6 +1370,7 @@ pub fn interpret(
 
 /// Interpret geometry with optional unassigned output and demultiplexing support.
 #[allow(clippy::too_many_arguments)]
+#[deprecated(note = "use run(RunConfig, CompiledData) for structured errors")]
 pub fn interpret_with_unassigned(
     file1: &Path,
     file2: Option<&Path>,
@@ -646,7 +1401,10 @@ pub fn interpret_with_unassigned(
 
     // Build main processing graph
     let mut main_graph = antisequence::graph::Graph::new();
-    compiled_data.interpret(&mut main_graph, &additional_args);
+    if let Err(error) = compiled_data.try_interpret(&mut main_graph, &additional_args) {
+        tracing::error!("Failed to resolve geometry resources: {error}");
+        return;
+    }
 
     // If unassigned output is requested, wrap in TryOp
     let has_unassigned = unassigned1.is_some() || unassigned2.is_some();
@@ -659,10 +1417,14 @@ pub fn interpret_with_unassigned(
         input_files.push(f2.to_str().unwrap_or(""));
     }
 
-    graph.add(
-        antisequence::graph::InputFastqOp::from_files(input_files)
-            .unwrap_or_else(|e| panic!("{e}")),
-    );
+    let input = match antisequence::graph::InputFastqOp::from_files(input_files) {
+        Ok(input) => input,
+        Err(error) => {
+            tracing::error!("Failed to configure FASTQ input: {error}");
+            return;
+        }
+    };
+    graph.add(input);
 
     if has_unassigned {
         // Build catch graph for unassigned reads
@@ -687,7 +1449,10 @@ pub fn interpret_with_unassigned(
         graph.add(TryOp::new(main_graph, catch_graph));
     } else {
         // No unassigned output - just add main graph nodes
-        compiled_data.interpret(&mut graph, &additional_args);
+        if let Err(error) = compiled_data.try_interpret(&mut graph, &additional_args) {
+            tracing::error!("Failed to resolve geometry resources: {error}");
+            return;
+        }
     }
 
     // Add LookupOp for demultiplexing if configured
@@ -746,11 +1511,20 @@ pub fn interpret_with_unassigned(
         }
     }
 
+    graph.set_missing_input_policy(MissingInputPolicy::Skip);
+    let graph = match graph.compile() {
+        Ok(graph) => graph,
+        Err(error) => {
+            tracing::error!("Failed to compile processing graph: {}", error);
+            return;
+        }
+    };
     graph.run_with_threads(threads);
 }
 
 /// Interpret geometry with optional demultiplexing support.
 #[allow(clippy::too_many_arguments)]
+#[deprecated(note = "use run(RunConfig, CompiledData) for structured errors")]
 pub fn interpret_with_demux(
     file1: &Path,
     file2: Option<&Path>,
@@ -785,12 +1559,19 @@ pub fn interpret_with_demux(
         input_files.push(f2.to_str().unwrap_or(""));
     }
 
-    graph.add(
-        antisequence::graph::InputFastqOp::from_files(input_files)
-            .unwrap_or_else(|e| panic!("{e}")),
-    );
+    let input = match antisequence::graph::InputFastqOp::from_files(input_files) {
+        Ok(input) => input,
+        Err(error) => {
+            tracing::error!("Failed to configure FASTQ input: {error}");
+            return;
+        }
+    };
+    graph.add(input);
 
-    compiled_data.interpret(&mut graph, &additional_args);
+    if let Err(error) = compiled_data.try_interpret(&mut graph, &additional_args) {
+        tracing::error!("Failed to resolve geometry resources: {error}");
+        return;
+    }
 
     // Add LookupOp for demultiplexing if configured
     if let Some(ref config) = demux_config {
@@ -852,6 +1633,14 @@ pub fn interpret_with_demux(
         }
     }
 
+    graph.set_missing_input_policy(MissingInputPolicy::Skip);
+    let graph = match graph.compile() {
+        Ok(graph) => graph,
+        Err(error) => {
+            tracing::error!("Failed to compile processing graph: {}", error);
+            return;
+        }
+    };
     graph.run_with_threads(threads);
 }
 
@@ -863,8 +1652,8 @@ fn interpret_to_pipes(
     threads: usize,
     additional_args: Vec<&str>,
     compiled_data: CompiledData,
-) -> SeqprocStats {
-    let f1 = File::create(out1).expect("Unable to open read 1 file");
+) -> AnyResult<SeqprocStats> {
+    let f1 = File::create(out1)?;
 
     // Handle second output stream optionally if files2 is present?
     // But this function return signature doesn't change easily.
@@ -877,26 +1666,27 @@ fn interpret_to_pipes(
 
     let mut readers = files1
         .iter()
-        .map(|f| File::open(f).expect("Failed to open file"))
-        .collect::<Vec<_>>();
+        .map(File::open)
+        .collect::<std::io::Result<Vec<_>>>()?;
 
     for f in &files2 {
-        readers.push(File::open(f).expect("Failed to open file"));
+        readers.push(File::open(f)?);
     }
 
     let additional_args = additional_args.into_iter().collect::<Vec<_>>();
 
     let mut graph = antisequence::graph::Graph::new();
     graph.add(
-        antisequence::graph::InputFastqOp::from_readers(readers).unwrap_or_else(|e| panic!("{e}")),
+        antisequence::graph::InputFastqOp::from_readers(readers)
+            .map_err(|error| anyhow!(error.to_string()))?,
     );
 
-    compiled_data.interpret(&mut graph, &additional_args);
+    compiled_data.try_interpret(&mut graph, &additional_args)?;
 
     let stream1 = BufWriter::new(f1);
 
     if !files2.is_empty() {
-        let f2 = File::create(out2).expect("Unable to open read 2 file");
+        let f2 = File::create(out2)?;
         let stream2 = BufWriter::new(f2);
         graph.add(OutputFastqOp::from_writers([stream1, stream2]));
     } else {
@@ -905,56 +1695,81 @@ fn interpret_to_pipes(
 
     // This is the reporting path. Normal execution leaves statistics disabled
     // in antisequence so it avoids per-read counters and histogram locks.
+    graph.set_missing_input_policy(MissingInputPolicy::Skip);
     graph.set_statistics_level(StatisticsLevel::Detailed);
-    graph.run_with_threads(threads);
+    let graph = graph
+        .compile()
+        .map_err(|error| anyhow!(error.to_string()))?;
+    graph
+        .try_run_with_threads(threads)
+        .map_err(|error| anyhow!(error.to_string()))?;
 
     let input_stats = graph.input_stats();
 
-    let (n_fastqs, n_processed, n_reads_max, read_length_min, read_length_max, read_length_mean) =
-        if let Some(s) = input_stats {
-            let n_fastqs = s.n_fastqs as u32;
+    let (
+        n_fastqs,
+        n_processed,
+        n_reads_max,
+        read_length_min,
+        read_length_max,
+        read_length_mean,
+        shard_read_counts,
+    ) = if let Some(s) = input_stats {
+        let n_fastqs = s.n_fastqs as u32;
 
-            let mut read_length_min_u64 = Vec::with_capacity(s.n_fastqs);
-            let mut read_length_max_u64 = Vec::with_capacity(s.n_fastqs);
-            let mut read_length_mean_f64 = Vec::with_capacity(s.n_fastqs);
+        let mut read_length_min_u64 = Vec::with_capacity(s.n_fastqs);
+        let mut read_length_max_u64 = Vec::with_capacity(s.n_fastqs);
+        let mut read_length_mean_f64 = Vec::with_capacity(s.n_fastqs);
 
-            let mut max_count = 0usize;
+        let mut max_count = 0usize;
 
-            for i in 0..s.n_fastqs {
-                let count = *s.read_counts.get(i).unwrap_or(&0);
-                if count > max_count {
-                    max_count = count;
-                }
-
-                let min = *s.read_length_min.get(i).unwrap_or(&0);
-                let max = *s.read_length_max.get(i).unwrap_or(&0);
-                let sum = *s.read_length_sum.get(i).unwrap_or(&0);
-
-                read_length_min_u64.push(min as u64);
-                read_length_max_u64.push(max as u64);
-
-                let mean = if count > 0 {
-                    sum as f64 / (count as f64)
-                } else {
-                    0.0
-                };
-                read_length_mean_f64.push(mean);
+        for i in 0..s.n_fastqs {
+            let count = *s.read_counts.get(i).unwrap_or(&0);
+            if count > max_count {
+                max_count = count;
             }
 
-            let n_processed = max_count as u64;
-            let n_reads_max = n_processed;
+            let min = *s.read_length_min.get(i).unwrap_or(&0);
+            let max = *s.read_length_max.get(i).unwrap_or(&0);
+            let sum = *s.read_length_sum.get(i).unwrap_or(&0);
 
-            (
-                n_fastqs,
-                n_processed,
-                n_reads_max,
-                read_length_min_u64,
-                read_length_max_u64,
-                read_length_mean_f64,
-            )
+            read_length_min_u64.push(min as u64);
+            read_length_max_u64.push(max as u64);
+
+            let mean = if count > 0 {
+                sum as f64 / (count as f64)
+            } else {
+                0.0
+            };
+            read_length_mean_f64.push(mean);
+        }
+
+        let n_processed = max_count as u64;
+        let n_reads_max = n_processed;
+        let shard_read_counts = if s.shard_read_counts.is_empty() {
+            s.read_counts
+                .iter()
+                .map(|count| vec![*count as u64])
+                .collect()
         } else {
-            (0, 0, 0, Vec::new(), Vec::new(), Vec::new())
+            s.shard_read_counts
+                .iter()
+                .map(|lane| lane.iter().map(|count| *count as u64).collect())
+                .collect()
         };
+
+        (
+            n_fastqs,
+            n_processed,
+            n_reads_max,
+            read_length_min_u64,
+            read_length_max_u64,
+            read_length_mean_f64,
+            shard_read_counts,
+        )
+    } else {
+        (0, 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    };
 
     let match_distance_stats = graph
         .match_distance_counts()
@@ -994,6 +1809,11 @@ fn interpret_to_pipes(
                     resolved_first: c.ambiguity.resolved_first as u64,
                     resolved_random: c.ambiguity.resolved_random as u64,
                     resolved_quality: c.ambiguity.resolved_quality as u64,
+                    position_total: c.ambiguity.position_total as u64,
+                    position_dropped: c.ambiguity.position_dropped as u64,
+                    position_resolved_leftmost: c.ambiguity.position_resolved_leftmost as u64,
+                    position_resolved_rightmost: c.ambiguity.position_resolved_rightmost as u64,
+                    position_resolved_quality: c.ambiguity.position_resolved_quality as u64,
                 },
             }
         })
@@ -1020,9 +1840,10 @@ fn interpret_to_pipes(
         });
     }
 
-    SeqprocStats {
-        schema_version: "1.3.0".to_string(),
+    Ok(SeqprocStats {
+        schema_version: "1.13.0".to_string(),
         seqproc_version: env!("CARGO_PKG_VERSION").to_string(),
+        build: build_provenance(),
         statistics_level: StatisticsLevel::Detailed,
         call: None,
         geometry_digest: None,
@@ -1040,6 +1861,14 @@ fn interpret_to_pipes(
         gzip_input_backend: "needletail-auto".to_owned(),
         gzip_input_threads: 1,
         gzip_input_chunk_size: 0,
+        graph_optimization: None,
+        execution_plan: None,
+        resources: ResourceResolutionReport::default(),
+        input_topology: vec![vec!["path".to_owned()]; n_fastqs as usize],
+        input_layout: "separate".to_owned(),
+        input_arity: n_fastqs as usize,
+        output_arity: n_fastqs as usize,
+        output_topology: vec!["path".to_owned(); n_fastqs as usize],
 
         n_fastqs,
         n_processed,
@@ -1053,21 +1882,67 @@ fn interpret_to_pipes(
         read_length_mean,
         read_length_min,
         read_length_max,
+        shard_read_counts,
         match_distance_stats,
+    })
+}
+
+fn diagnostic_from_rich(error: Rich<'_, impl std::fmt::Display>) -> GeometryDiagnostic {
+    GeometryDiagnostic {
+        message: error.to_string(),
+        reason: error.reason().to_string(),
+        span: error.span().into_range(),
+        contexts: error
+            .contexts()
+            .map(|(label, span)| (format!("while parsing this {label}"), span.into_range()))
+            .collect(),
     }
 }
 
-pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, String>>> {
-    // lex input
-    let tokens = lexer::lexer()
-        .parse(&geom)
-        .into_result()
-        .map_err(|errors| {
-            errors
-                .into_iter()
-                .map(|error| Rich::<String>::custom(*error.span(), error.to_string()).into_owned())
-                .collect::<Vec<_>>()
-        })?;
+/// Parse and semantically compile EFGDL with structured, stage-specific
+/// diagnostics. This is the primary library compilation API.
+pub fn compile_geom_typed(geom: impl AsRef<str>) -> SeqprocResult<CompiledData> {
+    let geom = geom.as_ref();
+    let tokens =
+        lexer::lexer()
+            .parse(geom)
+            .into_result()
+            .map_err(|errors| SeqprocError::Geometry {
+                stage: GeometryStage::Lexing,
+                diagnostics: errors.into_iter().map(diagnostic_from_rich).collect(),
+            })?;
+
+    let mut nesting_depth = 0usize;
+    for (token, span) in &tokens {
+        match token {
+            lexer::Token::LParen | lexer::Token::LBrace | lexer::Token::LBracket => {
+                nesting_depth += 1;
+                if nesting_depth > MAX_EFGDL_NESTING_DEPTH {
+                    return Err(SeqprocError::Geometry {
+                        stage: GeometryStage::Parsing,
+                        diagnostics: vec![GeometryDiagnostic {
+                            message: format!(
+                                "EFGDL nesting exceeds the supported depth of {MAX_EFGDL_NESTING_DEPTH}"
+                            ),
+                            reason: "reduce nested layout, function, or annotation expressions"
+                                .to_owned(),
+                            span: span.into_range(),
+                            contexts: Vec::new(),
+                        }],
+                    });
+                }
+            }
+            lexer::Token::RParen | lexer::Token::RBrace | lexer::Token::RBracket => {
+                nesting_depth = nesting_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    let starts_document_header = matches!(
+        tokens.as_slice(),
+        [(lexer::Token::Label(name), _), (lexer::Token::LBrace, _), ..] if name == "header"
+    );
 
     let tokens = tokens
         .into_iter()
@@ -1075,21 +1950,53 @@ pub fn compile_geom(geom: String) -> Result<CompiledData, Vec<Rich<'static, Stri
         .collect::<Vec<_>>();
     let input = tokens[..].split_spanned((0..geom.len()).into());
 
-    // parse token
     let description = parser().parse(input).into_result().map_err(|errors| {
-        errors
+        let mut diagnostics = errors
             .into_iter()
-            .map(|error| Rich::<String>::custom(*error.span(), error.to_string()).into_owned())
+            .map(diagnostic_from_rich)
+            .collect::<Vec<_>>();
+        if starts_document_header {
+            for diagnostic in &mut diagnostics {
+                diagnostic.contexts.push((
+                    "while parsing the leading `header { efgdl = 2 }` block".to_owned(),
+                    0..geom.len().min(6),
+                ));
+            }
+        }
+        SeqprocError::Geometry {
+            stage: GeometryStage::Parsing,
+            diagnostics,
+        }
+    })?;
+
+    compile(description).map_err(|error| SeqprocError::Geometry {
+        stage: GeometryStage::SemanticCompilation,
+        diagnostics: vec![GeometryDiagnostic {
+            message: error.msg.clone(),
+            reason: error.msg,
+            span: error.span.into_range(),
+            contexts: Vec::new(),
+        }],
+    })
+}
+
+/// Compatibility API returning Chumsky diagnostics. New callers should use
+/// [`compile_geom_typed`].
+pub fn compile_geom(geom: String) -> std::result::Result<CompiledData, Vec<Rich<'static, String>>> {
+    let compiled = compile_geom_typed(&geom).map_err(|error| {
+        let Some((_, diagnostics)) = error.geometry_diagnostics() else {
+            unreachable!("geometry compilation only returns geometry diagnostics")
+        };
+        diagnostics
+            .iter()
+            .map(|diagnostic| {
+                Rich::<String>::custom(diagnostic.span.clone().into(), diagnostic.message.clone())
+                    .into_owned()
+            })
             .collect::<Vec<_>>()
     })?;
 
-    // compile ast
-    let compiled = compile(description).map_err(|e| {
-        let rich = Rich::<String>::custom(e.span, e.msg);
-        vec![rich.into_owned()]
-    })?;
-
-    // LANG-DEPRECATE: Print deprecation warnings to stderr.
+    // LANG-DEPRECATE: Preserve compatibility diagnostics on the old API.
     for warning in &compiled.warnings {
         eprintln!("Warning: {}", warning);
     }
@@ -1105,7 +2012,7 @@ pub fn read_pairs_to_file(
     out2: &Path,
     threads: usize,
     additional_args: Vec<&str>,
-) -> Result<SeqprocStats> {
+) -> AnyResult<SeqprocStats> {
     let files1 = vec![in1.to_str().unwrap_or("").to_owned()];
     let files2 = if let Some(i2) = in2 {
         vec![i2.to_str().unwrap_or("").to_owned()]
@@ -1121,17 +2028,20 @@ pub fn read_pairs_to_file(
         threads,
         additional_args,
         compiled_data,
-    );
+    )?;
 
     Ok(stats)
 }
 
+/// Legacy Unix-only helper that exposes transformed reads through named pipes.
+/// Portable callers should use [`run`] with ordinary files or stdin/stdout.
+#[cfg(unix)]
 pub fn read_pairs_to_fifo<'a: 'static>(
     compiled_data: CompiledData,
     r1: Vec<String>,
     r2: Vec<String>,
     additional_args: Vec<&'a str>,
-) -> Result<FifoSeqprocData> {
+) -> AnyResult<FifoSeqprocData> {
     if !r2.is_empty() && r1.len() != r2.len() {
         bail!(
             "The number of R1 files ({}) must match the number of R2 files ({})",
@@ -1149,7 +2059,9 @@ pub fn read_pairs_to_fifo<'a: 'static>(
     match unistd::mkfifo(&r1_fifo, stat::Mode::S_IRWXU) {
         Ok(_) => {
             info!("created {:?}", r1_fifo);
-            assert!(std::path::Path::new(&r1_fifo).exists());
+            if !std::path::Path::new(&r1_fifo).exists() {
+                bail!("read 1 fifo was not created at {:?}", r1_fifo);
+            }
         }
         Err(err) => bail!("Error creating read 1 fifo: {}", err),
     }
@@ -1157,7 +2069,9 @@ pub fn read_pairs_to_fifo<'a: 'static>(
     match unistd::mkfifo(&r2_fifo, stat::Mode::S_IRWXU) {
         Ok(_) => {
             info!("created {:?}", r2_fifo);
-            assert!(std::path::Path::new(&r2_fifo).exists());
+            if !std::path::Path::new(&r2_fifo).exists() {
+                bail!("read 2 fifo was not created at {:?}", r2_fifo);
+            }
         }
         Err(err) => bail!("Error creating read 2 fifo: {}", err),
     }
@@ -1169,7 +2083,7 @@ pub fn read_pairs_to_fifo<'a: 'static>(
     let r1_fifo_clone = r1_fifo.clone();
     let r2_fifo_clone = r2_fifo.clone();
 
-    let join_handle: thread::JoinHandle<Result<SeqprocStats>> = thread::spawn(move || {
+    let join_handle: thread::JoinHandle<AnyResult<SeqprocStats>> = thread::spawn(move || {
         let seqproc_stats = interpret_to_pipes(
             r1,
             r2,
@@ -1178,7 +2092,7 @@ pub fn read_pairs_to_fifo<'a: 'static>(
             6, // default to 6 threads
             additional_args,
             compiled_data,
-        );
+        )?;
 
         // Explicitly check for and propagate any errors encountered in the
         // closing and deleting of the temporary directory.  The directory
@@ -1204,6 +2118,25 @@ pub fn read_pairs_to_fifo<'a: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_tagged_stdout_epipe_is_a_normal_pipe_closure() {
+        let tagged = antisequence::errors::Error::BytesIo(Box::new(tag_stdout_error(
+            io::Error::from(io::ErrorKind::BrokenPipe),
+        )));
+        assert!(is_stdout_broken_pipe_error(&tagged));
+
+        let untagged = antisequence::errors::Error::BytesIo(Box::new(io::Error::from(
+            io::ErrorKind::BrokenPipe,
+        )));
+        assert!(!is_stdout_broken_pipe_error(&untagged));
+
+        let file_epipe = antisequence::errors::Error::FileIo {
+            file: "named.pipe".to_owned(),
+            source: Box::new(io::Error::from(io::ErrorKind::BrokenPipe)),
+        };
+        assert!(!is_stdout_broken_pipe_error(&file_epipe));
+    }
 
     #[test]
     fn test_compile_geom_simple_barcode_read() {
@@ -1393,8 +2326,9 @@ mod tests {
     #[test]
     fn test_seqproc_stats_serialization() {
         let stats = SeqprocStats {
-            schema_version: "1.3.0".to_string(),
+            schema_version: "1.13.0".to_string(),
             seqproc_version: "0.1.0".to_string(),
+            build: build_provenance(),
             statistics_level: StatisticsLevel::Detailed,
             call: Some("test".to_string()),
             geometry_digest: None,
@@ -1408,6 +2342,14 @@ mod tests {
             gzip_input_backend: "needletail-auto".to_owned(),
             gzip_input_threads: 1,
             gzip_input_chunk_size: 0,
+            graph_optimization: None,
+            execution_plan: None,
+            resources: ResourceResolutionReport::default(),
+            input_topology: vec![vec!["path".to_owned()], vec!["path".to_owned()]],
+            input_layout: "separate".to_owned(),
+            input_arity: 2,
+            output_arity: 2,
+            output_topology: vec!["path".to_owned(), "path".to_owned()],
             n_fastqs: 2,
             n_processed: 100,
             n_reads_max: 1000,
@@ -1422,6 +2364,7 @@ mod tests {
             read_length_mean: vec![150.0, 150.0],
             read_length_min: vec![100, 100],
             read_length_max: vec![200, 200],
+            shard_read_counts: vec![vec![100], vec![100]],
             match_distance_stats: vec![],
         };
         let json = serde_json::to_string(&stats).unwrap();
@@ -1454,10 +2397,16 @@ mod tests {
                 resolved_first: 1,
                 resolved_random: 0,
                 resolved_quality: 0,
+                position_total: 0,
+                position_dropped: 0,
+                position_resolved_leftmost: 0,
+                position_resolved_rightmost: 0,
+                position_resolved_quality: 0,
             },
         };
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("\"label\":\"test\""));
+        assert!(json.contains("\"position_total\":0"));
     }
 
     #[test]

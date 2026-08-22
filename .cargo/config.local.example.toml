@@ -2,6 +2,14 @@
 # tuned to the local CPU:
 #
 #     cargo build --release --config .cargo/config.local.toml
+#
+# seqproc selects ANTISEQUENCE's architecture-tuned backend by default. To use
+# the generic compatibility control instead, override rustflags and features:
+#
+#     RUSTFLAGS="" cargo build --release --no-default-features \
+#       --features antisequence/baseline-simd
 
+# `config.toml` already uses this setting. Keep this example for packagers or
+# users who override the repository config and want an explicit local build.
 [build]
 rustflags = ["-C", "target-cpu=native"]

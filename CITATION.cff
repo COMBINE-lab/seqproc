@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use seqproc, please cite this software and the associated preprint."
+title: "seqproc"
+type: software
+version: 0.1.0
+date-released: 2026-08-22
+license: BSD-3-Clause
+repository-code: "https://github.com/COMBINE-lab/seqproc"
+url: "https://combine-lab.github.io/seqproc"
+authors:
+  - family-names: Cape
+    given-names: Noah
+  - family-names: Fisher
+    given-names: Elan
+  - family-names: Liu
+    given-names: Daniel
+  - family-names: Patro
+    given-names: Rob
+preferred-citation:
+  type: article
+  title: "seqproc: An efficient, flexible, and concise tool for sequence geometry description and transformation"
+  authors:
+    - family-names: Cape
+      given-names: Noah
+    - family-names: Fisher
+      given-names: Elan
+    - family-names: Liu
+      given-names: Daniel
+    - family-names: Patro
+      given-names: Rob
+  doi: "10.64898/2026.07.28.741211"
+  year: 2026

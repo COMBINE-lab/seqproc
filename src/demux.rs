@@ -9,10 +9,23 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-use antisequence::expr::label;
+use antisequence::expr::Label;
 use antisequence::graph::{Graph, LookupOp};
 use antisequence::trace::NoTrace;
 use rustc_hash::FxHashMap;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum DemuxError {
+    #[error("failed to load demultiplexing sample map: {0}")]
+    SampleMap(#[source] std::io::Error),
+    #[error("invalid demultiplexing barcode label `{label}`: {source}")]
+    InvalidBarcodeLabel {
+        label: String,
+        #[source]
+        source: antisequence::errors::Error,
+    },
+}
 
 /// Configuration for demultiplexing.
 #[derive(Debug, Clone)]
@@ -96,16 +109,18 @@ impl DemuxConfig {
     /// Add the LookupOp to the graph for demultiplexing.
     ///
     /// The barcode_label should be in the format "seqN.label" (e.g., "seq2.bc1").
-    pub fn add_lookup_op(&self, graph: &mut Graph<NoTrace>) -> Result<(), String> {
-        let sample_map = self
-            .load_sample_map()
-            .map_err(|e| format!("Failed to load sample map: {}", e))?;
+    pub fn add_lookup_op(&self, graph: &mut Graph<NoTrace>) -> Result<(), DemuxError> {
+        let sample_map = self.load_sample_map().map_err(DemuxError::SampleMap)?;
 
         // Convert HashMap to rustc_hash::FxHashMap which LookupOp expects
         let fx_map: FxHashMap<Vec<u8>, Vec<u8>> = sample_map.into_iter().collect();
 
-        // Parse the label (e.g., "seq2.bc1") - label() panics on invalid input
-        let input_label = label(&self.barcode_label);
+        let input_label = Label::new(self.barcode_label.as_bytes()).map_err(|source| {
+            DemuxError::InvalidBarcodeLabel {
+                label: self.barcode_label.clone(),
+                source,
+            }
+        })?;
 
         let lookup_op = LookupOp::new(
             input_label,

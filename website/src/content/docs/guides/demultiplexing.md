@@ -41,7 +41,8 @@ workflow easier to audit. Outputs are named
 
 Demultiplexed output is expression-routed rather than written through fixed
 `--out1`/`--out2` paths. The current filenames end in `.fastq` and therefore
-are uncompressed.
+are uncompressed. Supplying fixed `--outN` paths together with `--demux-map`
+is rejected so no requested destination can be silently ignored.
 
 ## Rejected versus unassigned-by-map reads
 

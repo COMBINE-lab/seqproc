@@ -3,13 +3,19 @@ title: Language overview
 description: The structure of an EFGDL geometry as implemented by seqproc.
 ---
 
-An EFGDL file has three conceptual parts:
+An EFGDL file has four conceptual parts:
 
-1. reusable **definitions** for named intervals or transformed intervals;
-2. one or more numbered **input read layouts**;
-3. an optional **output transformation** after `->`.
+1. an optional versioned document **header**;
+2. reusable **definitions** for named intervals or transformed intervals;
+3. one or more numbered **input read layouts**;
+4. an optional **output transformation** after `->`.
 
 ```text
+header {
+  efgdl = 2,
+  name = "10x Chromium v2",
+}
+
 bc = b[16]
 umi = u[10]
 bio = r:
@@ -18,6 +24,14 @@ bio = r:
 2{<bio>}
 -> 1{<bc><umi>} 2{<bio>}
 ```
+
+The header is a version-neutral metadata block. EFGDL 2 documents must declare
+`efgdl = 2`; additional scalar fields are retained for tooling and provenance.
+Headerless files remain valid and use legacy EFGDL 1 semantics. Duplicate
+fields, missing versions, and unsupported versions are rejected.
+
+See [EFGDL 2](../version-2/) for the complete metadata grammar, migration
+guidance, constructed sequence, FASTQ-name templates, and a runnable example.
 
 Definitions bind names such as `bc`. Angle brackets insert a reference to a
 definition in a read layout or output. Read numbers correspond to FASTQ input
@@ -28,6 +42,37 @@ and output order.
 The left side of `->` must account for the input structure to be recognized.
 The right side states what should be emitted. It may reorder, omit, combine, or
 transform extracted intervals.
+
+EFGDL 2 output layouts may also construct fixed bases directly with `f[...]`:
+
+```text
+header { efgdl = 2 }
+1{b<bc>[8]r<read>:}
+-> 1{f[ACGT]<bc>f[T]<read>}
+```
+
+Inserted bases receive `I` quality scores. Existing captured intervals retain
+their input qualities. Fixed construction is deliberately restricted to
+explicit EFGDL 2 documents so legacy files do not silently change meaning.
+
+Output reads can also modify their FASTQ record names with a typed header
+template:
+
+```text
+header { efgdl = 2 }
+1{b<bc>[8]r<read>:}
+-> #[header = append(" CB:Z:", <bc>)] 1{<read>}
+```
+
+The supported modes are `append`, `prepend`, and `replace`. Quoted parts are
+fixed text and `<label>` parts insert captured sequence. Delimiters are
+explicit: include the desired space or punctuation in a quoted part. When the
+annotation is absent, seqproc adds no header operation and the existing FASTQ
+name is passed directly to the writer without constructing a replacement.
+
+These are the output-construction additions gated by EFGDL 2. Existing
+matching, filtering, mapping, ambiguity, orientation, and conditional-output
+features retain their established semantics in a versioned document.
 
 If no arrow is present, the recognized reads pass through according to the
 compiled geometry. When reproducibility matters, prefer an explicit output
@@ -57,8 +102,30 @@ Functions wrap intervals and can be nested:
 short_bc = trunc_to(revcomp(b[16]), 10)
 ```
 
-Matching and lookup functions can use a quoted path or a positional command
-line argument:
+EFGDL 2 geometries can declare named resources, with an optional path default:
+
+```text
+header { efgdl = 2 }
+resources {
+  barcode_whitelist,
+  replacements = "defaults/replacements.tsv"
+}
+bc = filter_within_dist(b[8], $barcode_whitelist, 1)
+corrected = map(<bc>, $replacements, self)
+```
+
+Bind a declaration explicitly with `--bind NAME=PATH`:
+
+```console
+seqproc run --geom protocol.geom --bind barcode_whitelist=barcodes.txt \
+  --file1 reads.fastq.gz --out1 clean.fastq.gz
+```
+
+Named defaults and quoted relative paths are resolved relative to the geometry
+file. Explicit bindings are interpreted in the invocation environment. Run
+summaries record BLAKE3 digests of all resolved resource content.
+
+The positional resource interface remains available for compatibility:
 
 ```text
 bc = filter_within_dist(b[8], $0, 1)
@@ -69,9 +136,7 @@ seqproc run --geom protocol.geom --additional whitelist.txt \
   --file1 reads.fastq.gz --out1 clean.fastq.gz
 ```
 
-Quoted relative paths and `--additional` paths are resolved in the execution
-environment, so archive the invoked working directory or use stable paths in
-reproduction packages.
+`--additional` paths are resolved in the invocation environment.
 
 ## Compile before processing
 

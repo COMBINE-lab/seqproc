@@ -1,0 +1,24 @@
+# Fixed release targets: x86_64 artifacts require the psABI x86-64-v3 level;
+# aarch64 artifacts use one documented target per operating system. Local
+# development uses target-cpu=native from config.toml instead.
+
+[env]
+# Cargo does not pass target-specific rustflags to build scripts. This marker
+# lets build.rs record the fixed artifact CPU target and its expanded feature
+# set in `seqproc --version --verbose`.
+SEQPROC_RELEASE_BUILD = "1"
+
+[target.x86_64-unknown-linux-gnu]
+# Load-bearing: GNU ld preserves/merges the explicit x86 ISA-needed note in
+# the seqproc binary. rust-lld on the reviewed toolchain silently drops it.
+linker = "gcc"
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=neoverse-n1"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=apple-a14"]

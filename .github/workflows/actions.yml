@@ -3,9 +3,9 @@ name: Fast CI
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: ["main", "dev"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "dev"]
 
 concurrency:
   group: fast-ci-${{ github.ref }}
@@ -22,7 +22,7 @@ jobs:
       CARGO_NET_RETRY: 10
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
-      RUSTFLAGS: -D warnings
+      RUSTFLAGS: -C target-cpu=x86-64-v3 -D warnings
       RUSTDOCFLAGS: -D warnings
       RUSTUP_MAX_RETRIES: 10
 
@@ -48,6 +48,15 @@ jobs:
         run: >-
           cargo test --locked --workspace --lib --bins
           --test cli_workflow_tests
+          --test compile_tests
           --test error_handling_tests
+          --test error_contract_tests
+          --test anchor_set_tests
+          --test layout_algebra_tests
+          --test lexer_tests
           --test paper_chemistry_tests
+          --test diff_tests
           --no-fail-fast
+
+      - name: clippy (library, binaries, and tests)
+        run: cargo clippy --locked --workspace --lib --bins --tests

@@ -12,15 +12,21 @@ use call syntax:
 anchor = f[CAGAGC]
 ```
 
-The ambiguity policy is a property and uses assignment syntax:
+The ambiguity policy is a property. Assignment syntax is canonical in new
+files:
 
 ```text
 #[ambig_policy = no_match]
 bc = filter_within_dist(b[8], "barcodes.txt", 1)
 ```
 
-`seqproc validate` rejects a policy placed on a definition that contains no map
-or filter operation.
+Simple call syntax is also accepted for compatibility, so
+`#[ambig_policy(no_match)]` is equivalent. Parameterized call syntax uses flat
+positional arguments (`#[ambig_policy(random, 2026)]`); assignment syntax is
+preferred when named arguments improve clarity.
+
+`seqproc validate` rejects a policy placed on a definition that contains no map,
+filter, or anchor-set operation.
 
 ## Orientation-aware matching
 
@@ -38,6 +44,33 @@ bc = b[8]
 
 This is a native either-orientation operation. It avoids requiring users to
 reverse-complement an entire FASTQ and run a second external pass.
+
+### Orientation-conditional output
+
+When the emitted layout must differ according to the successful orientation,
+branch on the `ori` attribute produced by `match_ori(either)`:
+
+```text
+header { efgdl = 2 }
+
+#[match_ori(either)]
+1{b<bc>[8]f[CAGAGC]r<read>:}
+-> match 1.ori {
+  fw => #[header = append(" ORI:Z:fw")] 1{f[A]<bc><read>},
+  rc => #[header = append(" ORI:Z:rc")] 1{f[T]revcomp(<bc>)<read>}
+}
+```
+
+The `fw` arm runs for a forward match and the `rc` arm for a successful
+reverse-complement retry. Each arm can independently transform captured
+labels, arrange output reads, construct EFGDL 2 fixed sequence, and set an
+output FASTQ-name template. A `match 1.ori` block is rejected unless read 1 has
+`#[match_ori(either)]`, because otherwise the selector attribute cannot exist.
+
+Use conditional output only when the desired emitted representation genuinely
+depends on input orientation. If both orientations should be normalized to the
+same output, a direct `-> 1{...}` transformation is shorter and easier to
+review.
 
 ## What “ambiguous” means
 
@@ -88,3 +121,38 @@ cell = map_with_mismatch(b[16], "cell-map.tsv", self, 1)
 
 Detailed summaries report how many equal-best events were accepted, dropped,
 resolved by first/random/quality, or raised as errors.
+
+The same assignment/call compatibility applies to `position_policy`, for
+example `#[position_policy = rightmost]` and
+`#[position_policy(rightmost)]`.
+
+## Positional ambiguity
+
+Search anchors have a second, independent ambiguity axis: the same anchor can
+occur at multiple equal-best positions in one read. Set its policy on the
+searched definition:
+
+```text
+#[search(relative)]
+#[position_policy = rightmost]
+linker = f[CAGAGC]
+```
+
+| Position policy | Behavior |
+| --- | --- |
+| `best` | Select the globally best-distance placement, then the leftmost residual tie. |
+| `leftmost` | Select the smallest start coordinate (default). |
+| `rightmost` | Select the largest start coordinate. |
+| `quality(min_delta = N)` | For exact/Hamming search, select the placement with the lowest summed Phred score at mismatching bases when it wins by at least `N` (default 1); otherwise reject. |
+| `no_match` | Reject the equal-best placement set. |
+| `error` | Stop execution and report the ambiguity. |
+
+All search matchers minimize distance before applying a position policy, so
+`best` is an explicit spelling of that invariant rather than a different
+search algorithm. Quality-based position resolution is deliberately undefined
+for edit distance because insertions and deletions do not provide a unique
+base-quality assignment.
+
+Pattern-ambiguity and position-ambiguity counters are reported separately.
+The selected coordinate is deterministic across hash-table iteration order and
+thread schedules.

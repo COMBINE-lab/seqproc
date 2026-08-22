@@ -19,7 +19,8 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 <CardGrid>
   <Card title="Protocol logic as data">
     Express barcodes, UMIs, anchors, biological reads, filters, and output
-    transformations in the Extended Fragment Geometry Description Language.
+    transformations in the versioned Extended Fragment Geometry Description
+    Language, including fixed output sequence and FASTQ-name templates.
   </Card>
   <Card title="Built for large FASTQs">
     A Rust execution backend combines bounded parallelism, compressed I/O,
@@ -34,6 +35,11 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 ## Start with the geometry
 
 ```text
+header {
+  efgdl = 2,
+  name = "10x Chromium v2",
+}
+
 bc = b[16]
 umi = u[10]
 bio = r:
@@ -45,11 +51,12 @@ bio = r:
 
 This 10x Chromium v2 example says that read 1 contains a 16-base cell barcode
 and a 10-base UMI, while read 2 contains the biological read. The arrow gives
-the output arrangement explicitly.
+the output arrangement explicitly, and the header gives the file an explicit
+EFGDL 2 language contract.
 
 <LinkCard
   title="Learn the language"
-  description="Read the EFGDL overview and build geometries from fixed, variable, and anchor-delimited intervals."
+  description="Read the EFGDL overview and build versioned geometries from fixed, variable, and anchor-delimited intervals."
   href="/seqproc/efgdl/overview/"
 />
 
