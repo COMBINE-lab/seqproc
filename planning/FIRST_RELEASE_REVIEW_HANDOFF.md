@@ -556,8 +556,9 @@ preserving compatibility with headerless EFGDL 1 geometries.
 #### Relevant changes
 
 - seqproc commits: `631ba81`, `f6fafe2`, `e13f8dd`, `b2a6846`, `348b439`,
-  `032a1ee`, `f634449`, `769be4a`.
-- ANTISEQUENCE commits: `da29107`, `c799281`, `5efba5a`.
+  `032a1ee`, `f634449`, `769be4a`, `1141162`.
+- ANTISEQUENCE commits: `da29107`, `c799281`, `5efba5a`, `477462b`,
+  `1d1c10d`.
 - Release scripts: both repositories' `scripts/bump_and_publish.sh`.
 - seqproc release files: `dist-workspace.toml`, `.cargo/config.toml`,
   `.cargo/config-release.toml`, `.cargo/config-baseline.toml`,
@@ -591,6 +592,9 @@ The intended first-release compatibility story is:
 - Features absent from a protocol should add no per-record allocation,
   synchronization, or formatting work where a zero-cost disabled path was
   promised.
+- Official x86_64 seqproc artifacts require x86-64-v3. ANTISEQUENCE library
+  consumers retain the lower baseline unless they explicitly select
+  `release-simd`.
 
 The reviewer should test these as contractual claims, not merely inspect that
 the old functions still compile.
@@ -899,11 +903,11 @@ These are navigation aids, not a substitute for reviewing the full diffs.
   baseline/release differential CI guard the contract. `cargo-multivers` is
   deferred pending measured v3-versus-v4 benefit.
 
-- **Exact release heads:** ANTISEQUENCE's review-fix head is
-  `a10d990ed5c66dd8a4edb61b36dc3cce74543238`; seqproc's final implementation
-  head is `1925425b0ace241be09e8d70880104979c3228a5`. The report-only follow-up
-  commit does not alter compiled source, manifests, or tests. Merge those
-  reviewed `dev` heads into `main` before tagging.
+- **Exact release implementations:** ANTISEQUENCE is
+  `1d1c10d84e7ca67fd1f67f61f44abd530ecb7e82`; seqproc's compiled
+  implementation is `1141162225a6a4f978a94aa2ffe164d5e194326d`. The report-only
+  follow-up that records those SHAs does not alter compiled source, manifests,
+  or tests. Merge the reviewed `dev` heads into `main` before tagging.
 - **Version and namespaces:** explicitly approve `0.1.0` (or choose another
   version) and reconfirm both crates.io names immediately before publishing.
 - **Publication ordering:** publish and verify ANTISEQUENCE first. Then update

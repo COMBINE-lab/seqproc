@@ -74,11 +74,13 @@ a decision or deeper rework):**
 
 The list immediately above records the state at reviewer handoff. The
 maintainer pass subsequently addressed the implementation findings rather than
-deleting that historical record. The final ANTISEQUENCE review-fix head is
-`a10d990ed5c66dd8a4edb61b36dc3cce74543238`; seqproc pins that exact revision.
-The seqproc implementation review-fix head is
-`1925425b0ace241be09e8d70880104979c3228a5`; the report-only follow-up commit
-that records this SHA does not alter compiled source, manifests, or tests.
+deleting that historical record. The original review-fix heads were
+ANTISEQUENCE `a10d990ed5c66dd8a4edb61b36dc3cce74543238` and seqproc
+`1925425b0ace241be09e8d70880104979c3228a5`. The later, explicitly approved
+release-architecture decision advanced ANTISEQUENCE to
+`1d1c10d84e7ca67fd1f67f61f44abd530ecb7e82` and the compiled seqproc
+implementation to `1141162225a6a4f978a94aa2ffe164d5e194326d`. This report-only
+follow-up does not alter compiled source, manifests, or tests.
 
 **P0 resolution:**
 
@@ -158,6 +160,7 @@ this host:
 | ANTISEQUENCE clippy/docs/downstream package gate | Warning-denied clippy and docs pass; README doc-test passes; the packaged crate builds and runs from an extracted clean-room downstream project |
 | seqproc complete all-target test run | **Pass**: 276 library, 9 anchor-set, 27 annotation, 19 benchmark-regression, 24 CLI, 58 compile, 1 differential, 6 error-contract, 2 error-handling, 12 layout, 12 lexer, 69 paper-chemistry, and 31 parser tests; both benchmark binaries also complete their smoke workloads |
 | seqproc SIMD artifact gate | **278/278** tuned-default library tests and **25/25** CLI/report tests pass against ANTISEQUENCE `1d1c10d`; warning-denied all-target clippy passes; verbose version provenance identifies both builds; all 9 checked-in FASTQ transformation fixtures are byte-identical between generic SSE2 and fixed x86-64-v3/AVX2 binaries and match expected output. |
+| seqproc cargo-dist profile smoke | The optimized `dist` profile built successfully from implementation commit `1141162`; the executable reports target `x86_64-unknown-linux-gnu`, compiler CPU target and floor `x86-64-v3`, SIMD backend `x86-avx2`, and the expected v3 target-feature set. |
 | seqproc clippy/docs/MSRV | Warning-denied all-target clippy and docs pass; all-target check passes on Rust 1.88 |
 | Formatting and manifests | `cargo fmt --check`, `git diff --check`, locked metadata (including seqproc all-features), `cargo dist plan`, and `cargo dist generate --check` pass |
 | Package boundaries | seqproc lists exactly 87 intended files (including the new build script/provenance module); ANTISEQUENCE lists 67. Planning documents, the Astro site, generated dependencies, and build output do not enter either source package |
