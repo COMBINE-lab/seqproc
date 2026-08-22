@@ -201,10 +201,57 @@ impl fmt::Display for Token {
     }
 }
 
+fn identifier_token(s: &str) -> Token {
+    match s {
+        "rev" => Token::Reverse,
+        "revcomp" => Token::ReverseComp,
+        "remove" => Token::Remove,
+        "trunc" => Token::Truncate,
+        "trunc_left" => Token::TruncateLeft,
+        "trunc_to" => Token::TruncateTo,
+        "trunc_to_left" => Token::TruncateToLeft,
+        "pad" => Token::Pad,
+        "pad_left" => Token::PadLeft,
+        "pad_to" => Token::PadTo,
+        "pad_to_left" => Token::PadToLeft,
+        "norm" => Token::Normalize,
+        "map_with_mismatch" => Token::MapWithMismatch,
+        "filter_within_dist" => Token::FilterWithinDist,
+        "filter" => Token::Filter,
+        "map" => Token::Map,
+        "hamming" => Token::Hamming,
+        "edit" => Token::Edit,
+        "map_with_edit" => Token::MapWithEdit,
+        "anchor_relative" => Token::Anchor,
+        "match" => Token::Match,
+        "fw" => Token::Fw,
+        "rc" => Token::Rc,
+        "self" => Token::Self_,
+        "b" => Token::Barcode,
+        "s" => Token::SampleBarcode,
+        "u" => Token::Umi,
+        "r" => Token::ReadSeq,
+        "x" => Token::Discard,
+        "f" => Token::FixedSeq,
+        _ if s.starts_with('_') => Token::Reserved(s.to_owned()),
+        _ => Token::Label(s.to_owned()),
+    }
+}
+
 /// Returns a lexer for EFGDL.
 pub fn lexer<'src>(
 ) -> impl Parser<'src, &'src str, Vec<(Token, Span)>, extra::Err<Rich<'src, char>>> {
-    let int = text::int(10).from_str().unwrapped().map(Token::Num);
+    let integer = || {
+        text::int(10).try_map(|digits: &str, span| {
+            digits.parse::<usize>().map_err(|_| {
+                Rich::custom(
+                    span,
+                    "integer literal exceeds the maximum supported platform value",
+                )
+            })
+        })
+    };
+    let int = integer().map(Token::Num);
 
     let ctrl = choice((
         just('(').to(Token::LParen),
@@ -247,9 +294,7 @@ pub fn lexer<'src>(
 
     let hash_bracket = just('#').then(just('[')).to(Token::HashBracket);
 
-    let argument = just('$')
-        .then(text::int(10).from_str().unwrapped())
-        .map(|(_, n)| Token::Arg(n));
+    let argument = just('$').then(integer()).map(|(_, n)| Token::Arg(n));
 
     let named_argument = just('$')
         .ignore_then(text::ident())
@@ -263,48 +308,31 @@ pub fn lexer<'src>(
         just('U').to(Token::U),
     ));
 
-    let ident = text::ident().map(|s: &str| match s {
-        "rev" => Token::Reverse,
-        "revcomp" => Token::ReverseComp,
-        "remove" => Token::Remove,
-        "trunc" => Token::Truncate,
-        "trunc_left" => Token::TruncateLeft,
-        "trunc_to" => Token::TruncateTo,
-        "trunc_to_left" => Token::TruncateToLeft,
-        "pad" => Token::Pad,
-        "pad_left" => Token::PadLeft,
-        "pad_to" => Token::PadTo,
-        "pad_to_left" => Token::PadToLeft,
-        "norm" => Token::Normalize,
-        "map_with_mismatch" => Token::MapWithMismatch,
-        "filter_within_dist" => Token::FilterWithinDist,
-        "filter" => Token::Filter,
-        "map" => Token::Map,
-        "hamming" => Token::Hamming,
-        "edit" => Token::Edit,
-        "map_with_edit" => Token::MapWithEdit,
-        "anchor_relative" => Token::Anchor,
-        "match" => Token::Match,
-        "fw" => Token::Fw,
-        "rc" => Token::Rc,
-        "self" => Token::Self_,
-        "b" => Token::Barcode,
-        "s" => Token::SampleBarcode,
-        "u" => Token::Umi,
-        "r" => Token::ReadSeq,
-        "x" => Token::Discard,
-        "f" => Token::FixedSeq,
-        _ => {
-            if s.starts_with('_') {
-                Token::Reserved(s.to_owned())
-            } else {
-                Token::Label(s.to_owned())
-            }
+    let ident = text::ident().map(identifier_token);
+
+    // A fixed sequence such as `ACGT` must remain four nucleotide tokens,
+    // while an identifier such as `Anchor1` must remain one label. Because
+    // nucleotide tokens otherwise win after their first character, recognize
+    // the latter class before the single-nucleotide parser.
+    let nucleotide_prefixed_ident = text::ident().try_map(|s: &str, span| {
+        let starts_with_nucleotide = s
+            .as_bytes()
+            .first()
+            .is_some_and(|base| matches!(base, b'A' | b'C' | b'G' | b'T' | b'U'));
+        let is_fixed_sequence = s
+            .as_bytes()
+            .iter()
+            .all(|base| matches!(base, b'A' | b'C' | b'G' | b'T' | b'U'));
+        if starts_with_nucleotide && !is_fixed_sequence {
+            Ok(identifier_token(s))
+        } else {
+            Err(Rich::custom(span, "not a nucleotide-prefixed identifier"))
         }
     });
 
     // TODO: remove recovery
     let token = choice((
+        nucleotide_prefixed_ident,
         nucs,
         argument,
         named_argument,

@@ -143,11 +143,16 @@ preserving compatibility with headerless EFGDL 1 geometries.
 
 - The short-pattern/low-Hamming optimized path now honors `FILTER` semantics
   instead of accepting a read merely because a near barcode existed.
-- Duplicate whitelist entries are normalized as duplicate inputs rather than
-  treated as biological ambiguity.
+- seqproc's resource loader normalizes duplicate whitelist entries as duplicate
+  inputs rather than treating them as biological ambiguity. ANTISEQUENCE's
+  lower-level matcher deliberately expects its caller to supply normalized
+  patterns.
 - Genuine ambiguity between distinct candidates is explicit and configurable.
 - EFGDL annotations accept both assignment syntax such as
-  `#[ambig_policy = accept]` and call syntax where arguments are appropriate.
+  `#[ambig_policy = accept]` and the compatibility call form
+  `#[ambig_policy(accept)]`. Parameterized flat calls such as
+  `#[ambig_policy(random, 42)]` are accepted; assignment syntax remains the
+  clearer canonical form for named arguments.
 - Pattern ambiguity and position ambiguity are separate axes.
 - Position policies include first, last, best-distance, rejection, and
   quality-aware tie resolution where the semantics are well-defined.
@@ -322,8 +327,8 @@ preserving compatibility with headerless EFGDL 1 geometries.
   beyond three should follow demonstrated protocol demand.
 - `needletail` remains the default parser. `paraseq` was evaluated but did not
   improve the representative paired-end path enough to justify replacing the
-  stable parser. `rapidgzip-core` is an opt-in parallel-gzip backend rather than
-  a mandatory dependency/path.
+  stable parser. `rapidgzip-core` is an opt-in ANTISEQUENCE dependency and
+  parallel-gzip backend; seqproc enables that feature explicitly.
 
 #### Relevant changes
 
@@ -540,9 +545,10 @@ preserving compatibility with headerless EFGDL 1 geometries.
   artifacts. It is published before seqproc.
 - seqproc uses cargo-dist for tagged executable releases. Release artifacts are
   separate from the crates.io source package.
-- Build flags are checked into `.cargo/config.toml` to make release builds
-  reproducible. The current aggressive target CPU choices require a portability
-  decision before Bioconda publication; see the release blockers below.
+- Repository and release builds use portable compiler defaults. An optimized
+  local x86-64 build is explicit (`--no-default-features --features
+  antisequence/simd-avx2`) rather than hidden in `.cargo/config.toml`; release artifacts do
+  not silently raise the CPU floor.
 - The public documentation deploys from `main`, so `dev` documentation becomes
   public only after the reviewed branch promotion.
 
@@ -566,7 +572,9 @@ preserving compatibility with headerless EFGDL 1 geometries.
 The intended first-release compatibility story is:
 
 - Headerless EFGDL continues to mean EFGDL 1.
-- EFGDL 2 features require the document header.
+- Layout algebra, typed output/header transformation, and named-resource
+  declarations require the EFGDL 2 document header. Established annotations
+  remain headerless-compatible; new protocol files should declare EFGDL 2.
 - EFGDL 1 geometries not using new features should remain byte-identical.
 - Legacy flag-only seqproc invocation remains accepted for one documented
   transition cycle.
@@ -630,15 +638,23 @@ protocols that do not request new behavior.
 
 ## Current verification evidence
 
-The most recent milestone records report:
+The 2026-08-21 review-fix pass reports:
 
-- ANTISEQUENCE: 370 tests passing;
-- seqproc library suite: 276 tests passing in the most recently recorded full
-  library run;
-- seqproc CLI workflow suite: 20 tests passing;
-- seqproc typed-error suite: 6 tests passing;
-- seqproc benchmark regression suite: 19 tests passing;
-- Astro documentation build passing under Node 22.
+- ANTISEQUENCE: 385 locked library tests passing in both the portable-default
+  and explicit AVX2 configurations, plus warning-denied clippy/docs and an
+  extracted-package downstream build/run gate;
+- seqproc: the complete locked all-target run passing (276 library, 9
+  anchor-set, 27 annotation, 19 benchmark-regression, 24 CLI, 58 compile, 1
+  differential, 6 error-contract, 2 error-handling, 12 layout, 12 lexer, 69
+  paper-chemistry, and 31 parser tests, plus both benchmark smoke binaries);
+- seqproc explicit AVX2 gate: 276/276 library tests passing against the final
+  pinned ANTISEQUENCE review-fix revision;
+- warning-denied all-target clippy and docs passing, plus an all-target check
+  on the declared Rust 1.88 MSRV;
+- locked metadata, cargo-dist plan/generation, formatting, package-list, and
+  package-boundary checks passing; and
+- the Astro documentation production build passing with 20 generated pages
+  and its search index.
 
 Coverage includes EFGDL parsing and compilation, paper chemistries, layout
 algebra, nested choice/repeat/optional constructs, normalization bounds,
@@ -646,10 +662,12 @@ anchor ambiguity policies, named and positional resource equivalence, sharded
 input, stdin/stdout, broken pipes, interleaving, three-segment input, typed
 errors, optimized/reference matcher comparisons, and execution/batch planning.
 
-These counts are historical evidence from milestone completion, not a claim
-that the exact proposed release heads have already cleared every release gate.
-The reviewer must rerun the complete locked suites, clippy, documentation, and
-packaging against the final commits after any review fixes.
+The exact commands and the distinction between completed source gates and
+publication-time registry/artifact gates are recorded in
+`planning/FIRST_RELEASE_REVIEW_REPORT.md`. A full seqproc publication dry-run
+must still be repeated after ANTISEQUENCE 0.1.0 is visible in the registry;
+Cargo cannot resolve the unpublished registry dependency before that ordered
+release step.
 
 ## Important fixes relative to the preprint implementation
 
@@ -822,9 +840,10 @@ These are navigation aids, not a substitute for reviewing the full diffs.
    changed semantics; require byte-identical ordered output or identical
    unordered record multisets.
 3. Independently reproduce the corrected short-Hamming/FILTER case.
-4. Differentially compare all matcher plans against the simple matcher across
-   exact, Hamming, edit, tie, rejection, truncated, reverse-orientation, and
-   malformed cases.
+4. Differentially compare every executable reference-supported matcher backend
+   against the simple matcher across exact, Hamming, edit, ties, rejection,
+   truncation, and non-ACGT input; assert plan-only families separately and run
+   SIMD-specific cases under the AVX2 feature gate.
 5. Compare layout algebra with manually expanded equivalent graphs.
 6. Exercise successful first choice, late fallback, all alternatives rejected,
    nested repeat/optional, and large anchor sets.
@@ -869,55 +888,53 @@ These are navigation aids, not a substitute for reviewing the full diffs.
 
 ### P0: resolve before publishing either crate
 
-- **CPU portability:** the checked-in seqproc `.cargo/config.toml` and
-  `.cargo/config-portable.toml` currently request `x86-64-v3` plus AVX2 on
-  x86-64, `neoverse-n1` on Linux ARM64, and `apple-a14` on macOS ARM64.
-  ANTISEQUENCE also selects the AVX2 block-aligner feature on x86-64. This may
-  be appropriate for optimized release assets but is too restrictive as an
-  undocumented universal source-build/Bioconda baseline. Decide and test one
-  of these designs:
+- **CPU portability (resolved in the review-fix pass):** repository, crate,
+  cargo-dist, and Bioconda-facing builds now use portable compiler defaults.
+  ANTISEQUENCE defaults to SSE2 on x86-64 and NEON on AArch64 through its
+  `portable-simd` feature; `simd-avx2` is mutually exclusive and explicit.
+  seqproc forwards the same choice. The remaining release-product decision is
+  only whether to add a separately labeled AVX2 artifact; it is no longer a
+  source-build or generic-artifact blocker.
 
-  - make repository/source builds portable and inject aggressive flags only in
-    explicitly labeled cargo-dist jobs;
-  - publish separately labeled baseline and optimized artifacts; or
-  - document a deliberately restricted CPU floor and ensure Bioconda supports
-    it, which is unlikely to be the most user-friendly first release.
-
-  The reviewer must verify not only compiler flags but runtime dispatch and
-  dependency feature selection.
-
-- **Exact release heads:** review fixes will change the SHAs in this document.
-  Record final reviewed commits and merge `dev` into `main` in both repositories
-  before tagging.
+- **Exact release heads:** ANTISEQUENCE's review-fix head is
+  `a10d990ed5c66dd8a4edb61b36dc3cce74543238`; seqproc's final implementation
+  SHA is recorded by the report-only follow-up commit in
+  `planning/FIRST_RELEASE_REVIEW_REPORT.md`. Merge those reviewed `dev` heads
+  into `main` before tagging.
 - **Version and namespaces:** explicitly approve `0.1.0` (or choose another
   version) and reconfirm both crates.io names immediately before publishing.
 - **Publication ordering:** publish and verify ANTISEQUENCE first. Then update
   or confirm seqproc's version requirement and run its dry-run against the
   registry release.
-- **Full final-head gates:** run formatting, clippy, all locked/all-target
-  tests, docs, vulnerability audit, license review, packaging dry-runs, and
-  smoke tests after the last fix.
-- **Release metadata:** neither repository currently has a root
-  `CHANGELOG.md` or `CITATION.cff`. Add them, and review Cargo package metadata
-  such as authors, homepage, documentation URL, repository, keywords, and
-  categories before publication.
+- **Final release-execution gates:** source tests, formatting, warning-denied
+  clippy/docs, MSRV, package contents, and cargo-dist generation are complete.
+  Immediately before publication, refresh the vulnerability/license audit,
+  perform ANTISEQUENCE's registry dry-run/publication first, then run seqproc's
+  registry-resolved dry-run and smoke every generated archive/installer.
+- **Release metadata (resolved):** both repositories have root changelogs and
+  citation files, complete Cargo package metadata, locked package allowlists,
+  and portable docs.rs feature selection.
 - **User documentation:** seqproc README/site text still describes tagged
   releases as planned. Replace those instructions only once the release URLs
   and installation commands are real. Ensure ANTISEQUENCE public API docs are
   sufficient for a library release.
-- **License contents:** verify package inclusion of primary license files and
-  produce a complete third-party license bundle for binary/Bioconda artifacts.
+- **License contents:** primary license files are present in both source-package
+  allowlists. Generate and inspect the third-party license bundle for the final
+  cargo-dist/Bioconda binary artifacts, whose exact transitive contents do not
+  exist until those artifacts are built.
 
 ### P1: strongly recommended release-quality checks
 
 - Create a machine-readable release manifest recording repository SHAs,
   versions, Rust/Cargo/cargo-dist versions, lockfile digests, supported targets,
   CPU floors, artifact BLAKE3/SHA-256 checksums, and smoke-test results.
-- Add a clean-room example that compiles against the published ANTISEQUENCE API
-  and a seqproc smoke protocol that validates and transforms a tiny FASTQ.
-- Review whether every serialized summary schema intended to remain public
-  needs a migration/compatibility statement; there are currently multiple
-  historical schemas in `schemas/`.
+- The ANTISEQUENCE source package now has an extracted clean-room downstream
+  build/run example. Repeat it against the registry package, and run seqproc's
+  existing tiny-FASTQ validation/transformation smoke test against each final
+  artifact.
+- Summary schema 1.12.0 is the only schema shipped in the seqproc crate (with
+  its history README); CLI regressions compile it and validate all emitted
+  reports deeply. Preserve the same compatibility review for future schemas.
 - Confirm the docs deployment after `dev` is promoted to `main` and validate
   internal links at `https://combine-lab.github.io/seqproc/`.
 - Attach the first-release review report and benchmark artifacts to the GitHub
@@ -1051,8 +1068,8 @@ filter path and adding a coherent language, I/O, error, optimizer, matcher,
 reporting, and release foundation. The appropriate next action is independent
 review and stabilization, not another large capability milestone.
 
-Approval should nevertheless be conditional on resolving source/binary CPU
-portability, rerunning the full final-head gates, completing release metadata,
-and proving the actual crates.io and Bioconda packages in clean environments.
-Those are release-engineering obligations, not reasons to fold Milestone 9 into
-this release.
+The review-fix pass resolved source/binary CPU portability and completed the
+release metadata. Approval remains conditional on the recorded final-head
+gates and on proving the actual crates.io and Bioconda packages in clean
+environments. Those are release-engineering obligations, not reasons to fold
+Milestone 9 into this release.

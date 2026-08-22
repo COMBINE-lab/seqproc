@@ -11,8 +11,8 @@ use antisequence::graph::*;
 use anyhow::{anyhow, bail, Result as AnyResult};
 use chumsky::{error::Rich, input::Input, Parser};
 use flate2::{write::GzEncoder, Compression};
-use nix::sys::stat;
-use nix::unistd;
+#[cfg(unix)]
+use nix::{sys::stat, unistd};
 use serde::Serialize;
 use tempfile::tempdir;
 use tracing::info;
@@ -33,6 +33,7 @@ use crate::{
 
 const MIN_PARALLEL_GZIP_BLOCK_SIZE: usize = 32 * 1024;
 const DEFAULT_BATCH_MEMORY_BUDGET: usize = 256 * 1024 * 1024;
+const MAX_EFGDL_NESTING_DEPTH: usize = 128;
 
 fn estimated_geometry_bases(compiled: &CompiledData) -> usize {
     compiled
@@ -87,8 +88,10 @@ fn is_fastq_input_error(error: &antisequence::errors::Error) -> bool {
 
 fn is_broken_pipe_error(error: &antisequence::errors::Error) -> bool {
     graph_error_contains(error, &|error| {
-        let antisequence::errors::Error::BytesIo(source) = error else {
-            return false;
+        let source = match error {
+            antisequence::errors::Error::BytesIo(source) => source.as_ref(),
+            antisequence::errors::Error::FileIo { source, .. } => source.as_ref(),
+            _ => return false,
         };
         source
             .downcast_ref::<io::Error>()
@@ -113,16 +116,14 @@ fn configure_fastq_output(
     }
 }
 
-fn output_targets_from_legacy(config: &RunConfig, output_arity: usize) -> Vec<OutputTarget> {
+fn output_targets_from_legacy(config: &RunConfig) -> Vec<OutputTarget> {
     let mut targets = vec![config
         .output1
         .clone()
         .map(OutputTarget::Path)
         .unwrap_or(OutputTarget::Discard)];
-    if output_arity > 1 {
-        if let Some(path) = &config.output2 {
-            targets.push(OutputTarget::Path(path.clone()));
-        }
+    if let Some(path) = &config.output2 {
+        targets.push(OutputTarget::Path(path.clone()));
     }
     targets
 }
@@ -154,6 +155,34 @@ fn target_file_name(target: &OutputTarget) -> Option<String> {
     }
 }
 
+struct FinishingGzipWriter<W: Write> {
+    inner: GzEncoder<W>,
+    finished: bool,
+}
+
+impl<W: Write> FinishingGzipWriter<W> {
+    fn new(writer: W, level: u32) -> Self {
+        Self {
+            inner: GzEncoder::new(writer, Compression::new(level)),
+            finished: false,
+        }
+    }
+}
+
+impl<W: Write> Write for FinishingGzipWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.inner.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if !self.finished {
+            self.inner.try_finish()?;
+            self.finished = true;
+        }
+        self.inner.get_mut().flush()
+    }
+}
+
 fn writer_for_target(
     target: &OutputTarget,
     stdout_gzip: bool,
@@ -168,10 +197,7 @@ fn writer_for_target(
             })?;
             let writer = BufWriter::new(file);
             if path.to_string_lossy().ends_with(".gz") {
-                Ok(Box::new(GzEncoder::new(
-                    writer,
-                    Compression::new(gzip_level),
-                )))
+                Ok(Box::new(FinishingGzipWriter::new(writer, gzip_level)))
             } else {
                 Ok(Box::new(writer))
             }
@@ -179,10 +205,7 @@ fn writer_for_target(
         OutputTarget::Stdout => {
             let writer = BufWriter::new(io::stdout());
             if stdout_gzip {
-                Ok(Box::new(GzEncoder::new(
-                    writer,
-                    Compression::new(gzip_level),
-                )))
+                Ok(Box::new(FinishingGzipWriter::new(writer, gzip_level)))
             } else {
                 Ok(Box::new(writer))
             }
@@ -647,8 +670,20 @@ pub fn run(config: RunConfig, compiled_data: CompiledData) -> SeqprocResult<RunR
     let primary_targets = config
         .outputs
         .clone()
-        .unwrap_or_else(|| output_targets_from_legacy(&config, output_arity));
-    if config.demux.is_none() && primary_targets.len() != output_arity {
+        .unwrap_or_else(|| output_targets_from_legacy(&config));
+    // Before explicit output transformations existed, the flag-only CLI
+    // allowed a prefix of the input lanes to be written. In particular, a
+    // paired geometry plus only `-o` wrote read 1. Preserve that EFGDL 1
+    // contract for one compatibility cycle; transformed and explicitly typed
+    // output lists retain exact arity checking.
+    let legacy_untransformed_prefix = config.outputs.is_none()
+        && compiled_data.transformation.is_none()
+        && !primary_targets.is_empty()
+        && primary_targets.len() <= output_arity;
+    if config.demux.is_none()
+        && !legacy_untransformed_prefix
+        && primary_targets.len() != output_arity
+    {
         return Err(OutputTopologyError::ArityMismatch {
             required: output_arity,
             supplied: primary_targets.len(),
@@ -1021,7 +1056,7 @@ struct RuntimeProvenance<'a> {
 }
 
 fn statistics_from_graph(
-    graph: &Graph,
+    graph: &CompiledGraph,
     statistics_level: StatisticsLevel,
     call: Option<String>,
     geometry_digest: Option<String>,
@@ -1785,20 +1820,62 @@ pub fn compile_geom_typed(geom: impl AsRef<str>) -> SeqprocResult<CompiledData> 
                 diagnostics: errors.into_iter().map(diagnostic_from_rich).collect(),
             })?;
 
+    let mut nesting_depth = 0usize;
+    for (token, span) in &tokens {
+        match token {
+            lexer::Token::LParen | lexer::Token::LBrace | lexer::Token::LBracket => {
+                nesting_depth += 1;
+                if nesting_depth > MAX_EFGDL_NESTING_DEPTH {
+                    return Err(SeqprocError::Geometry {
+                        stage: GeometryStage::Parsing,
+                        diagnostics: vec![GeometryDiagnostic {
+                            message: format!(
+                                "EFGDL nesting exceeds the supported depth of {MAX_EFGDL_NESTING_DEPTH}"
+                            ),
+                            reason: "reduce nested layout, function, or annotation expressions"
+                                .to_owned(),
+                            span: span.into_range(),
+                            contexts: Vec::new(),
+                        }],
+                    });
+                }
+            }
+            lexer::Token::RParen | lexer::Token::RBrace | lexer::Token::RBracket => {
+                nesting_depth = nesting_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    let starts_document_header = matches!(
+        tokens.as_slice(),
+        [(lexer::Token::Label(name), _), (lexer::Token::LBrace, _), ..] if name == "header"
+    );
+
     let tokens = tokens
         .into_iter()
         .map(|(tok, span)| chumsky::span::Spanned { inner: tok, span })
         .collect::<Vec<_>>();
     let input = tokens[..].split_spanned((0..geom.len()).into());
 
-    let description =
-        parser()
-            .parse(input)
-            .into_result()
-            .map_err(|errors| SeqprocError::Geometry {
-                stage: GeometryStage::Parsing,
-                diagnostics: errors.into_iter().map(diagnostic_from_rich).collect(),
-            })?;
+    let description = parser().parse(input).into_result().map_err(|errors| {
+        let mut diagnostics = errors
+            .into_iter()
+            .map(diagnostic_from_rich)
+            .collect::<Vec<_>>();
+        if starts_document_header {
+            for diagnostic in &mut diagnostics {
+                diagnostic.contexts.push((
+                    "while parsing the leading `header { efgdl = 2 }` block".to_owned(),
+                    0..geom.len().min(6),
+                ));
+            }
+        }
+        SeqprocError::Geometry {
+            stage: GeometryStage::Parsing,
+            diagnostics,
+        }
+    })?;
 
     compile(description).map_err(|error| SeqprocError::Geometry {
         stage: GeometryStage::SemanticCompilation,
@@ -1864,6 +1941,9 @@ pub fn read_pairs_to_file(
     Ok(stats)
 }
 
+/// Legacy Unix-only helper that exposes transformed reads through named pipes.
+/// Portable callers should use [`run`] with ordinary files or stdin/stdout.
+#[cfg(unix)]
 pub fn read_pairs_to_fifo<'a: 'static>(
     compiled_data: CompiledData,
     r1: Vec<String>,

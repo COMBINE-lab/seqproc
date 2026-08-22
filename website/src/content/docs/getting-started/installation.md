@@ -26,6 +26,22 @@ cargo build --release --locked
 Using `--locked` prevents Cargo from silently selecting dependency versions
 other than those recorded in `Cargo.lock`.
 
+The repository and tagged binary configuration is portable: SSE2 is the
+x86_64 matcher floor and NEON is used on aarch64. It does not silently inherit
+`target-cpu=native`, x86-64-v3, or a machine-specific ARM target.
+
+For a local x86_64 build that will run only on AVX2-capable hosts:
+
+```console
+cp .cargo/config.local.example.toml .cargo/config.local.toml
+cargo build --release --locked --no-default-features \
+  --features antisequence/simd-avx2 \
+  --config .cargo/config.local.toml
+```
+
+Do not distribute that binary as a generic x86_64 artifact; its CPU floor is
+intentional. The portable and AVX2 matcher features are mutually exclusive.
+
 To put the local build on your path:
 
 ```console

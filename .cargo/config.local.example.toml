@@ -2,6 +2,12 @@
 # tuned to the local CPU:
 #
 #     cargo build --release --config .cargo/config.local.toml
+#
+# On x86_64, also select ANTISEQUENCE's AVX2 block-aligner backend explicitly:
+#
+#     cargo build --release --no-default-features \
+#       --features antisequence/simd-avx2 \
+#       --config .cargo/config.local.toml
 
 [build]
 rustflags = ["-C", "target-cpu=native"]

@@ -49,3 +49,43 @@ jobs:
 
       - name: doc
         run: cargo doc --locked --workspace --no-deps
+
+      - name: Inspect source package contents
+        # Full verification resolves the registry form of ANTISEQUENCE and is
+        # performed by bump_and_publish.sh after that crate is published.
+        run: cargo package --locked --list > /dev/null
+
+  avx2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: seqproc-comprehensive-avx2
+      - name: Test explicit AVX2 matcher backend
+        run: >-
+          cargo test --locked --lib --no-default-features
+          --features antisequence/simd-avx2
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: seqproc-msrv-1.88
+      - run: cargo check --locked --all-targets
+
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: seqproc-macos-arm64
+      - run: cargo test --locked --lib --bins

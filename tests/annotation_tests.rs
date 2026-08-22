@@ -519,11 +519,14 @@ fn e2e_ambiguity_policy_assignment_variants_compile() {
 }
 
 #[test]
-fn e2e_ambiguity_policy_requires_canonical_assignment_syntax() {
-    let error = compile_error_text(
-        "#[ambig_policy(first)] bc = filter_within_dist(b[4], \"wl.txt\", 1)\n1{<bc>r:}",
-    );
-    assert!(error.contains("uses assignment syntax"));
+fn e2e_ambiguity_policy_accepts_compatibility_call_syntax() {
+    for policy in ["first", "random, 42", "quality, 3"] {
+        let geometry = format!(
+            "#[ambig_policy({policy})] bc = filter_within_dist(b[4], \"wl.txt\", 1)\n1{{<bc>r:}}"
+        );
+        compile_geom(geometry)
+            .unwrap_or_else(|error| panic!("call policy {policy} should compile, got {error:?}"));
+    }
 }
 
 #[test]

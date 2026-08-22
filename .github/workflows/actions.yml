@@ -3,9 +3,9 @@ name: Fast CI
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: ["main", "dev"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "dev"]
 
 concurrency:
   group: fast-ci-${{ github.ref }}
@@ -48,6 +48,10 @@ jobs:
         run: >-
           cargo test --locked --workspace --lib --bins
           --test cli_workflow_tests
+          --test compile_tests
           --test error_handling_tests
-          --test paper_chemistry_tests
+          --test error_contract_tests
+          --test anchor_set_tests
+          --test layout_algebra_tests
+          --test lexer_tests
           --no-fail-fast

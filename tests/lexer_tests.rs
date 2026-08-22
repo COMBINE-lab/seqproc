@@ -64,6 +64,26 @@ fn label() {
 }
 
 #[test]
+fn uppercase_nucleotide_prefixed_label_is_not_split() {
+    let src = "Anchor1 = f[ACGT]";
+    let tokens = lexer().parse(src).into_result().unwrap();
+    assert_eq!(tokens[0].0, Token::Label("Anchor1".to_owned()));
+    assert_eq!(
+        tokens[4..8]
+            .iter()
+            .map(|(token, _)| token)
+            .collect::<Vec<_>>(),
+        vec![&Token::A, &Token::C, &Token::G, &Token::T]
+    );
+}
+
+#[test]
+fn oversized_integer_is_a_lex_error_not_a_panic() {
+    let src = format!("1{{b[{}]}}", "9".repeat(100));
+    assert!(lexer().parse(&src).into_result().is_err());
+}
+
+#[test]
 fn precidence() {
     let src = "b[1-2] -> 1{}";
 

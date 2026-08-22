@@ -135,12 +135,27 @@ cargo build --release --locked
 ./target/release/seqproc --help
 ```
 
+Repository and release builds are portable by default: SSE2 is the x86_64
+matcher floor and NEON is used on aarch64. For a local x86_64 build that will
+run only on AVX2-capable hosts, select the optimized block-aligner backend and
+local CPU tuning explicitly:
+
+```console
+cp .cargo/config.local.example.toml .cargo/config.local.toml
+cargo build --release --locked --no-default-features \
+  --features antisequence/simd-avx2 \
+  --config .cargo/config.local.toml
+```
+
+The portable and AVX2 matcher features are mutually exclusive by design.
+
 ## Ambiguous barcode matches
 
 Equal-best matches against distinct whitelist or mapping entries use an
 operation-specific default: filters accept set membership, while mapping
 operations follow their no-match fallback. A geometry can select an explicit
-policy:
+policy. Assignment syntax is recommended; the equivalent simple call form
+(`#[ambig_policy(accept)]`) is accepted for compatibility:
 
 ```efgdl
 #[ambig_policy = accept]
@@ -154,11 +169,11 @@ Supported policies are `accept`, `no_match`, `first`, `random`, `quality`, and
 `error`. The [ambiguity guide](https://combine-lab.github.io/seqproc/efgdl/annotations-and-ambiguity/)
 documents their semantics and reproducibility guarantees.
 
-Search anchors independently support `#[position_policy = leftmost]`,
-`rightmost`, `no_match`, or `error`. A one-pattern-per-line anchor whitelist can
-be attached with `#[anchor_set($0)]`, avoiding externally expanded geometry or
-input preprocessing. Pattern ties and repeated-position ties remain separate
-events and receive separate detailed-statistics counters.
+Search anchors independently support `best`, `leftmost`, `rightmost`,
+`quality`, `no_match`, and `error` position policies. A one-pattern-per-line
+anchor whitelist can be attached with `#[anchor_set($0)]`, avoiding externally
+expanded geometry or input preprocessing. Pattern ties and repeated-position
+ties remain separate events and receive separate detailed-statistics counters.
 
 ## Development and reproducibility
 
@@ -168,8 +183,11 @@ test, feature, benchmark-compilation, and sanitizer matrix.
 
 ```console
 cargo fmt --all --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+# On an AVX2-capable x86_64 host, also exercise the explicit optimized backend:
+cargo test --locked --no-default-features \
+  --features antisequence/simd-avx2 --lib
 ```
 
 The documentation site requires Node.js 22.12 or newer and has its own locked

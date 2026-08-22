@@ -16,9 +16,10 @@ Check that definitions precede their references, paired read numbers match the
 provided files, every transformation output label exists, and annotations are
 attached to the relevant definition or read.
 
-For ambiguity policies, use property syntax such as
-`#[ambig_policy = quality(min_delta = 2)]`. Call syntax is reserved for
-operation annotations such as `#[edit(2)]`.
+For ambiguity policies, prefer property syntax such as
+`#[ambig_policy = quality(min_delta = 2)]`. Simple call syntax such as
+`#[ambig_policy(no_match)]` is also supported; parameterized call syntax uses
+flat positional arguments, for example `#[ambig_policy(random, 42)]`.
 
 The CLI uses broad stable exit classes: status 2 for geometry/configuration,
 status 3 for malformed runtime FASTQ input, and status 1 for graph or output

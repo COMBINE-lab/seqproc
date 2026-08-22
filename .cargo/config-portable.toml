@@ -1,15 +1,2 @@
-# Canonical cargo-dist build flags. Keep this file synchronized with
-# .cargo/config.toml; .github/build-setup.yml copies it into place before every
-# release build so local configuration cannot leak into release artifacts.
-
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=+avx2"]
-
-[target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=neoverse-n1"]
-
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "target-cpu=apple-a14"]
-
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=+avx2"]
+# Canonical portable cargo-dist configuration. It is intentionally free of
+# target-specific rustflags so artifact names cannot conceal a newer CPU floor.

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use seqproc::{
     compile::{compile, definitions::compile_definitions, reads::compile_reads, utils::Error},
-    execute::compile_geom,
+    execute::{compile_geom, compile_geom_typed},
 };
 
 use crate::common::utils::{result_with_errs, ParsedInput};
@@ -682,9 +682,7 @@ fn hamming_distance_cannot_exceed_sequence_length() {
 
 #[test]
 fn edit_distance_cannot_exceed_sequence_length() {
-    let res = compile_geom(String::from(
-        "#[edit(10)]\nl1 = f[ACG]\n1{<l1>r:}2{r:}",
-    ));
+    let res = compile_geom(String::from("#[edit(10)]\nl1 = f[ACG]\n1{<l1>r:}2{r:}"));
     assert!(res.is_err());
 }
 
@@ -722,4 +720,74 @@ fn simplified_description_tolerates_fixed_seq_labels_in_transform() {
     .unwrap();
     // Fixed sequences are normalized away; this must not panic.
     let _ = compiled.get_simplified_description_string();
+}
+
+#[test]
+fn legacy_and_explicit_ambiguity_policy_syntaxes_compile_equivalently() {
+    for annotation in [
+        "#[ambig_policy = first]",
+        "#[ambig_policy(first)]",
+        "#[ambig_policy = random(seed = 42)]",
+        "#[ambig_policy(random, 42)]",
+    ] {
+        let geometry =
+            format!("{annotation} bc = filter_within_dist(b[4], \"wl.txt\", 1)\n1{{<bc>r:}}");
+        assert!(
+            compile_geom(geometry).is_ok(),
+            "failed syntax: {annotation}"
+        );
+    }
+}
+
+#[test]
+fn unknown_annotations_are_compile_errors() {
+    let definition = compile_geom(String::from("#[haming(1)] a = f[ACGT]\n1{<a>r:}"));
+    assert!(definition.is_err());
+    let read = compile_geom(String::from("#[match_orientation(either)] 1{b[4]r:}"));
+    assert!(read.is_err());
+}
+
+#[test]
+fn input_read_indices_must_be_contiguous_and_ordered() {
+    assert!(compile_geom(String::from("2{b[4]r:}")).is_err());
+    assert!(compile_geom(String::from("1{b[4]r:}1{r:}")).is_err());
+    assert!(compile_geom(String::from("2{b[4]r:}1{r:}")).is_err());
+}
+
+#[test]
+fn match_blocks_reject_attributes_without_runtime_producers() {
+    let geometry = String::from(
+        "header { efgdl = 2 }\n#[match_ori(either)] 1{b<bc>[4]r:}\n-> match 1.other { fw => 1{<bc>}, rc => 1{<bc>} }",
+    );
+    let error = format!("{:?}", compile_geom(geometry).unwrap_err());
+    assert!(error.contains("only the 'ori' attribute"), "{error}");
+}
+
+#[test]
+fn uppercase_nucleotide_prefixed_definition_names_compile() {
+    let compiled = compile_geom(String::from("Anchor1 = f[ACGT]\n1{<Anchor1>r:}"));
+    assert!(compiled.is_ok(), "{compiled:?}");
+}
+
+#[test]
+fn excessive_nesting_returns_a_bounded_diagnostic() {
+    let geometry = format!(
+        "header {{ efgdl = 2 }}\n1{{{}b[1]{}r:}}",
+        "(".repeat(129),
+        ")".repeat(129)
+    );
+    let error = format!("{:?}", compile_geom(geometry).unwrap_err());
+    assert!(
+        error.contains("nesting exceeds the supported depth"),
+        "{error}"
+    );
+}
+
+#[test]
+fn malformed_leading_header_has_header_context() {
+    let error = format!(
+        "{:?}",
+        compile_geom_typed("header { efgdl = 2\n1{b[1]r:}").unwrap_err()
+    );
+    assert!(error.contains("leading `header"), "{error}");
 }

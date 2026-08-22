@@ -8,6 +8,10 @@ members = ["cargo:."]
 github-build-setup = "../build-setup.yml"
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
+# Release archives intentionally build the portable default feature set. The
+# mutually exclusive AVX2 development feature is tested in comprehensive CI,
+# but must not be combined with the default by cargo-dist metadata/builds.
+all-features = false
 # CI backends to support
 ci = "github"
 # The installers to generate for each app

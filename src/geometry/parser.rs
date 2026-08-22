@@ -572,11 +572,10 @@ pub fn parser<'tokens>(
     .boxed();
 
     let resource_declaration = label
-        .clone()
         .map_with(|name, state| S(name, state.span()))
         .then(
             just(Token::Equals)
-                .ignore_then(file.clone().map_with(|path, state| S(path, state.span())))
+                .ignore_then(file.map_with(|path, state| S(path, state.span())))
                 .or_not(),
         )
         .map_with(|(name, default), state| S(ResourceDeclaration { name, default }, state.span()));
@@ -894,12 +893,14 @@ pub fn parser<'tokens>(
                 None => (None, first),
             };
             S(AnnotationValueArg { name, value }, state.span())
-        });
+        })
+        .boxed();
 
     let assignment_value = spanned_annotation_arg
         .clone()
         .then(
             assignment_value_arg
+                .clone()
                 .separated_by(just(Token::Comma))
                 .collect::<Vec<_>>()
                 .delimited_by(just(Token::LParen), just(Token::RParen))
@@ -913,7 +914,8 @@ pub fn parser<'tokens>(
                 },
                 state.span(),
             )
-        });
+        })
+        .boxed();
 
     // Parse either an operation annotation (`#[name(args)]`) or a property
     // assignment (`#[name = variant(args)]`). Each annotation name can choose
@@ -931,12 +933,13 @@ pub fn parser<'tokens>(
                         .map_with(|a, state| S(a, state.span()))
                         .separated_by(just(Token::Comma))
                         .collect::<Vec<_>>()
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .map(|args| (args, None)),
+                        .map(|args| (args, None))
+                        .delimited_by(just(Token::LParen), just(Token::RParen)),
                 )))
                 .then_ignore(just(Token::RBracket)),
         )
-        .map_with(|(name, (args, value)), state| S(Annotation { name, args, value }, state.span()));
+        .map_with(|(name, (args, value)), state| S(Annotation { name, args, value }, state.span()))
+        .boxed();
 
     // Output FASTQ-name templates are parsed separately from general
     // annotations because their arguments are typed literals and captured

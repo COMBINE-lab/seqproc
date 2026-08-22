@@ -138,7 +138,9 @@ impl GeometryMeta {
             if a > b {
                 return Err(Error {
                     span: *span,
-                    msg: format!("invalid range [{a}-{b}]: the lower bound exceeds the upper bound"),
+                    msg: format!(
+                        "invalid range [{a}-{b}]: the lower bound exceeds the upper bound"
+                    ),
                 });
             }
         }

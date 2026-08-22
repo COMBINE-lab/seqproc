@@ -12,12 +12,18 @@ use call syntax:
 anchor = f[CAGAGC]
 ```
 
-The ambiguity policy is a property and uses assignment syntax:
+The ambiguity policy is a property. Assignment syntax is canonical in new
+files:
 
 ```text
 #[ambig_policy = no_match]
 bc = filter_within_dist(b[8], "barcodes.txt", 1)
 ```
+
+Simple call syntax is also accepted for compatibility, so
+`#[ambig_policy(no_match)]` is equivalent. Parameterized call syntax uses flat
+positional arguments (`#[ambig_policy(random, 2026)]`); assignment syntax is
+preferred when named arguments improve clarity.
 
 `seqproc validate` rejects a policy placed on a definition that contains no map,
 filter, or anchor-set operation.
@@ -115,6 +121,10 @@ cell = map_with_mismatch(b[16], "cell-map.tsv", self, 1)
 
 Detailed summaries report how many equal-best events were accepted, dropped,
 resolved by first/random/quality, or raised as errors.
+
+The same assignment/call compatibility applies to `position_policy`, for
+example `#[position_policy = rightmost]` and
+`#[position_policy(rightmost)]`.
 
 ## Positional ambiguity
 

@@ -1,7 +1,8 @@
 # Production panic audit
 
-This audit covers the `dev` source tree after the typed-error milestone. Test
-assertions and test-only `unwrap`, `expect`, and `panic` calls are excluded.
+This audit covers the `dev` source tree after the 2026-08-21 first-release
+review fix pass. Test assertions and test-only `unwrap`, `expect`, and `panic`
+calls are excluded.
 Malformed supported user input must return `SeqprocError`; it must not reach
 one of the invariants below.
 
@@ -13,6 +14,9 @@ one of the invariants below.
 - Resource and mapping/whitelist/anchor-set loading is fallible. Conflicting
   mappings, empty anchor sets, invalid anchor lengths, malformed demultiplexing
   labels, and unreadable inputs do not unwind.
+- Oversized integer literals, excessive parser nesting, malformed leading
+  headers, unknown annotations, invalid input numbering, and unsupported
+  `match N.attr` attributes return bounded geometry diagnostics.
 - ANTISEQUENCE error sources are `Send + Sync`, allowing typed failures to cross
   worker and compatibility FIFO thread boundaries.
 - Unit-returning `interpret`, `interpret_with_unassigned`, and
@@ -33,6 +37,12 @@ one of the invariants below.
 | `geometry/compile/mod.rs` definition and literal lowering | Definition keys exist after dependency ordering, successful validation results are extracted only after error checks, literal nucleotides are ASCII, and formatting into `String` is infallible. | Semantic dependency validation, lexer alphabet constraints, and `std::fmt::Write for String`. |
 | compatibility `compile_geom` conversion | `compile_geom_typed` can only fail with the geometry variant. | The function performs no I/O or graph construction. |
 
+The first-release review's user-reachable panic findings have been removed:
+non-UTF-8 CLI arguments use `args_os`; the two compiler `unreachable!` sites
+return spanned diagnostics; `explain` tolerates normalized-away fixed labels;
+and integer parsing is fallible. ANTISEQUENCE separately clamps bounded matcher
+windows and returns `MissingNodeInput` from nested graph nodes.
+
 The audit command is:
 
 ```console
@@ -42,3 +52,7 @@ rg -n 'panic!|unimplemented!|unreachable!|\.unwrap\(|\.expect\(' src --glob '*.r
 Any newly introduced production occurrence must either be removed or added to
 this table with its proof boundary and a regression test showing malformed
 input cannot reach it.
+
+The command also reports test modules embedded under `src/`; those occurrences
+are assertions in controlled fixtures rather than production paths. The
+remaining production occurrences are the invariants enumerated above.

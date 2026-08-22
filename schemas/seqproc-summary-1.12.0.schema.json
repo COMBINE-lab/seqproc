@@ -101,6 +101,7 @@
         "original_operations",
         "optimized_operations",
         "opaque_barriers",
+        "shared_nested_graph_barriers",
         "terminal_projection_candidates",
         "passes"
       ],
@@ -109,6 +110,7 @@
         "original_operations": { "type": "integer", "minimum": 0 },
         "optimized_operations": { "type": "integer", "minimum": 0 },
         "opaque_barriers": { "type": "integer", "minimum": 0 },
+        "shared_nested_graph_barriers": { "type": "integer", "minimum": 0 },
         "terminal_projection_candidates": { "type": "integer", "minimum": 0 },
         "passes": {
           "type": "array",
@@ -164,6 +166,7 @@
             "estimated_batch_bytes",
             "estimated_peak_live_bytes",
             "memory_budget_bytes",
+            "memory_budget_satisfied",
             "reason_codes"
           ],
           "properties": {
@@ -184,6 +187,7 @@
             "estimated_batch_bytes": { "type": "integer", "minimum": 1 },
             "estimated_peak_live_bytes": { "type": "integer", "minimum": 1 },
             "memory_budget_bytes": { "type": "integer", "minimum": 1 },
+            "memory_budget_satisfied": { "type": "boolean" },
             "reason_codes": { "type": "array", "items": { "type": "string" } }
           }
         },

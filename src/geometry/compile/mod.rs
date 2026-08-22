@@ -377,18 +377,71 @@ pub fn compile(
     // Extract per-element annotations (reads + definitions).
     let mut element_annotations: Vec<ElementAnnotations> = Vec::new();
 
-    // Read-level annotations.
-    for S(r, _) in reads.0.iter() {
-        if let Some(S(_, span)) = r
-            .annotations
-            .iter()
-            .find(|S(annotation, _)| annotation.name.0 == "ambig_policy")
-        {
+    // The interpreter addresses input lanes by their declaration position.
+    // Enforce the corresponding 1-based spelling so annotations and runtime
+    // metadata cannot silently attach to a different lane.
+    for (position, S(read, span)) in reads.0.iter().enumerate() {
+        if u8::try_from(read.index.0).is_err() {
             return Err(Error {
                 span: *span,
-                msg: "`ambig_policy` must be attached to the definition containing the map or filter operation"
-                    .to_string(),
+                msg: format!(
+                    "read index {} exceeds the supported lane-metadata maximum of {}",
+                    read.index.0,
+                    u8::MAX
+                ),
             });
+        }
+        let expected = position + 1;
+        if read.index.0 != expected {
+            return Err(Error {
+                span: *span,
+                msg: format!(
+                    "input reads must be numbered contiguously in declaration order; expected read {expected}, found read {}",
+                    read.index.0
+                ),
+            });
+        }
+    }
+
+    // Read-level annotations.
+    for S(r, _) in reads.0.iter() {
+        let mut seen = std::collections::HashSet::new();
+        for S(annotation, span) in &r.annotations {
+            if !seen.insert(annotation.name.0.as_str()) {
+                return Err(Error {
+                    span: *span,
+                    msg: format!(
+                        "read {} specifies annotation `{}` more than once",
+                        r.index.0, annotation.name.0
+                    ),
+                });
+            }
+            match annotation.name.0.as_str() {
+                "match_ori" => {
+                    if annotation.value.is_some()
+                        || annotation.args.len() != 1
+                        || annotation.args[0].0 != "either"
+                    {
+                        return Err(Error {
+                            span: *span,
+                            msg: "`match_ori` requires exactly #[match_ori(either)]".to_string(),
+                        });
+                    }
+                }
+                "ambig_policy" => {
+                    return Err(Error {
+                        span: *span,
+                        msg: "`ambig_policy` must be attached to the definition containing the map or filter operation"
+                            .to_string(),
+                    });
+                }
+                unknown => {
+                    return Err(Error {
+                        span: *span,
+                        msg: format!("unknown read annotation `{unknown}`; expected match_ori"),
+                    });
+                }
+            }
         }
         if !r.annotations.is_empty() {
             element_annotations.push(ElementAnnotations {
@@ -518,31 +571,47 @@ pub fn compile(
             // correct arm based on the runtime attribute value (e.g., ori).
             // When arms are identical, the behavior is the same as before.
 
-            // Validate: the read referenced by the match block must have an
-            // annotation that sets the branching attribute at runtime.
-            // Currently the only supported attribute is "ori" from
-            // #[match_ori(either)]. Without this annotation, the attribute
-            // would never be set and both SelectOp arms would silently fail,
-            // producing untransformed output (data corruption).
-            if attr.0 == "ori" {
-                let read_has_match_ori = element_annotations.iter().any(|ea| {
-                    ea.element_id == ElementId::Read(read_ref.0)
-                        && ea.annotations.iter().any(|S(ann, _)| {
-                            ann.name.0 == "match_ori"
-                                && ann.args.first().map(|a| a.0.as_str()) == Some("either")
-                        })
+            // Runtime branch metadata currently has one producer: the `ori`
+            // lane attribute emitted by `#[match_ori(either)]`. Accepting an
+            // arbitrary spelling here would compile a switch whose arms can
+            // never be selected, silently passing through untransformed reads.
+            if attr.0 != "ori" {
+                return Err(Error {
+                    span,
+                    msg: format!(
+                        "match blocks currently support only the 'ori' attribute; \
+                         '{}.{}' has no runtime producer",
+                        read_ref.0, attr.0
+                    ),
                 });
-                if !read_has_match_ori {
-                    return Err(Error {
-                        span,
-                        msg: format!(
-                            "match block branches on '{}.{}' but read {} does not have \
-                             #[match_ori(either)] annotation; the '{}' attribute would \
-                             never be set at runtime",
-                            read_ref.0, attr.0, read_ref.0, attr.0
-                        ),
-                    });
-                }
+            }
+            if u8::try_from(read_ref.0).is_err() {
+                return Err(Error {
+                    span,
+                    msg: format!(
+                        "match block read index {} exceeds the supported lane-metadata range 0..={}",
+                        read_ref.0,
+                        u8::MAX
+                    ),
+                });
+            }
+            let read_has_match_ori = element_annotations.iter().any(|ea| {
+                ea.element_id == ElementId::Read(read_ref.0)
+                    && ea.annotations.iter().any(|S(ann, _)| {
+                        ann.name.0 == "match_ori"
+                            && ann.args.first().map(|a| a.0.as_str()) == Some("either")
+                    })
+            });
+            if !read_has_match_ori {
+                return Err(Error {
+                    span,
+                    msg: format!(
+                        "match block branches on '{}.{}' but read {} does not have \
+                         #[match_ori(either)] annotation; the '{}' attribute would \
+                         never be set at runtime",
+                        read_ref.0, attr.0, read_ref.0, attr.0
+                    ),
+                });
             }
 
             let geometry = standardize_geometry(fw_map.clone(), geometry);

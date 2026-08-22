@@ -41,6 +41,10 @@ fn assert_current_summary_shape(report: &Value) {
             "required summary field {required:?} is absent"
         );
     }
+    let validator = jsonschema::validator_for(&schema).expect("summary schema must be valid");
+    if let Err(error) = validator.validate(report) {
+        panic!("summary does not validate against schema 1.12.0: {error}");
+    }
 }
 
 #[test]
@@ -1090,6 +1094,120 @@ fn gzip_level_is_validated_and_preserves_fastq_bytes() {
         .unwrap()
         .args(common)
         .args(["--parallel-gzip", "--parallel-gzip-stream"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn legacy_single_output_preserves_paired_no_transform_behavior() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("paired.geom");
+    let read1 = directory.path().join("r1.fastq");
+    let read2 = directory.path().join("r2.fastq");
+    let output = directory.path().join("r1-out.fastq");
+    fs::write(&geometry, "1{r:}2{r:}\n").unwrap();
+    fs::write(&read1, "@pair/1\nAAAA\n+\nIIII\n").unwrap();
+    fs::write(&read2, "@pair/2\nTTTT\n+\nIIII\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "-g",
+            geometry.to_str().unwrap(),
+            "-1",
+            read1.to_str().unwrap(),
+            "-2",
+            read2.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(output).unwrap(), fs::read(read1).unwrap());
+}
+
+#[test]
+fn out2_on_a_single_output_geometry_is_not_silently_ignored() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("single.geom");
+    let input = directory.path().join("input.fastq");
+    let output1 = directory.path().join("out1.fastq");
+    let output2 = directory.path().join("out2.fastq");
+    fs::write(&geometry, "1{r:}\n").unwrap();
+    fs::write(&input, "@read\nAAAA\n+\nIIII\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--file1",
+            input.to_str().unwrap(),
+            "--out1",
+            output1.to_str().unwrap(),
+            "--out2",
+            output2.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "2 primary output targets were supplied, but the geometry emits 1 reads",
+        ));
+    assert!(!output2.exists());
+}
+
+#[test]
+fn empty_plain_and_gzip_inputs_are_valid_zero_record_runs() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("single.geom");
+    let plain = directory.path().join("empty.fastq");
+    let gzip = directory.path().join("empty.fastq.gz");
+    fs::write(&geometry, "1{r:}\n").unwrap();
+    fs::write(&plain, []).unwrap();
+    gzip_copy(plain.to_str().unwrap(), &gzip);
+
+    for (index, input) in [plain, gzip].iter().enumerate() {
+        let output = directory.path().join(format!("empty-{index}.fastq"));
+        Command::cargo_bin("seqproc")
+            .unwrap()
+            .args([
+                "run",
+                "--geom",
+                geometry.to_str().unwrap(),
+                "--file1",
+                input.to_str().unwrap(),
+                "--out1",
+                output.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        assert_eq!(fs::metadata(output).unwrap().len(), 0);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn final_output_flush_failure_is_a_nonzero_cli_error() {
+    let directory = tempdir().unwrap();
+    let geometry = directory.path().join("single.geom");
+    let input = directory.path().join("input.fastq");
+    fs::write(&geometry, "1{r:}\n").unwrap();
+    fs::write(&input, "@read\nAAAA\n+\nIIII\n").unwrap();
+
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args([
+            "run",
+            "--geom",
+            geometry.to_str().unwrap(),
+            "--file1",
+            input.to_str().unwrap(),
+            "--out1",
+            "/dev/full",
+            "--threads",
+            "1",
+        ])
         .assert()
         .failure();
 }

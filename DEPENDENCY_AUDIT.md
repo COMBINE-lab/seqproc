@@ -1,7 +1,7 @@
-# Dependency audit (2026-08-19)
+# Dependency audit (2026-08-21)
 
-This audit covers all direct dependencies and all 272 packages in the seqproc
-lockfile as it existed at benchmark completion. Version information came from
+This audit covers all direct dependencies and all 322 packages in the seqproc
+release-candidate lockfile. Version information came from
 the crates.io API and `cargo update --dry-run --verbose`; advisories came from
 RustSec database commit `2f08fbb85332687b721f2f22706d07448369451b`
 via `cargo-audit 0.22.2`.
@@ -27,9 +27,17 @@ and the one `tempdir` test is migrated to the already-used `tempfile` crate.
 The exact ANTISEQUENCE git dependency now also declares crates.io version
 0.1.0, which Cargo requires when packaging seqproc; Cargo removes the git
 locator from the published package and resolves that version from crates.io.
-The refreshed 272-package lockfile has zero known RustSec vulnerabilities.
+The refreshed runtime closure had zero known RustSec vulnerabilities at the
+recorded RustSec revision. The larger package count includes the test-only
+JSON-Schema validator added after review.
 The declared Rust floor is 1.88, matching the highest minimum in that graph
 (`psm`/`ar_archive_writer`).
+
+The release review also made CPU and platform dependencies explicit:
+ANTISEQUENCE's portable matcher feature is the default, accelerated gzip is
+enabled intentionally, and the AVX2 matcher is a mutually exclusive opt-in.
+`nix` is current and target-scoped to Unix; only the legacy FIFO helper is
+absent on non-Unix targets.
 
 ## Complete direct-dependency disposition
 
@@ -39,7 +47,7 @@ dependencies; the ANTISEQUENCE audit covers its backend dependencies.
 
 | Dependency | Resolved | Latest | Decision |
 |---|---:|---:|---|
-| `antisequence` | 0.1.0 @ `5efba5a` | 0.1.0 release candidate | Keep exact git pin for review; publish it before seqproc. |
+| `antisequence` | 0.1.0 @ `a10d990` | 0.1.0 release candidate | Keep exact git pin for review; publish it before seqproc. Portable SIMD plus explicit accelerated-gzip features. |
 | `rustc-hash` | 1.1.0 | 2.1.3 | Defer: hot-path maps/sets need performance and determinism A/B tests. |
 | `tracing-subscriber` | 0.3.23 | 0.3.23 | Updated; current and no longer vulnerable. |
 | `tracing` | 0.1.44 | 0.1.44 | Keep; current. |
@@ -48,16 +56,18 @@ dependencies; the ANTISEQUENCE audit covers its backend dependencies.
 | `clap` | 4.6.6 | 4.6.6 | Keep; current. |
 | `anyhow` | 1.0.104 | 1.0.104 | Updated; current and no longer vulnerable. |
 | `tempfile` | 3.27.0 | 3.27.0 | Keep; current; now replaces deprecated `tempdir`. |
-| `nix` | 0.26.4 | 0.31.3 | Defer: breaking FIFO/stat API migration. |
+| `nix` | 0.31.3 | 0.31.3 | Updated and target-scoped to Unix; only the legacy FIFO helper requires it. |
 | `csv` | 1.4.0 | 1.4.0 | Keep; current. |
 | `serde` | 1.0.229 | 1.0.229 | Keep; current. |
 | `serde_json` | 1.0.151 | 1.0.151 | Keep; current. |
-| `md5` | 0.7.0 | 0.8.1 | Defer: non-security geometry identifier; migrate separately. |
+| `blake3` | 1.8.7 | 1.8.7 | Keep; current, algorithm-tagged geometry provenance digest. |
+| `thiserror` | 2.0.20 | 2.0.20 | Keep; current and aligned with ANTISEQUENCE's direct dependency. |
 | `assert_cmd` (dev) | 2.2.2 | 2.2.2 | Keep; current. |
 | `similar-asserts` (dev) | 1.7.0 | 2.0.0 | Defer: test-output-only major migration. |
 | `criterion` (dev) | 0.5.1 | 0.8.2 | Defer: benchmark harness migration is not release-critical. |
 | `proptest` (dev) | 1.11.0 | 1.11.0 | Keep; current. |
-| `flate2` (dev) | 1.1.9 | 1.1.9 | Keep; current. |
+| `flate2` | 1.1.9 | 1.1.9 | Keep; current zlib-rs backend for gzip streams and tests. |
+| `jsonschema` (dev) | 0.50.0 | 0.50.0 | Added without resolver/network features; validates every emitted summary deeply against schema 1.12.0. |
 
 ANTISEQUENCE separately records performance-sensitive backend candidates:
 `needletail` 0.7, `rapidgzip-core` 0.3, rand/rand_xoshiro, and rustc-hash 2.
@@ -83,7 +93,8 @@ manifest requirements already accept current compatible patch/minor releases.
 cargo update --dry-run --verbose
 cargo tree --duplicates
 cargo audit
-cargo test --all-targets
-cargo package --allow-dirty --list
+cargo test --locked --all-targets
+cargo test --locked --lib --no-default-features --features antisequence/simd-avx2
+cargo package --locked --allow-dirty --list
 cargo dist plan
 ```

@@ -5,7 +5,7 @@ use crate::{
         functions::{compile_fn, CompiledFunction},
         utils::*,
     },
-    parser::{Annotation, Definition, Expr, ResourceRef},
+    parser::{Annotation, AnnotationValueArg, Definition, Expr, ResourceRef},
     S,
 };
 use antisequence::{AmbiguityPolicy, PositionAmbiguityPolicy};
@@ -14,19 +14,32 @@ fn parse_position_ambiguity_policy(
     annotation: &Annotation,
     span: crate::Span,
 ) -> Result<PositionAmbiguityPolicy, Error> {
-    let value = annotation.value.as_ref().ok_or_else(|| Error {
-        span,
-        msg: "`position_policy` uses assignment syntax; write #[position_policy = leftmost]"
-            .to_string(),
-    })?;
-    if !annotation.args.is_empty() {
+    let call_args = annotation
+        .args
+        .iter()
+        .skip(1)
+        .map(|value| {
+            S(
+                AnnotationValueArg {
+                    name: None,
+                    value: value.clone(),
+                },
+                value.1,
+            )
+        })
+        .collect::<Vec<_>>();
+    let (variant, args): (&str, &[S<AnnotationValueArg>]) = if let Some(value) =
+        annotation.value.as_ref()
+    {
+        (value.0.variant.0.as_str(), &value.0.args)
+    } else if !annotation.args.is_empty() {
+        (annotation.args[0].0.as_str(), &call_args)
+    } else {
         return Err(Error {
             span,
-            msg: "`position_policy` cannot combine call and assignment syntax".to_string(),
+            msg: "write #[position_policy = leftmost] or #[position_policy(leftmost)]".to_string(),
         });
-    }
-    let variant = value.0.variant.0.as_str();
-    let args = &value.0.args;
+    };
     let no_args = || {
         if args.is_empty() {
             Ok(())
@@ -106,19 +119,31 @@ fn parse_ambiguity_policy(
     annotation: &Annotation,
     span: crate::Span,
 ) -> Result<AmbiguityPolicy, Error> {
-    let value = annotation.value.as_ref().ok_or_else(|| Error {
-        span,
-        msg: "`ambig_policy` uses assignment syntax; write #[ambig_policy = no_match]".to_string(),
-    })?;
-    if !annotation.args.is_empty() {
-        return Err(Error {
-            span,
-            msg: "`ambig_policy` cannot combine call and assignment syntax".to_string(),
-        });
-    }
-
-    let variant = value.0.variant.0.as_str();
-    let args = &value.0.args;
+    let call_args = annotation
+        .args
+        .iter()
+        .skip(1)
+        .map(|value| {
+            S(
+                AnnotationValueArg {
+                    name: None,
+                    value: value.clone(),
+                },
+                value.1,
+            )
+        })
+        .collect::<Vec<_>>();
+    let (variant, args): (&str, &[S<AnnotationValueArg>]) =
+        if let Some(value) = annotation.value.as_ref() {
+            (value.0.variant.0.as_str(), &value.0.args)
+        } else if !annotation.args.is_empty() {
+            (annotation.args[0].0.as_str(), &call_args)
+        } else {
+            return Err(Error {
+                span,
+                msg: "write #[ambig_policy = no_match] or #[ambig_policy(no_match)]".to_string(),
+            });
+        };
     let no_args = || {
         if args.is_empty() {
             Ok(())
@@ -368,7 +393,14 @@ fn annotations_to_compiled_functions(
                 )?),
                 *span,
             )),
-            _ => {}
+            unknown => {
+                return Err(Error {
+                    span: *span,
+                    msg: format!(
+                        "unknown definition annotation `{unknown}`; expected hamming, edit, search, anchor_set, ambig_policy, or position_policy"
+                    ),
+                });
+            }
         }
     }
 

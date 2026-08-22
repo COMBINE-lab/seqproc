@@ -70,9 +70,109 @@ a decision or deeper rework):**
   MSRV/macOS CI, publish-before-tag ordering decision.
 - All P1 items.
 
+### Maintainer resolution after the independent review
+
+The list immediately above records the state at reviewer handoff. The
+maintainer pass subsequently addressed the implementation findings rather than
+deleting that historical record. The final ANTISEQUENCE review-fix head is
+`a10d990ed5c66dd8a4edb61b36dc3cce74543238`; seqproc pins that exact revision.
+The seqproc release-candidate SHA will be recorded here after its final gates
+and commit.
+
+**P0 resolution:**
+
+| Finding | Resolution |
+| --- | --- |
+| 1b, legacy output arity | Restored the legacy flag-only prefix contract: an untransformed paired geometry plus only `-o` writes R1. Typed/transformed output lists retain exact-arity validation. A dedicated CLI regression covers the old invocation. |
+| 2c, final output errors | Added a fallible recursive `GraphNode::finish()` contract and calls before successful return. Plain, gzip, nested, and parallel writers propagate final flush/footer errors. Constant output paths are materialized even for zero-record runs. `/dev/full` and empty-output regressions cover this boundary. |
+| 2d, Hamming planning semantics | Separated Hamming minimum-match semantics from edit budgets, guarded mixed lengths, and verified the selected seed width. Backend/reference tests cover seeded and exhaustive Hamming plans. |
+| 2f, `HammingLookup` with non-ACGT input | Lookup misses containing non-ACGT bases fall through to the general Hamming verifier; the fast path is retained for encodable reads. |
+| 2g, AVX2 candidate loss | Enumerates every bit in each hit mask and uses unsigned-safe lane handling. Targeted AVX2 differential tests cover same-position multi-pattern hits and lane 7. |
+| 2h, `match N.attr` | The compiler accepts only `ori`, requires the referenced read to carry `#[match_ori(either)]`, and validates the metadata index before its `u8` conversion. |
+| 4a, mutable statistics after optimization | Removed `CompiledGraph`'s mutable-graph dereference. Statistics are selected on the builder before compilation and immutable on the compiled graph. |
+| 4b, terminal-projection ablation | Execution now applies the compiled optimization decision to pipeline configuration. Disabling the pass disables direct terminal rendering; optimized/unoptimized byte-equivalence remains tested. |
+| 4c, `SetOp` proof | Reorder/removal eligibility now requires a constant optimized expression and record/lane metadata target. Built-in nodes explicitly attest complete effects; third-party nodes are opaque by default. |
+| 4d, nested early termination | `TryOp` and `TryOrientationOp` retain all previously accepted records when a nested graph signals completion. |
+| 4e, orientation invalidation | `TryOrientationOp` declares sequence invalidation and participates in recursive liveness. Live forward-coordinate labels across the operation are rejected. |
+| 5, CPU portability | Portable SIMD is the default in both crates. ANTISEQUENCE uses SSE2 on x86-64 and NEON on AArch64; AVX2 is a mutually exclusive opt-in feature. Repository and release configs no longer impose `x86-64-v3`, AVX2, or host-specific flags. |
+| 6, release mechanics | Added CHANGELOGs, CITATION files, homepage/documentation metadata, package allowlists, locked publish/package commands, MSRV and macOS/ARM CI, and publish-before-tag ordering. Publish scripts require a clean `main` branch outside dry-run mode. |
+
+**P1 resolution:**
+
+| Finding | Resolution |
+| --- | --- |
+| Broken-pipe detection | Both byte-writer and file-writer error chains recognize `BrokenPipe`; ordinary output failures remain nonzero. Whether stdout EPIPE should be a Unix-success exit is the one remaining policy decision (see below). |
+| Empty plain/gzip inputs and shards | Empty streams, zero-byte files, valid empty gzip members, and empty shards are valid zero-record boundaries. Requested constant output files are still created, with valid gzip footers where applicable. |
+| Silently ignored `--out2` | Legacy target collection no longer truncates before validation. Supplying `--out2` to a one-output geometry is an arity error and creates no misleading file. |
+| Edit-distance quality policy | Pattern-axis `quality` ambiguity is rejected for edit distance at construction, matching the already-rejected position-axis case. |
+| Reference tie ordering / stats drift | The reference and optimized paths share deterministic ordering, including prefix/suffix ties. Detailed statistics cache the reference result rather than recomputing it per seed, and statistics-on/off coordinate equality is tested. |
+| Backend differential coverage | Added a literal matcher matrix covering every executable reference-comparable backend: direct exact, exact search, Hamming lookup (including `N`), seeded exact/Hamming/edit, exhaustive Hamming, Myers64, and Myers-long. Plan-only families are asserted as such; SIMD-specific cases run under the AVX2 gate. |
+| Optimizer hygiene | Semantic no-op elimination respects trace observability; missing-input policy is honored in `try_run_one`; shared nested graphs are reported as explicit barriers; budget reports include `memory_budget_satisfied` and truthful reason codes. |
+| Annotation/index validation | Unknown or duplicate annotations are errors, read indices must be contiguous and ordered, and read-level annotations are validated where consumed. |
+| EFGDL version/syntax contract | Documentation now states that the established annotations remain headerless-compatible while new EFGDL 2 files should carry the version header. Assignment syntax and the previously requested flat call syntax are both accepted for ambiguity/position policies. |
+| Parser robustness | Added a 128-level preflight nesting bound, leading-header diagnostic context, fallible integer and `$N` parsing, and correct lexing of identifiers such as `Anchor1` without changing fixed-sequence tokenization. |
+| Detailed-statistics performance cliff | Reference position results are cached per pattern/read candidate context instead of running the full oracle for every seed hit. |
+| Fork/recycle allocations | Resetting shared reads now replaces storage without first deep-cloning data that is about to be overwritten; recycled capacity is retained where ownership permits. |
+| Schema housekeeping | Only schema 1.12.0 and its history README enter the crate package. CLI tests compile that schema and deeply validate every emitted report; new optimizer/batch fields are required by the schema. |
+| Dependency hygiene | Both crates use `thiserror` 2; `nix` is current and Unix-target-scoped; `rapidgzip-core` is optional in ANTISEQUENCE and explicitly enabled by seqproc; lockfiles and complete direct-dependency audits are retained. `regex` is current. The deferred `colored` 2 → 3 migration is UI-only, outside matcher/execution hot paths, and is recorded explicitly in ANTISEQUENCE's audit. |
+| Docs/downstream example | ANTISEQUENCE now has a compiled README doc-test plus `examples/downstream_smoke.rs`. Its release gate packages and extracts the crate, creates a temporary downstream project, and runs that example against the extracted package. seqproc pins the same reviewed library revision. |
+| Unsafe hygiene | The Hamming tail no longer performs an out-of-bounds over-read. Remaining unsafe `Send` wrappers carry explicit safety justifications. |
+
+Two release-policy choices remain intentionally unresolved because either
+behavior can be defensible and affects users rather than internal correctness:
+
+1. **stdout broken pipe:** retain the current nonzero execution failure, or
+   treat EPIPE on stdout as successful early-consumer termination. The
+   maintainer recommendation is exit 0 only for stdout EPIPE; ENOSPC, quota,
+   file-writer failures, and every other output error must remain nonzero.
+2. **optimized binary artifacts:** publish portable artifacts only, or add
+   separately and unmistakably labeled x86-64-v3/AVX2 artifacts. The
+   maintainer recommendation for 0.1.0 is portable artifacts only; users can
+   still build explicitly with `--no-default-features --features
+   antisequence/simd-avx2`.
+3. **first public version:** confirm `0.1.0` for both crates, or select a
+   different coordinated version before publication. The maintainer
+   recommendation is `0.1.0`: neither name has an earlier public release, the
+   APIs are intentionally pre-1.0, and the changelogs are already organized
+   around that boundary.
+
 Note: seqproc pins ANTISEQUENCE by git `rev` in `Cargo.toml`; the pin and
-lockfile were advanced to `aa8cb0ad` as part of this pass, so seqproc
-builds now include the ANTISEQUENCE fixes.
+lockfile now resolve to `a10d990e`, so seqproc builds include the complete
+ANTISEQUENCE review-fix series.
+
+### Post-fix verification evidence
+
+The historical review and its original red-gate table remain below so that the
+defects and the evidence that found them are not erased. They no longer
+describe the review-fix heads. The maintainer pass completed these gates on
+this host:
+
+| Gate | Post-fix result |
+| --- | --- |
+| ANTISEQUENCE portable library tests | **385/385 pass**, locked, with accelerated gzip enabled |
+| ANTISEQUENCE AVX2 library tests | **385/385 pass**, locked, using the mutually exclusive explicit AVX2 feature |
+| ANTISEQUENCE clippy/docs/downstream package gate | Warning-denied clippy and docs pass; README doc-test passes; the packaged crate builds and runs from an extracted clean-room downstream project |
+| seqproc complete all-target test run | **Pass**: 276 library, 9 anchor-set, 27 annotation, 19 benchmark-regression, 24 CLI, 58 compile, 1 differential, 6 error-contract, 2 error-handling, 12 layout, 12 lexer, 69 paper-chemistry, and 31 parser tests; both benchmark binaries also complete their smoke workloads |
+| seqproc explicit AVX2 gate | **276/276 library tests pass** against ANTISEQUENCE `a10d990e` |
+| seqproc clippy/docs/MSRV | Warning-denied all-target clippy and docs pass; all-target check passes on Rust 1.88 |
+| Formatting and manifests | `cargo fmt --check`, `git diff --check`, locked metadata (including seqproc all-features), `cargo dist plan`, and `cargo dist generate --check` pass |
+| Package boundaries | seqproc lists exactly 85 intended files; ANTISEQUENCE lists 67. Planning documents, the Astro site, generated dependencies, and build output do not enter either source package |
+| Documentation site | Astro production build passes (20 generated pages plus search index) |
+
+The only package gate that cannot be completed before publication ordering is
+seqproc's registry-resolved `cargo publish --dry-run`: its manifest correctly
+requires ANTISEQUENCE `0.1.0`, which does not yet exist on crates.io. The
+release script therefore publishes and verifies ANTISEQUENCE first, waits for
+registry resolution, and only then performs seqproc's full package/publish
+dry-run. This is an operational release gate, not an unresolved source defect.
+
+**Current disposition:** the implementation blockers and P1 code-quality
+findings from this review are resolved. Do not publish yet: publication still
+requires the three product decisions above, promotion of the reviewed `dev`
+heads to `main`, registry-order verification, artifact smoke tests, and the
+Bioconda release procedure. The original recommendation below is retained as
+the reviewer's disposition of the pre-fix heads and is superseded for the
+post-fix implementation by this section.
 
 ---
 
