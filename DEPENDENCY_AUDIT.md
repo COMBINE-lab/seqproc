@@ -24,9 +24,10 @@ The audit found four actionable issues in the old development/release closure:
 The lockfile is refreshed to current compatible releases, the direct lower
 bounds for `anyhow` and `tracing-subscriber` exclude the vulnerable releases,
 and the one `tempdir` test is migrated to the already-used `tempfile` crate.
-The exact ANTISEQUENCE git dependency now also declares crates.io version
-0.1.0, which Cargo requires when packaging seqproc; Cargo removes the git
-locator from the published package and resolves that version from crates.io.
+ANTISEQUENCE 0.1.0 was published first, and seqproc now resolves that immutable
+crates.io release directly. The reviewed git implementation is preserved by
+ANTISEQUENCE tag `v0.1.0` and release commit
+`8d167f0188051849a5656ed313a40938ed21c098`.
 The refreshed runtime closure had zero known RustSec vulnerabilities at the
 recorded RustSec revision. The larger package count includes the test-only
 JSON-Schema validator added after review.
@@ -47,7 +48,7 @@ dependencies; the ANTISEQUENCE audit covers its backend dependencies.
 
 | Dependency | Resolved | Latest | Decision |
 |---|---:|---:|---|
-| `antisequence` | 0.1.0 @ `a10d990` | 0.1.0 release candidate | Keep exact git pin for review; publish it before seqproc. Portable SIMD plus explicit accelerated-gzip features. |
+| `antisequence` | 0.1.0 | 0.1.0 | Published and resolved from crates.io; baseline SIMD plus explicit accelerated-gzip support, with seqproc selecting the release-SIMD backend by default. |
 | `rustc-hash` | 1.1.0 | 2.1.3 | Defer: hot-path maps/sets need performance and determinism A/B tests. |
 | `tracing-subscriber` | 0.3.23 | 0.3.23 | Updated; current and no longer vulnerable. |
 | `tracing` | 0.1.44 | 0.1.44 | Keep; current. |
@@ -67,7 +68,7 @@ dependencies; the ANTISEQUENCE audit covers its backend dependencies.
 | `criterion` (dev) | 0.5.1 | 0.8.2 | Defer: benchmark harness migration is not release-critical. |
 | `proptest` (dev) | 1.11.0 | 1.11.0 | Keep; current. |
 | `flate2` | 1.1.9 | 1.1.9 | Keep; current zlib-rs backend for gzip streams and tests. |
-| `jsonschema` (dev) | 0.50.0 | 0.50.0 | Added without resolver/network features; validates every emitted summary deeply against schema 1.12.0. |
+| `jsonschema` (dev) | 0.50.0 | 0.50.0 | Added without resolver/network features; validates every emitted summary deeply against schema 1.13.0. |
 
 ANTISEQUENCE separately records performance-sensitive backend candidates:
 `needletail` 0.7, `rapidgzip-core` 0.3, rand/rand_xoshiro, and rustc-hash 2.
