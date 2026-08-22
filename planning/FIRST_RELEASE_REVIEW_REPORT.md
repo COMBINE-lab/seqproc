@@ -5,8 +5,8 @@
 `baa4bc2` (dev)
 **Final re-review packet prepared:** 2026-08-22
 **Final implementation boundary:** seqproc
-`4e0de317bdf82a0c9b52dd97213a6e8ba7a5ed03`, including an exact dependency
-pin to ANTISEQUENCE `b5fecee6feb19f53da3dfd0dcd7fa56ab8023612`.
+`388777b5f44f668f008736c92baf0b004afe2351`, including an exact dependency
+pin to ANTISEQUENCE `272ba77fa31fc09a413036a5feb236a43ec2cae1`.
 Subsequent seqproc commits are review-document-only and do not change compiled
 source, manifests, or lockfiles.
 **Scope:** independent technical review requested by
@@ -33,10 +33,11 @@ The implementation work is concentrated in these commits:
 
 | Repository | Concern-fix commits | Release/architecture commits |
 | --- | --- | --- |
-| seqproc | `1fca512`, `6b6da77`, `c49a90e`, `1925425` | `1141162`, final ANTISEQUENCE pin `4e0de31` |
-| ANTISEQUENCE | `5b30b5c`, `053b924`, `5672682`, `46065aa` | `477462b`, `1d1c10d`, CI-only follow-ups `a835e66`, `b5fecee` |
+| seqproc | `1fca512`, `6b6da77`, `c49a90e`, `1925425`, final blocker repair `2c26678` | `1141162`, final ANTISEQUENCE pin/pre-tag cleanup `770499d`, cargo-dist-compatible baseline selection `388777b` |
+| ANTISEQUENCE | `5b30b5c`, `053b924`, `5672682`, `46065aa`, `5468b3f`, `0c16ed2` | `477462b`, `1d1c10d`, final review cleanup `272ba77` |
 
-The final hosted fast paths are green:
+The previously hosted fast paths were green before the final local blocker
+closure; the final `dev` pushes will be checked again by the next review pass:
 
 - ANTISEQUENCE Fast CI run
   [32552480133](https://github.com/COMBINE-lab/ANTISEQUENCE/actions/runs/32552480133)
@@ -80,7 +81,7 @@ script.
 
 ---
 
-## Final independent re-review (2026-08-22, boundary seqproc `4e0de31` / ANTISEQUENCE `b5fecee`)
+## Independent re-review that produced the final blocker list (2026-08-22, boundary seqproc `4e0de31` / ANTISEQUENCE `b5fecee`)
 
 ### Verdict
 
@@ -227,30 +228,385 @@ suites pass (these include the randomized `edit_search` vs
 (score, start, end) triples), clippy clean, and both benchmark workloads
 above produce byte-identical outputs against the pre-fix binary.
 
+### Maintainer resolution of the final re-review blockers (2026-08-22)
+
+All nine blockers above are now resolved. The ANTISEQUENCE corrections span
+`5468b3f`, `0c16ed2`, and final review head `272ba77`; seqproc pins the exact
+full revision `272ba77fa31fc09a413036a5feb236a43ec2cae1`. The final seqproc
+implementation commit and packaged-artifact evidence are recorded in the
+verification table below.
+
+| Blocker | Resolution and design decision | Regression/evidence |
+| --- | --- | --- |
+| 1, modern output permissiveness | Added an explicit `OutputCompatibility` policy. `RunConfig` and `seqproc run` default to exact arity; only the deprecated flag-only invocation selects `LegacyPrefix`. Non-demultiplexed runs must have at least one non-`Discard` primary target. | CLI tests prove modern paired `--out1` fails, an all-discard topology fails, and the legacy flag-only paired prefix remains byte-correct. |
+| 2, ignored `--unassigned2` | Removed pre-validation truncation from legacy unassigned-target construction. A hole is represented as `Discard`, so `--unassigned2` on a one-lane geometry becomes a two-target topology and is rejected. | CLI regression checks the typed arity error, that the primary output is never created, and that a pre-existing `unassigned2` file is untouched. |
+| 3, unsafe graph finalization | Added an atomic graph lifecycle (`ready` → `running` → `finished`). Numeric pipeline configuration is validated before execution is claimed; successful execution alone recursively finalizes nodes. Runtime failure marks the graph terminal without calling output `finish()`. Explicit repeated `finish()` remains idempotent, while execution after completion is typed as `GraphAlreadyFinished`. | ANTISEQUENCE tests cover retry after invalid configuration without touching an output, no finalization/truncation after malformed FASTQ, rejection of a second execution, successful zero-record constant output, and final-flush failures. seqproc's malformed-FASTQ contract test now protects a pre-existing output sentinel. |
+| 4, pre-main v3 failure | Linux x86_64 release binaries now emit the standard `GNU_PROPERTY_X86_ISA_1_NEEDED` note directly, with the cumulative baseline/v2/v3 mask `0x7`. This is loader-visible before globally optimized Rust code can execute and works with the older GNU linker on the release host, which silently ignored `-z x86-64-v3`. macOS retains the documented best-effort raw guard because Mach-O has no equivalent contract in this release. | The reusable release gate extracts the actual cargo-dist archive and parses the ELF64 `.note.gnu.property` structure with `scripts/verify_x86_64_v3_elf.py`; the final local artifact reports mask `0x7`. |
+| 5, native under-reporting | `cpu_floor` and the raw CPUID/XGETBV guard are now driven by `SEQPROC_TARGET_FEATURES`, not a hardcoded v3 list. The checker covers every feature enabled on the supported native build host, including AVX-512 register-state requirements. `target-cpu=native` provenance is explicitly labeled non-portable. | Native `--version --verbose` reports the build-host contract and exact feature list; host compatibility is tested. Fixed artifacts still report the reproducible v3 contract. |
+| 6, oracle-cache hot path | See the correction to the reviewer fix below. The cache is now both sparse **and optional**: an operation-level predicate is evaluated once per batch/read path, and the default leftmost/statistics-off path performs no oracle calls, inserts, hashing, or allocation. | The complete ANTISEQUENCE suite passes; the active cache remains keyed only by seed-hit pattern indices. |
+| 7, edit tie resolution | The reviewer's window and monotone-stop proof is retained with overflow-safe `saturating_add`. Explicit 10 kb repetitive-read regressions cover both the ≤64 bp Myers path and the >64 bp DP/long-Myers paths and require the exact leftmost `(score,start,end)` result. | At final ANTISEQUENCE head `272ba77`, 395/395 baseline and 399/399 release-SIMD/accelerated all-target tests pass, including the existing 100,000-case short oracle and 2,000-case long-Myers differential matrices. |
+| 8, mixed-length Hamming seeding | The shared seed length is now the minimum of each literal's independently safe `MatchType::k(pattern.len())`. If any valid pattern has no guaranteed exact seed, dispatch falls back to exhaustive verification. This retains seeding whenever the common bound is sound rather than disabling all mixed-length acceleration. | End-to-end regression uses three 8 bp literals plus a 16 bp literal under `HammingSearch(Count(8))`; the accepted query has no old 8 bp seed and reproduces the former false negative. |
+| 9, real cargo-dist provenance | Added a cargo-dist `global-artifacts-jobs` gate (generated, not hand-edited CI). It downloads the actual x86_64 Linux archive before hosting, runs the packaged executable, checks compiler target/floor/SIMD provenance, and parses the ELF note. | `.github/workflows/verify-release-provenance.yml`, generated `.github/workflows/release.yml`, and the exact final-head local cargo-dist artifact smoke described below. |
+
+#### Evaluation of the reviewer's two fixes
+
+**Sparse positional-oracle cache (blocker 6): sound idea, incomplete hot-path
+implementation.** Replacing the dense O(pattern-count) vector with an
+`FxHashMap` was the correct data structure for the active oracle: its size is
+now proportional to seed-hit patterns. However, the submitted implementation
+still called `reference_position_candidate` and inserted `pattern_idx -> None`
+for every surfaced pattern on the default path. The empty map itself allocated
+nothing, but the first insertion allocated and every candidate paid hashing;
+the review text's “default path pays zero” claim therefore did not hold. The
+final implementation constructs `Option<FxHashMap<...>>` only when detailed
+statistics or a non-leftmost position policy can activate the exhaustive
+oracle. This is both sound and the lowest-overhead design within the existing
+matcher: the common path is a predictable `None` branch with no per-candidate
+oracle/cache work, while the uncommon path retains sparse memoization.
+
+**Bounded reverse-DP tie resolution (blocker 7): sound and appropriate.** The
+proof is exact: an alignment of an m-base pattern at edit distance d spans at
+most m+d text bases, and candidate ends are monotone. Once a later end's
+earliest possible start is not smaller than the current best start, it cannot
+win the lexicographic `(start,end)` order. The inclusive-end long-Myers path
+correctly uses `end + 1`; all window additions are now saturating. The current
+long path can still retain O(n) equal-best end indices before traceback, so a
+streaming/end-compressed representation is a possible future memory
+optimization, but the pathological O(n²m) time behavior is gone and the
+remaining linear memory is bounded by read length. No semantic shortcut or
+approximate tie behavior was introduced.
+
+### Final comprehensive re-review, second pass (2026-08-22, reviewer; boundary seqproc `2c26678`+working tree / ANTISEQUENCE `272ba77`)
+
+**Verdict: the closure work is genuine and mostly excellent — but four new
+findings must be fixed before tagging, one of which will fail the release
+CI itself.**
+
+Gates reproduced on this host: ANTISEQUENCE `272ba77` fmt/clippy clean,
+**397/397** baseline and **399/399** release-SIMD library tests
+(warning-denied, accelerated-gzip enabled); full seqproc suite green
+against the final pin (28 CLI tests, all other suites unchanged);
+`--version --verbose` on a native build now reports the truthful
+non-portable floor and exact feature list; a `config-release`-equivalent
+build carries the `GNU_PROPERTY_X86_ISA_1_NEEDED` mask `0x7` note and
+passes `scripts/verify_x86_64_v3_elf.py`; a failed run on malformed input
+no longer truncates a pre-existing output file (re-verified with the
+original sentinel reproduction).
+
+**Confirmed genuinely closed** (verified in code and/or by execution):
+modern `run` exact-arity + all-discard rejection with the legacy prefix
+preserved for flag-only invocation (the `--file1` alias hole is closed
+structurally by `args_conflicts_with_subcommands` — load-bearing, deserves
+a comment); `--unassigned2` over-arity rejection with pre-existing files
+untouched; the feature-string-driven CPUID/XGETBV guard (all 44 features
+of this native host mapped, correct AVX-512 XCR0 state bits, leaf
+fallbacks fail closed); the ELF ISA note — engineered *better* than the
+report describes (a hand-written `global_asm!` note rather than a link
+flag, correct type/mask, OR-merged by GNU ld); the release-provenance
+workflow (really downloads the artifact, runs it, greps the contract,
+parses the note, and gates `host` on success); CI restoration of
+paper-chemistry/diff/clippy to PR triggers; the graph lifecycle
+compare-exchange (two concurrent runs cannot both win; config validated
+before execution claimed; `GraphAlreadyFinished` typed); mixed-length
+Hamming seeding (per-literal `k`, min over literals — the pigeonhole proof
+holds, uniform-length sets keep their width, and the regression test
+reproduces the old false negative); position-quality construction
+rejection with the predicate deduplicated structurally; the
+`TryOrientationOp` rework (namespaced `__as_to_{id}` key, typed errors,
+orientation semantics byte-identical, plus a latent `done`-branch bug
+fixed beyond what was asked); `k()` totality for alignment thresholds
+including NaN/∞; `MatcherPlan` re-documented as advisory; the vacuous
+non-ACGT test replaced with a real coordinate-asserting one; no weakened
+or deleted tests in either repo.
+
+**New release blockers found in this pass (4):**
+
+1. **The release tag build will fail.** `scripts/verify_simd_equivalence.sh`
+   drives every fixture through `seqproc run … --out1` — now Strict — and
+   three fixtures (`match`, `edit_match`, `bounded_match`) have no `->`
+   transform and emit two reads. Reproduced: exit 2, and the script is
+   `set -euo pipefail`. This is the byte-identity gate in the
+   comprehensive `baseline` job that runs on tag push. Fix: give those
+   three invocations an `--out2`, or drive them through the legacy
+   flag-only form as `diff_tests` does — then **run the script**, not just
+   `cargo test`.
+2. **Demultiplexed runs silently discard `--out1/--out2/--out3`** (exit 0,
+   file never created): both new topology gates short-circuit on
+   `config.demux.is_none()`, and the demux branch never consumes
+   `primary_targets`. Reproduced. This is the same silent-output-loss
+   class the commit closes for non-demux runs. Fix: error (or loudly warn)
+   when primary outputs are combined with `--demux-map`.
+3. **`finish()` errors are not sticky, and the failure path discards
+   finalization errors** (ANTISEQUENCE `graph.rs`): the state swaps to
+   `FINISHED` before the work, so a second `finish()` returns `Ok(())`
+   even when the first failed — a false "data is on disk" signal — and a
+   failed run drops footer/flush errors entirely (Drop swallows them),
+   so an ENOSPC root cause behind a broken-pipe cancellation is
+   undiagnosable and a truncated-but-valid `.gz` can pass silently.
+   Fix: make the finish error sticky and aggregate finalization errors on
+   the failure path as the pre-lifecycle code did. Related documentation
+   gap: "failed execution does not finalize outputs" holds only for
+   failures before the first output write; once streaming has begun,
+   `File::create` has already truncated the destination — inherent to
+   streaming, but the docs/CHANGELOG should say so.
+4. **Unconditional `compare_exchange` on the `run_one`/`try_run_one` hot
+   path**: nested `TryOp`/`WhileOp` graphs execute it once per read; a
+   failing CAS still takes the cacheline exclusively, so N pipeline
+   workers sharing one nested graph (exactly seqproc's unassigned-read
+   routing) ping-pong a previously read-only line. Fix is mechanical — a
+   `Relaxed` load fast path that only CASes when `READY` — then re-run the
+   benchmark suite.
+
+**Should fix before tagging (cheap):** under-arity unassigned targets
+still silently drop mates (`--unassigned1` alone on a paired geometry;
+mirror of the fixed case); both CHANGELOGs omit the user-visible breaking
+changes (strict `run` arity, zero-output rejection, unassigned arity, the
+graph lifecycle/`GraphAlreadyFinished`/retry-impossible trade-off, the
+`MatchAnyOp::new` panic-surface widening, the mixed-length seeding
+correctness fix) and ANTISEQUENCE's rewrote its already-folded 0.1.0
+section while leaving `[Unreleased]` empty; the resolution table's test
+counts (390/392) are stale — actual 395/397 (397/399 with
+accelerated-gzip); qualify the README `cargo install --locked seqproc`
+line (until ANTISEQUENCE 0.1.0 is published from `272ba77`, a registry
+build resolves a different backend than this review validated); add a
+seqproc-level `compile_error!` for `baseline-simd`+`release-simd` (the
+inherited message tells the portable-build user to pick `release-simd`);
+`build.rs` drops `-C target-feature=+X` flags from provenance and the
+guard (fidelity regression vs. the old `CARGO_CFG_TARGET_FEATURE` path);
+comment that `linker = "gcc"` is load-bearing (rust-lld silently discards
+the ISA note — verified: the lld-linked default build lacks the note, the
+gcc-linked build carries it); a `const` assertion for the 24-byte
+`InlineString` boundary of `__as_to_{id}`.
+
+**Acceptable to defer with issues:** finalization-error reporting nuances
+beyond blocker 3 (NEW-1), no-retry-after-transient-failure (documented
+trade-off, seqproc unaffected), `run_one`-then-`run` ordering strictness,
+position-quality silently inert for Exact/Hamming at non-Search scopes
+(asymmetric with the new Edit rejection), the CPUID guard's fail-open on
+unknown future features (add a test that every `SEQPROC_TARGET_FEATURES`
+entry is in the covered set), `read_rest_avx2` page-trick over-read
+(masked-correct, blocks Miri/ASAN), provenance verification for
+aarch64/macOS artifacts, `output_compatibility` in a future schema 1.14,
+and the unpoliced `pub interpret_with_unassigned` entry point.
+
+**Bottom line:** after blockers 1–4 and the cheap items above, this
+codebase is ready for the release procedure (merge to `main`, final-head
+gates, ANTISEQUENCE publish, registry-resolved seqproc dry-run, publish,
+tag — the provenance gate will then verify the artifact automatically) and
+the two open user decisions (stdout `EPIPE` policy; confirm `0.1.0`)
+remain the only policy items.
+
+### Maintainer resolution of the second-pass review (2026-08-22)
+
+All four new blockers and every cheap pre-tag item in the second-pass review
+have been addressed. The reviewer implemented blockers 3 and 4 in
+ANTISEQUENCE `3617472`; the maintainer audited those changes and refined the
+hot-path load in `773e1ce`. seqproc pins the latter exact revision. The
+historical findings above remain verbatim so the next reviewer can reproduce
+the audit trail rather than seeing only the resolved state.
+
+| Second-pass blocker | Resolution | Direct evidence |
+| --- | --- | --- |
+| 1, strict `run` broke the SIMD release gate | `verify_simd_equivalence.sh` now supplies `--out2` for the three paired, untransformed fixtures (`match`, `edit_match`, and `bounded_match`). It compares both lanes between the generic and tuned binaries while retaining the historical lane-1 expected-output comparison. This uses the modern strict interface rather than hiding the incompatibility behind the deprecated CLI. | The complete script was executed on the final source: **9/9 fixtures byte-identical** between SSE2 and x86-64-v3/AVX2; both lanes are checked for all three paired fixtures. |
+| 2, demultiplexing silently ignored fixed outputs | Output topology validation now rejects any non-`Discard` primary target combined with demultiplexing using typed `PrimaryOutputsWithDemultiplexing`, before any primary file or demultiplexing directory is created. Explicit all-`Discard` primary topology remains valid because it requests no lost destination. | CLI regression checks exit status 2, the typed diagnostic, and absence of both the requested primary file and demultiplexing directory. |
+| 3, non-sticky and discarded finalization errors | See the detailed reviewer-fix evaluation below. ANTISEQUENCE now has explicit `FINISHING`/`FINISH_FAILED` states and a recursive `finish_existing` hook. Failed execution finalizes only already-open writers, aggregates execution and finalization errors, and never creates an untouched output or materializes a constant output. A repeated `finish()` after failure returns typed `GraphFinalizationFailed`. | Tests force a sticky flush failure and a simultaneous parse-plus-flush failure; all nested control-flow operations forward `finish_existing`. Final ANTISEQUENCE counts are **397/397** baseline and **401/401** release-SIMD/accelerated all-target tests. |
+| 4, lifecycle CAS on every nested-read call | `begin_or_continue_execution` first polls the state with a read-only `Relaxed` load and returns immediately for `RUNNING`; only a possible `READY` transition attempts the `AcqRel` CAS. The CAS remains the synchronization/ownership operation, while ordinary per-read polling no longer requests cacheline exclusivity. | Source audit confirms there is no CAS on the ordinary running path. Both complete ANTISEQUENCE feature matrices pass, and unchanged seqproc protocols remain covered by the full byte-equivalence and regression suites. |
+
+#### Evaluation of the reviewer's blocker-3 and blocker-4 implementation
+
+**Sticky finalization and failure aggregation: sound and appropriately
+conservative.** A single generic sticky error is preferable to retaining an
+arbitrary I/O error object indefinitely inside every graph: the first caller
+receives the complete underlying failure(s), while subsequent callers receive
+the typed fact that finalization failed and can never mistake the graph for
+durable output. Separating `finish_existing` from `finish` is necessary and
+well designed. A default no-op prevents failure handling from creating new
+side effects; file/demultiplexing, borrowed-writer, JSON, and every nested
+control-flow node explicitly flush or forward only state that already exists.
+The failed-run path preserves both root causes through aggregation. The
+documentation also now states the unavoidable streaming boundary: an output
+that was opened before a later failure may already have been truncated or
+partially written, whereas an untouched output is not created merely by
+failure cleanup. No simpler implementation provides all three properties
+(sticky status, no new failure-path outputs, and complete I/O diagnostics).
+
+**Read-before-CAS lifecycle polling: sound, with one maintainer refinement.**
+The reviewer's structure correctly removes exclusive cacheline traffic from
+the common `GRAPH_RUNNING` path. The initial implementation used an `Acquire`
+load; the maintainer changed this to `Relaxed`. Polling does not publish or
+consume graph data, and atomic coherence plus the subsequent `AcqRel` CAS
+provides the required state-transition synchronization. This is the smallest
+hot-path operation consistent with the lifecycle. A stale `READY` observation
+only causes the CAS to fail and observe the current state; same-thread calls
+after `finish` remain ordered by atomic coherence. Concurrent execution and
+finalization are not a supported public protocol and are independently
+protected by the finishing state.
+
+#### Resolution of the second-pass cheap items
+
+| Finding | Disposition |
+| --- | --- |
+| Under-arity unassigned output silently dropped a mate | Nonempty unassigned topology must now equal input arity exactly. A typed `UnassignedArityMismatch` is raised before any output is created; an intentionally discarded lane is expressed explicitly as `Discard` (`/dev/null` in the CLI). Paired-input regression covers the former `--unassigned1`-only loss. |
+| User-visible changes missing from changelogs | Both 0.1.0 changelogs now record strict modern output topology, exact unassigned topology, demux/fixed-output conflict, graph single-use lifecycle, sticky/aggregated finalization, `MatchAnyOp::new`'s fallible-construction boundary, and mixed-length Hamming correctness. These entries stay in the coordinated first-release section because no earlier crate version was published. |
+| README advertised an unavailable registry build | README and website now qualify `cargo install --locked seqproc`: it applies after the coordinated exact seqproc/ANTISEQUENCE 0.1.0 publication; until then, users are directed to the reviewed checkout. |
+| Requested seqproc-local baseline/release feature conflict | A local `baseline-simd` passthrough was implemented and tested, then deliberately removed. cargo-dist performs all-feature workspace discovery before its configured build; the passthrough activates ANTISEQUENCE's mutually exclusive same-version SSE2/AVX2 dependency aliases and makes `cargo metadata` fail before release compilation. The supported selector remains `--no-default-features --features antisequence/baseline-simd`; ANTISEQUENCE's own `compile_error!` is still the authoritative exclusivity guard. This is an empirical cargo-dist compatibility decision, not an omitted check. |
+| Explicit `-C target-feature=+X,-Y` missing from provenance/guard | `build.rs` now parses both split (`-C`, `target-feature=...`) and joined (`-Ctarget-feature=...`) encoded rustflags, applies ordered additions/removals to the CPU preset, and sorts/deduplicates the exact resulting feature contract used by verbose provenance and the runtime guard. |
+| GNU linker requirement unexplained | `.cargo/config-release.toml` documents that GNU ld is load-bearing because it preserves/merges the hand-written GNU ISA-needed note; the reviewed rust-lld silently drops it. |
+| Internal orientation key near `InlineString` limit | ANTISEQUENCE now has a compile-time size assertion for the 24-byte `__as_to_{id}` boundary. |
+| `args_conflicts_with_subcommands` looked incidental | The parser declaration now documents this as a load-bearing compatibility boundary preventing legacy aliases such as `--file1` from bypassing strict subcommand semantics. |
+| Stale counts and docs | Counts, exact pins, command examples, output-topology docs, failure/streaming caveats, and installation instructions are refreshed in this report, both changelogs, README, graph API documentation, and the Astro site. |
+
+The explicitly deferrable follow-ups in the second-pass review remain
+deferrals, not hidden release claims: richer retained finalization diagnostics,
+retry semantics after transient failure, `run_one`/`run` ordering policy,
+position-quality behavior outside search scope, fail-closed handling for
+future unknown CPU features, sanitizer-friendly AVX2 tail loading, non-Linux
+artifact provenance, a future report-schema compatibility field, and tighter
+visibility around the low-level interpreter entry point. None recreates a
+silent data-loss or incorrect-match path in the supported seqproc workflow.
+
+### Final release-readiness assessment (2026-08-22, reviewer)
+
+**Verdict: READY FOR RELEASE**, pending only the two user-owned policy
+decisions and the mechanical release procedure. No open finding in either
+repository blocks tagging.
+
+**Release-candidate boundary.** ANTISEQUENCE `dev` at
+`773e1ced7bae6170b1358a2d2198f1c152109624` (the reviewer's sticky-finalization
+and read-only-polling implementation `3617472`, plus the maintainer's
+`Relaxed`-load refinement). seqproc `dev` at the commit series ending with
+`9ed2d87` (output-topology and provenance closures) and `4566953` (the exact
+dependency pin); commits after `4566953` are documentation-only and change no
+compiled source, manifest, or lockfile.
+
+**How the second-pass blockers closed.** The work was completed
+cooperatively: the maintainer fixed blockers 1 (SIMD-gate arity) and 2
+(demux/primary-output conflict) plus every cheap item; the reviewer fixed
+blockers 3 (sticky, aggregated finalization with the `finish_existing`
+failure-path hook) and 4 (read-only lifecycle polling) in ANTISEQUENCE, which
+the maintainer then audited and refined. Each side's changes were
+independently reviewed by the other — no fix in this pass shipped unreviewed.
+
+**Verification on the final boundary (this host).**
+
+| Gate | Result |
+| --- | --- |
+| ANTISEQUENCE lib tests, baseline + accelerated-gzip, `-D warnings` | 399/399 (includes new sticky-finish and failed-run-aggregation regressions) |
+| ANTISEQUENCE lib tests, release-SIMD + accelerated-gzip, `-D warnings` | 401/401 |
+| ANTISEQUENCE fmt / clippy all-targets | clean / zero errors |
+| seqproc full `--no-fail-fast` suite at the final pin | all suites green, including 30/30 CLI-workflow tests (demux-conflict and exact-unassigned-arity regressions included) |
+| `scripts/verify_simd_equivalence.sh`, executed end to end | 9/9 fixtures byte-identical between SSE2 and x86-64-v3/AVX2, both lanes compared for the paired untransformed fixtures |
+| `cargo fmt --check`, `cargo dist plan`, `cargo dist generate --check` | clean / exit 0 / exit 0 |
+| ELF ISA note in a release-config build | present, mask `0x7`, `verify_x86_64_v3_elf.py` passes; absent (as expected and documented) under rust-lld local builds |
+| Failed-run output preservation | re-verified: pre-existing outputs untouched by input-stage failures; finalization errors aggregated, sticky on repeat |
+| crates.io namespaces | both still 404/unclaimed |
+
+**What remains before the tag — all procedural, none code:**
+
+1. **Two user decisions** (unchanged): stdout `EPIPE` exit-code policy
+   (recommendation stands: exit 0 for stdout EPIPE only), and confirmation of
+   `0.1.0` as the coordinated first version (recommendation: yes).
+2. **The release procedure itself**, in the order the scripts already
+   encode: merge both reviewed `dev` branches to `main`; rerun the locked
+   gates on the merge commits; publish ANTISEQUENCE and wait for registry
+   resolution; run seqproc's registry-resolved `cargo publish --dry-run`
+   (the one gate that structurally cannot run earlier); publish seqproc; push
+   the tag; let the generated release workflow build artifacts and the
+   provenance job verify the x86_64 Linux archive; smoke-test the remaining
+   artifacts; then the Bioconda recipe per the handoff (portable build:
+   `--no-default-features --features antisequence/baseline-simd` with
+   neutralized rustflags).
+3. **Known accepted limitations to carry into the release notes**, already
+   documented in changelogs/docs: a graph executes at most once (no
+   retry-after-failure); an output the run began writing is truncated by that
+   streaming even if the run later fails; the ELF loader enforcement of the
+   v3 floor requires glibc ≥ 2.33 (older loaders fall back to the best-effort
+   CPUID guard); artifact provenance is machine-verified for x86_64 Linux
+   only; and the deferred-follow-up list above.
+
+**Residual-risk judgement.** The remaining risk surface is the one any first
+release carries: paths only real-world data exercises (exotic FASTQ corner
+cases, unusual filesystems, pre-AVX hosts on old glibc) and the deferred
+items, none of which can silently lose reads or misreport success in the
+supported workflows — every such path found across three review passes now
+either works, errors loudly with a typed diagnostic, or is documented as a
+contract boundary. The review's recurring failure mode (fixes validated only
+as far as the tests reached) was closed in this pass by executing the actual
+release gates — the equivalence script, the dist checks, the ELF verification
+— rather than the test suite alone; the release procedure should preserve
+that habit end to end.
+
+### Critical analysis of the blocker-6 cache design (2026-08-22, reviewer)
+
+Questions raised: is the sparse-map fix optimal; is a fresh map created per
+read; would a worker-level cache or an epoch/versioned map be better?
+
+**Answers.** The `cd4a9e4` fix did create a fresh `FxHashMap` per read, and
+— the real inefficiency — inserted a cached `None` per distinct seed-hit
+pattern even when the oracle was inactive, so the default path paid one
+malloc/free per read plus hashing per seed hit for nothing.
+`FxHashMap::default()` itself is allocation-free; the first insert is not.
+The optimal shape is not a better map but **no map**: every input to the
+oracle-activity decision (position policy, match scope, metric, the
+detailed-statistics flag) is read-invariant, so activity can be resolved
+once per read and the cache and oracle calls skipped entirely when off.
+The maintainer's follow-up (`5468b3f`, `uses_reference_position_oracle` +
+`Option<FxHashMap>` via `.then(..)`) implements exactly this and is the
+right design.
+
+**On worker-level caching and epoch maps:** a thread-local map reused with
+`clear()` is *worse* here, not better — hashbrown's `clear()` costs
+O(high-water capacity), so a single degenerate read (low-complexity
+sequence seed-hitting a large fraction of the whitelist) permanently
+inflates the map and every subsequent read pays that memset, quietly
+re-creating the per-read O(big-constant) pathology. An epoch/versioned map
+(stamp entries with a per-read counter; stale entries read as absent)
+would eliminate that risk, but it is complexity spent on the *diagnostic*
+path only: with the gate in place, the common path does zero map work, and
+on the active path a fresh small map is O(distinct-hit patterns) and
+robust by construction. Empirically the map overhead was already noise —
+the 400k × 20k workload spends ~385 µs/read total, and a malloc plus a few
+FxHash ops is ~100 ns (<0.05%) — so the gate's value is architectural
+(zero cost regardless of seed-hit counts), not a measurable speedup.
+Recommendation: keep `5468b3f`'s design; do not add epoch machinery unless
+active-path profiling ever shows map churn.
+
+**One behavioral divergence introduced by the gate (should fix):**
+`uses_reference_position_oracle` mirrors the `Ok(None)` early-outs of
+`reference_position_candidate` but not its `Err` backstop. For
+`PositionAmbiguityPolicy::Quality` combined with an **alignment** metric,
+the candidate previously returned a hard error on the first seed hit
+("position quality policy requires exact or Hamming search"); the gate
+evaluates false for alignment metrics, so that configuration now silently
+proceeds with the optimized path and the quality policy is ignored.
+seqproc's compiler blocks this combination, and `MatchAnyOp::try_new`
+rejects the *pattern*-axis quality/edit pairing — but nothing in
+ANTISEQUENCE validates the *position*-axis policy against the metric at
+construction, so direct library users lose the only guard. Recommended
+fix: reject position-quality with non-Exact/Hamming metrics in `try_new`
+(making the runtime backstop dead code and the gate exactly correct), and
+add a unit test asserting `uses_reference_position_oracle` agrees with
+`reference_position_candidate`'s early-out prefix across the spec matrix
+so the duplicated predicate cannot drift.
+
+**Maintainer resolution:** fixed in ANTISEQUENCE `0c16ed2`. Construction now
+rejects position-quality for every non-exact/non-Hamming metric before backend
+planning, while the runtime check remains defensive. The policy/metric matrix
+is covered directly, so the optional-cache gate cannot silently turn an
+invalid direct-library configuration into an accepted one.
+
 ### Cheap pre-tag improvements (should-fix, not blocking)
 
-- Restore `paper_chemistry_tests`, `diff_tests`, and clippy to
-  pull-request-triggered CI: commit `1925425` moved them to a workflow that
-  runs only on dispatch/tags/monthly cron, so the release's headline
-  byte-identity criterion currently runs on no PR.
-- Namespace `_batch_idx` and demote the four `.expect()`s in
-  `try_orientation_op.rs` (nested/user-attr collision panics).
-- Add a real-filesystem `/dev/full` test for `OutputFastqFileOp` (plain and
-  gzip), a byte-level (not flag-level) optimizer-ablation differential test,
-  and a nested-`done` retention regression test.
-- Validate `identity/overlap ≤ 1.0` in `MatchType::k()` (alignment-metric
-  underflow remains); document `MatcherPlan.backend` as advisory or make
-  dispatch consult it; strengthen the vacuous
-  `test_short_hamming_lookup_falls_back_for_non_acgt_input`.
-- Correct stale `docs/graph-api.md` claims (statistics mutability; document
-  the `finish()` obligation for `run_one` consumers), fold the CHANGELOG
-  `[Unreleased]` section into 0.1.0, add a seqproc `baseline-simd`
-  passthrough feature, and document `cargo install --locked`.
-- Bioconda note for the future recipe: the source package defaults to
-  `release-simd` (AVX2) and the repo config uses `target-cpu=native`; the
-  recipe must build `--no-default-features --features
-  antisequence/baseline-simd` with neutralized rustflags to meet Bioconda's
-  portability baseline.
+All of this list was completed before the final handoff:
+
+| Review suggestion | Final disposition |
+| --- | --- |
+| Restore chemistry, differential, and clippy checks on pull requests | Restored in seqproc fast PR CI. The heavier comprehensive/release matrix remains separately scheduled, preserving the requested fast-versus-release CI split. |
+| Namespace orientation bookkeeping and remove `.expect()` panics | `TryOrientationOp` uses an operation-unique internal batch key, removes it on every accepted path, reports missing/type-invalid control state as typed graph errors, and has nested/collision regressions (`0c16ed2`). |
+| Add `/dev/full`, byte-level optimizer ablation, and nested-`done` coverage | Plain and gzip real-filesystem `/dev/full` failures, nested completion in both try operators, and optimized/unoptimized FASTQ byte equality are now explicit regressions. |
+| Validate alignment fractions, clarify matcher plans, strengthen non-ACGT test | `MatchAnyOp::try_new` rejects non-finite or out-of-range identity/overlap; `MatchType::k` remains total and underflow-free for direct callers. `MatcherPlan.backend` is documented as advisory execution planning with correctness fallbacks. The non-ACGT test now asserts a real fallback hit, a controlled miss, the selected plan, and the detailed match-distance histogram (`272ba77`). |
+| Correct graph docs, changelogs, baseline feature, and install docs | Graph statistics/finalization ownership is corrected; post-preprint release notes are folded into 0.1.0; README/site installation uses `cargo install --locked`. A first-class seqproc `baseline-simd` passthrough was implemented and tested, then deliberately removed: cargo-dist discovers the workspace with all package features, which activates ANTISEQUENCE's mutually exclusive same-version SSE2/AVX2 dependency aliases and makes `cargo metadata` fail before the configured release-only build can start. The supported baseline selector therefore remains the explicit `antisequence/baseline-simd`; this preserves both portable source builds and cargo-dist release generation without weakening ANTISEQUENCE's library default. |
+| Make the future Bioconda build portable | The handoff now specifies `RUSTFLAGS="-C target-cpu=x86-64" cargo install -v --locked --no-default-features --features antisequence/baseline-simd ...`, plus an in-package provenance check. This deliberately avoids both seqproc's default AVX2 backend and the checkout's host-native rustflags. |
 
 ### User decisions still open (unchanged from the maintainer's list)
 
@@ -411,9 +767,10 @@ contract auditable. Cargo multiversioning remains deferred until measurements
 show enough v3-versus-v4 benefit to justify multiple implementations.
 
 Note: seqproc pins ANTISEQUENCE by git `rev` in `Cargo.toml`; the pin and
-lockfile resolve to `b5fecee6feb19f53da3dfd0dcd7fa56ab8023612`, which defines the
-library-baseline/application-release SIMD feature split and includes the
-warning-denied all-target and separated documentation-test CI repairs.
+lockfile resolve to `272ba77fa31fc09a413036a5feb236a43ec2cae1`. That exact head
+contains the library-baseline/application-release SIMD split, all nine blocker
+repairs, the reviewed cache/DP corrections, the follow-up construction and
+nested-orientation protections, and the remaining pre-tag cleanup.
 
 ### Post-fix verification evidence
 
@@ -424,17 +781,17 @@ this host:
 
 | Gate | Post-fix result |
 | --- | --- |
-| ANTISEQUENCE baseline library tests | **386/386 pass**, locked, with accelerated gzip enabled |
-| ANTISEQUENCE release-SIMD library tests | **388/388 pass**, locked, using the mutually exclusive AVX2 backend |
+| ANTISEQUENCE baseline all-target tests | **395/395 pass**, locked, at exact final head `272ba77` |
+| ANTISEQUENCE release-SIMD/accelerated all-target tests | **399/399 pass**, locked, using the mutually exclusive AVX2 backend at exact final head `272ba77` |
 | ANTISEQUENCE clippy/docs/downstream package gate | Warning-denied clippy and docs pass; README doc-test passes; the packaged crate builds and runs from an extracted clean-room downstream project |
-| seqproc complete all-target test run | **Pass**: 276 library, 9 anchor-set, 27 annotation, 19 benchmark-regression, 24 CLI, 58 compile, 1 differential, 6 error-contract, 2 error-handling, 12 layout, 12 lexer, 69 paper-chemistry, and 31 parser tests; both benchmark binaries also complete their smoke workloads |
-| seqproc SIMD artifact gate | **278/278** tuned-default library tests and **25/25** CLI/report tests pass against ANTISEQUENCE `1d1c10d`; the final source-equivalent pin `b5fecee` passes the exact warning-denied seqproc library/binary check, while its source predecessor `a835e66` passes the exact all-target check. Warning-denied all-target clippy passes; verbose version provenance identifies both builds; all 9 checked-in FASTQ transformation fixtures are byte-identical between generic SSE2 and fixed x86-64-v3/AVX2 binaries and match expected output. |
-| seqproc cargo-dist profile smoke | The optimized `dist` profile built successfully from implementation commit `1141162`; the executable reports target `x86_64-unknown-linux-gnu`, compiler CPU target and floor `x86-64-v3`, SIMD backend `x86-avx2`, and the expected v3 target-feature set. |
+| seqproc complete source regression run | **Pass** on the final source/dependency graph: 278 library, 28 CLI workflow, 58 compile, 1 differential, 6 error-contract, 2 error-handling, 12 layout-algebra, 12 lexer, 69 paper-chemistry, and 31 parser tests, plus the remaining integration suites. The chemistry consistency case completed in 187.17 s rather than being skipped. Final head `388777b` changes only how the already-tested baseline dependency feature is named at the command line; its exact all-features metadata, cargo-dist plan/generation, and warning-denied baseline build also pass. |
+| seqproc SIMD source gate | The tuned default suite above passes against exact ANTISEQUENCE `272ba77`; the explicit `antisequence/baseline-simd` compatibility build is warning-denied and mutually exclusive with the default. The earlier exhaustive equivalence gate remains 9/9 checked-in FASTQ fixtures byte-identical. A local passthrough feature was rejected after an empirical cargo-dist metadata failure, as documented in the pre-tag disposition table. |
+| seqproc cargo-dist profile smoke | The optimized `dist` profile rebuilt successfully from exact final implementation `388777b` and exact ANTISEQUENCE pin `272ba77`. Archive SHA-256 is `50b7d096f0290064d6a3a7fd4e9c33fcef76ad5eba3d86541ce4a8c179e5ce34`. The packaged executable reports target `x86_64-unknown-linux-gnu`, compiler CPU target/floor `x86-64-v3`, SIMD backend `x86-avx2`, and the expected v3 target features; the independent ELF parser reads ISA-needed mask `0x7`. |
 | seqproc clippy/docs/MSRV | Warning-denied all-target clippy and docs pass; all-target check passes on Rust 1.88 |
 | Formatting and manifests | `cargo fmt --check`, `git diff --check`, locked metadata (including seqproc all-features), `cargo dist plan`, and `cargo dist generate --check` pass |
 | Package boundaries | seqproc lists exactly 87 intended files (including the new build script/provenance module); ANTISEQUENCE lists 67. Planning documents, the Astro site, generated dependencies, and build output do not enter either source package |
-| Documentation site | Astro production build passes (20 generated pages plus search index) |
-| Hosted fast CI at final pins | ANTISEQUENCE run `32552480133` passes on `b5fecee`; seqproc run `32552812463` passes on report-only head `fa9a34a` with the exact `4e0de31` dependency pin and saves the refreshed worker cache |
+| Documentation site | Astro production build passes under Node 22.22.3 (20 generated pages plus search index) |
+| Hosted fast CI before final cleanup | ANTISEQUENCE run `32552480133` passed on `b5fecee`; seqproc run `32552812463` passed on report-only head `fa9a34a`. The next reviewer should confirm the newly pushed final heads `272ba77` and `388777b` rather than treating these older hosted runs as final-pin evidence. |
 
 The only package gate that cannot be completed before publication ordering is
 seqproc's registry-resolved `cargo publish --dry-run`: its manifest correctly
@@ -458,25 +815,27 @@ superseded for the post-fix implementation by this section.
 
 ### Suggested commands for the independent final pass
 
-From ANTISEQUENCE `b5fecee6feb19f53da3dfd0dcd7fa56ab8023612`:
+From ANTISEQUENCE `272ba77fa31fc09a413036a5feb236a43ec2cae1`:
 
 ```bash
 cargo fmt --all --check
-RUSTFLAGS='-D warnings' cargo test --locked --lib --features accelerated-gzip
-RUSTFLAGS='-D warnings' cargo test --locked --lib \
+RUSTFLAGS='-D warnings' cargo test --locked --all-targets
+RUSTFLAGS='-D warnings' cargo test --locked --all-targets \
   --no-default-features --features release-simd,accelerated-gzip
 RUSTFLAGS='-D warnings' RUSTDOCFLAGS='-D warnings' \
   cargo test --locked --doc --features accelerated-gzip
 cargo package --locked --allow-dirty --list
 ```
 
-From seqproc `4e0de317bdf82a0c9b52dd97213a6e8ba7a5ed03`:
+From seqproc `388777b5f44f668f008736c92baf0b004afe2351`:
 
 ```bash
 cargo fmt --all --check
 RUSTFLAGS='-C target-cpu=x86-64-v3 -D warnings' cargo test --locked --lib
 RUSTFLAGS='-C target-cpu=x86-64-v3 -D warnings' \
   cargo test --locked --test cli_workflow_tests
+RUSTFLAGS='-D warnings' cargo check --locked --no-default-features \
+  --features antisequence/baseline-simd --lib --bin seqproc
 ./scripts/verify_simd_equivalence.sh
 cargo dist generate --check
 cargo dist plan

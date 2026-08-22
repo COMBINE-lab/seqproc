@@ -93,8 +93,11 @@ impl From<PipelineInputModeArg> for PipelineInputMode {
     }
 }
 
-/// General puprose sequence preprocessor
+/// General purpose sequence preprocessor.
 #[derive(Debug, clap::Parser)]
+// Load-bearing compatibility boundary: legacy top-level flags (including
+// `--file1`) must conflict with `run` rather than being accepted as global
+// arguments that could bypass the subcommand's strict output contract.
 #[command(
     name = "seqproc",
     disable_version_flag = true,

@@ -50,8 +50,8 @@ Inspect rejection reasons and match-stage attrition. Common causes are short or
 truncated reads, an anchor threshold that is too strict, a whitelist mismatch,
 or `no_match` behavior for equal-best candidates.
 
-For paired input, provide both unassigned paths if both rejected mates must be
-retained.
+For paired input, the unassigned topology must name both lanes. Provide both
+paths, or use `/dev/null` explicitly for a rejected mate you do not need.
 
 ## Output is missing
 
@@ -60,7 +60,8 @@ emits two reads, `--out2`. A two-read transformation without both paths is an
 error.
 
 Demultiplexing uses `--demux-out-dir` instead of fixed primary outputs and
-currently emits per-sample `.fastq` files.
+currently emits per-sample `.fastq` files. Combining `--out1`/`--out2` with
+`--demux-map` is an error rather than silently ignoring either destination.
 
 ## A gzip consumer sees only part of a file
 

@@ -174,9 +174,10 @@ seqproc run --geom protocol.geom --additional barcodes.txt \
 ## Output and reporting options
 
 - `--unassigned1`, `--unassigned2`, and `--unassigned3` retain records rejected
-  by the main graph.
+  by the main graph. When used, supply exactly one target per input lane (use
+  `/dev/null` for a lane you intentionally discard).
 - `--demux-map`, `--demux-label`, and `--demux-out-dir` route accepted reads by
-  sample barcode.
+  sample barcode; fixed `--outN` targets cannot be combined with demultiplexing.
 - `--summary FILE` writes a versioned JSON run report; `--summary -` writes it
   to stderr.
 - `--statistics-level basic|detailed` controls summary detail.
