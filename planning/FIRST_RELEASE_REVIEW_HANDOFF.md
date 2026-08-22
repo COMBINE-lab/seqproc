@@ -985,12 +985,15 @@ The recipe should follow current Bioconda guidance:
 3. Use `{{ compiler('rust') }}` in build requirements.
 4. Bundle dependency licenses using `cargo-bundle-licenses` and include the
    generated license file in `about.license_file`.
-5. Use the documented locked install form, but set the compiler target to the
-   declared package floor rather than inheriting the build worker:
-   `RUSTFLAGS="-C target-cpu=x86-64-v3" cargo install -v --locked --no-track --root $PREFIX --path .`
-   on x86_64. Use the reviewed fixed aarch64 target for an ARM recipe.
+5. Use seqproc's portable compatibility feature rather than the default AVX2
+   application feature. On x86_64, build with
+   `RUSTFLAGS="-C target-cpu=x86-64" cargo install -v --locked --no-default-features --features baseline-simd --no-track --root $PREFIX --path .`.
+   This selects ANTISEQUENCE's SSE2 backend. Use a correspondingly generic
+   target and the NEON baseline feature on aarch64.
 6. Ensure the recipe overrides repository `target-cpu=native`; never allow the
-   build worker's CPU to silently determine a redistributed package.
+   build worker's CPU to silently determine a redistributed package. Verify
+   `seqproc --version --verbose` reports the baseline backend and intended
+   portable floor inside the built package.
 7. Test at minimum `seqproc --version --verbose`, `seqproc validate` on a
    packaged tiny EFGDL geometry, and an end-to-end tiny FASTQ transformation
    with an output checksum.

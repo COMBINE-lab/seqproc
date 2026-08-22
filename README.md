@@ -29,6 +29,11 @@ versioned run summaries.
 - **Preprint:** <https://www.biorxiv.org/content/10.64898/2026.07.28.741211v1>
 - **Reproducible paper analysis:** <https://github.com/COMBINE-lab/seqproc-paper-analysis>
 
+After the crate is published, install its locked dependency set with
+`cargo install --locked seqproc`. For a repository checkout, use
+`cargo install --locked --path .`; the checked-in local configuration tunes
+that build for the current host, so do not redistribute it as a generic binary.
+
 ## A first geometry
 
 The following geometry describes the common 10x Chromium v2 layout: the first
@@ -158,7 +163,7 @@ older x86_64 hosts:
 
 ```console
 RUSTFLAGS="" cargo build --release --locked --no-default-features \
-  --features antisequence/baseline-simd
+  --features baseline-simd
 ```
 
 Do not label a `target-cpu=native` local build as a generic release artifact:
@@ -203,7 +208,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
 # Exercise the generic SSE2 compatibility control as well:
 cargo test --locked --no-default-features \
-  --features antisequence/baseline-simd --lib
+  --features baseline-simd --lib
 ```
 
 Comprehensive CI also builds both variants and requires every checked-in FASTQ

@@ -26,6 +26,12 @@ cargo build --release --locked
 Using `--locked` prevents Cargo from silently selecting dependency versions
 other than those recorded in `Cargo.lock`.
 
+After the crate is published, the corresponding Cargo installation is:
+
+```console
+cargo install --locked seqproc
+```
+
 The repository configuration uses `target-cpu=native`, so a local source build
 is optimized for—and should be run on—the host that compiled it. Do not
 redistribute that executable as a generic binary.
@@ -47,7 +53,7 @@ override the repository's native code-generation setting:
 
 ```console
 RUSTFLAGS="" cargo build --release --locked --no-default-features \
-  --features antisequence/baseline-simd
+  --features baseline-simd
 ```
 
 To put the local build on your path:

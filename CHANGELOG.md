@@ -5,6 +5,12 @@ All notable changes to seqproc are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-21
+
+Initial public release. It includes the preprint functionality plus the
+post-preprint correctness, usability, and performance work reviewed for this
+release.
+
 - Make seqproc's executable default architecture-tuned while preserving
   ANTISEQUENCE's library-safe baseline: distributed x86_64 binaries target
   x86-64-v3/AVX2, aarch64 artifacts use fixed platform targets, and local
@@ -15,12 +21,6 @@ All notable changes to seqproc are documented here. This project follows
   before hosting it.
 - Add comprehensive byte-equivalence gates between generic SSE2 and tuned
   AVX2 builds.
-
-## [0.1.0] - 2026-08-21
-
-Initial public release. It includes the preprint functionality plus the
-post-preprint correctness, usability, and performance work reviewed for this
-release.
 
 - EFGDL 2 document headers, named resources, fixed output sequences, output
   header templates, indexed captures, layout choice/optional/repeat algebra,
