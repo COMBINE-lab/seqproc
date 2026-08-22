@@ -1337,3 +1337,34 @@ precisely the class of defect the deferred plan-level differential harness
 would catch, so a minimal backend-vs-reference differential matrix (even a
 few hundred randomized cases per backend) is the highest-value test to add
 with the fixes rather than waiting for the full Milestone 9 program.
+
+---
+
+## Post-publication tag validation (2026-08-22)
+
+The release cascade published ANTISEQUENCE 0.1.0 first, changed seqproc to the
+checksummed crates.io dependency, merged the reviewed seqproc `dev` branch at
+`ec8639bfbd0b50e8ca3dd1de204ffa6a75aa364d`, and then published and tagged
+seqproc 0.1.0. Two tag-validation findings require an explicit record:
+
+1. ANTISEQUENCE's first `macos-15` job failed before compilation because its
+   workflow combined Cargo's mutually exclusive `--lib` and `--doc` target
+   selectors. PR #6 split these into separate library and rustdoc invocations
+   and was merged at `1b9990066d068db6b7832d99285b7f10e34d4101`.
+   The crate source and published package were unaffected, so this does not
+   require an ANTISEQUENCE patch release.
+2. Seqproc's Rust 1.88 job exposed a compiler-signature compatibility issue in
+   the new CPU-floor diagnostic: Rust 1.88 declares `__cpuid` and
+   `__cpuid_count` unsafe, while current stable declares them safe. The
+   implementation now routes those calls through two narrowly scoped wrappers
+   whose safety argument is that CPUID is guaranteed on x86-64 and optional
+   leaves/subleaves are interpreted only after maximum-leaf checks. The
+   wrappers retain `unsafe` for Rust 1.88 and locally allow only the newer
+   compiler's `unused_unsafe` warning.
+
+The correction passes `cargo +1.88.0 check --locked --all-targets`, current
+stable warning-denied Clippy for library/binaries/tests, and the build
+provenance tests. Because crates.io packages are immutable, the false MSRV
+claim in seqproc 0.1.0 cannot be repaired in place; the source correction is a
+candidate for seqproc 0.1.1. Publication of that patch is intentionally held
+for the maintainer's explicit version decision.
