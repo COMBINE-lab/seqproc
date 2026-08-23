@@ -5,6 +5,8 @@ All notable changes to seqproc are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-22
+
 - Restore the declared Rust 1.88 compatibility of the x86-64 CPU-floor
   diagnostic by isolating CPUID calls behind audited wrappers that compile
   with both the older unsafe and newer safe intrinsic signatures.
@@ -61,5 +63,6 @@ release.
 - Reproducible multi-platform binary release automation with explicit CPU
   floors.
 
-[Unreleased]: https://github.com/COMBINE-lab/seqproc/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/COMBINE-lab/seqproc/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/COMBINE-lab/seqproc/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/COMBINE-lab/seqproc/releases/tag/v0.1.0
