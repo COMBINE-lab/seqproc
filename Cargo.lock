@@ -2144,7 +2144,7 @@ checksum = "d4f410fedcf71af0345d7607d246e7ad15faaadd49d240ee3b24e5dc21a820ac"
 
 [[package]]
 name = "seqproc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "antisequence",
  "anyhow",
