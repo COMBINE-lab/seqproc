@@ -57,6 +57,7 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'Protocol recipes', slug: 'guides/protocol-recipes' },
+            { label: 'seqspec import', slug: 'guides/seqspec-import' },
             { label: 'Compressed I/O', slug: 'guides/compressed-io' },
             { label: 'Demultiplexing', slug: 'guides/demultiplexing' },
             { label: 'Run summaries', slug: 'guides/summaries' },

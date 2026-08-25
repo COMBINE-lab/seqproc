@@ -1,0 +1,27 @@
+[package]
+name = "seqproc-seqspec-import"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "seqspec import implementation for seqproc"
+license = "BSD-3-Clause"
+repository = "https://github.com/COMBINE-lab/seqproc"
+readme = "README.md"
+keywords = ["bioinformatics", "sequencing", "seqspec"]
+categories = ["science", "parser-implementations"]
+
+[dependencies]
+blake3 = "1.8.7"
+serde = { version = "1.0.207", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9.34"
+thiserror = "2.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+
+[lints.rust]
+rust_2018_idioms = "warn"
+
+[lints.clippy]
+semicolon_if_nothing_returned = "warn"

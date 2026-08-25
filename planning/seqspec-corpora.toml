@@ -1,0 +1,15 @@
+report_version = "1.0.0"
+
+[[corpus]]
+name = "pachterlab-seqspec"
+repository = "https://github.com/pachterlab/seqspec.git"
+commit = "0771046233fdf93542253c28ecda75054b730080"
+path = "docs/examples/assays"
+sparse = ["docs/examples/assays/*.spec.yaml"]
+
+[[corpus]]
+name = "igvf-seqspec"
+repository = "https://github.com/IGVF/seqspec.git"
+commit = "7f7c7d6264a39910c69902e056621b1d22895636"
+path = "specs"
+sparse = ["specs/*/spec.yaml"]

@@ -26,6 +26,7 @@ mod geometry;
 pub mod io_config;
 mod processors;
 pub mod resources;
+pub mod seqspec_import;
 
 pub use crate::geometry::*;
 pub use crate::processors::*;

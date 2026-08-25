@@ -131,6 +131,9 @@ fn visit_function(function: &CompiledFunction, used: &mut BTreeSet<ResourceRef>)
             used.insert(reference.clone());
             None
         }
+        CompiledFunction::PatternOrientation(_)
+        | CompiledFunction::PatternProjection(_)
+        | CompiledFunction::PatternBoundaryMatched => None,
         _ => None,
     };
     if let Some(fallback) = fallback {

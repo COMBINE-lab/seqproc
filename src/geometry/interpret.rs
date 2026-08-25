@@ -16,7 +16,7 @@ use graph::{
 
 use crate::{
     compile::{
-        functions::CompiledFunction,
+        functions::{CompiledFunction, PatternOrientation, PatternProjection},
         utils::{
             CompiledHeaderMode, GeometryMeta, GeometryPiece, HeaderSegment, HeaderTransformation,
             ReadTransformation, TransformSegment,
@@ -199,6 +199,37 @@ impl<'a> CompiledData {
         for (i, read_geometry) in geometry.iter().enumerate() {
             let read_idx = i + 1; // 1-based
             let alternatives = &layout_alternatives[i];
+
+            // A seqspec read can describe a bounded observed window even when
+            // its final region is variable. Enforce that outer read contract
+            // before entering choices or orientation subgraphs. Geometries
+            // without this annotation pay no runtime cost.
+            if let Some((min_len, max_len)) = element_annotations
+                .iter()
+                .find(|ea| ea.element_id == ElementId::Read(read_idx))
+                .and_then(|ea| {
+                    ea.annotations.iter().find_map(|S(ann, _)| {
+                        (ann.name.0 == "read_len").then(|| {
+                            (
+                                ann.args[0]
+                                    .0
+                                    .parse::<usize>()
+                                    .expect("read_len validated while compiling"),
+                                ann.args[1]
+                                    .0
+                                    .parse::<usize>()
+                                    .expect("read_len validated while compiling"),
+                            )
+                        })
+                    })
+                })
+            {
+                graph.add(valid_label_length(
+                    &format!("seq{}.*", read_idx),
+                    min_len,
+                    Some(max_len),
+                ));
+            }
 
             // Check if this read has a match_ori(either) annotation.
             let has_match_ori = element_annotations.iter().any(|ea| {
@@ -553,6 +584,14 @@ fn interpret_geometry(
             // then match within the bounds of the ranged len
             IntervalShape::RangedLen(S((from, _), _)) => {
                 min_start_idx += from;
+                // An exact whitelist on a ranged interval determines the cut
+                // point itself. This is the native variable-length onlist
+                // path used by seqspec import; do not force the maximum-width
+                // cut or consume the following geometry element.
+                if gp.has_variable_exact_filter() {
+                    gp.interpret(&label, resources, graph)?;
+                    continue;
+                }
                 // by rules of geometry this should either be None or a sequence
                 if let Some(next) = geometry_iter.next() {
                     next.interpret_dual(gp, &mut label, resources, graph, &mut min_start_idx)?;
@@ -749,14 +788,49 @@ fn anchor_patterns(
     }
 }
 
+fn take_ambiguity_policy(stack: &mut Vec<S<CompiledFunction>>) -> Option<AmbiguityPolicy> {
+    let index = stack
+        .iter()
+        .position(|S(function, _)| matches!(function, CompiledFunction::AmbiguityPolicy(_)))?;
+    match stack.remove(index).0 {
+        CompiledFunction::AmbiguityPolicy(policy) => Some(policy),
+        _ => unreachable!(),
+    }
+}
+
+fn take_pattern_orientation(stack: &mut Vec<S<CompiledFunction>>) -> PatternOrientation {
+    let Some(index) = stack
+        .iter()
+        .position(|S(function, _)| matches!(function, CompiledFunction::PatternOrientation(_)))
+    else {
+        return PatternOrientation::Forward;
+    };
+    match stack.remove(index).0 {
+        CompiledFunction::PatternOrientation(orientation) => orientation,
+        _ => unreachable!(),
+    }
+}
+
+fn take_pattern_projection(stack: &mut Vec<S<CompiledFunction>>) -> Option<PatternProjection> {
+    let index = stack
+        .iter()
+        .position(|S(function, _)| matches!(function, CompiledFunction::PatternProjection(_)))?;
+    match stack.remove(index).0 {
+        CompiledFunction::PatternProjection(projection) => Some(projection),
+        _ => unreachable!(),
+    }
+}
+
 fn execute_stack(
-    stack: Vec<S<CompiledFunction>>,
+    mut stack: Vec<S<CompiledFunction>>,
     label: &str,
     size: &IntervalShape,
     resources: &ResolvedResources,
     graph: &mut Graph,
 ) -> Result<(), ProcessorError> {
     let mut ambiguity_policy = None;
+    let pattern_orientation = take_pattern_orientation(&mut stack);
+    let pattern_projection = take_pattern_projection(&mut stack);
     let range = if let IntervalShape::RangedLen(S((a, b), _)) = size {
         Some(*a..=*b)
     } else {
@@ -782,6 +856,12 @@ fn execute_stack(
                 // Anchor-only modifiers are consumed while constructing the
                 // MatchAnyOp for the fixed anchor.
                 continue;
+            }
+            CompiledFunction::PatternOrientation(_) | CompiledFunction::PatternProjection(_) => {
+                unreachable!("pattern modifiers are extracted before stack execution")
+            }
+            CompiledFunction::PatternBoundaryMatched => {
+                unreachable!("matched pattern boundaries are consumed while slicing the interval")
             }
             CompiledFunction::Remove => {
                 graph.add(trim_node([antisequence::expr::label(label)]));
@@ -852,9 +932,11 @@ fn execute_stack(
             }
             CompiledFunction::FilterWithinDist(file, mismatch) => {
                 let file_path = resources.path(&file).to_owned();
-                let patterns = parse_file_filter(
+                let patterns = parse_file_filter_projected(
                     file_path,
                     ambiguity_policy.take().unwrap_or(AmbiguityPolicy::Accept),
+                    pattern_orientation,
+                    pattern_projection,
                 )?;
 
                 graph.add(
@@ -880,6 +962,18 @@ fn execute_stack(
 }
 
 impl<'a> GeometryMeta {
+    fn has_variable_exact_filter(&self) -> bool {
+        matches!(self.expr.0.size, IntervalShape::RangedLen(_))
+            && self
+                .stack
+                .iter()
+                .any(|S(function, _)| matches!(function, CompiledFunction::FilterWithinDist(_, 0)))
+            && self
+                .stack
+                .iter()
+                .any(|S(function, _)| matches!(function, CompiledFunction::PatternBoundaryMatched))
+    }
+
     fn unpack<'b: 'a>(
         &'b self,
     ) -> (
@@ -1025,11 +1119,61 @@ impl<'a> GeometryMeta {
                 graph.add(valid_label_length(&this_label, len, None));
             }
             IntervalShape::RangedLen(S((a, b), _)) => {
-                graph.add(cut_node(
-                    into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
-                    Expr::from(b),
-                ));
-                graph.add(valid_label_length(&this_label, a, Some(b)));
+                let matched_boundary = stack.iter().any(|S(function, _)| {
+                    matches!(function, CompiledFunction::PatternBoundaryMatched)
+                });
+                if matched_boundary {
+                    let filter_index = stack
+                        .iter()
+                        .position(|S(function, _)| {
+                            matches!(function, CompiledFunction::FilterWithinDist(_, 0))
+                        })
+                        .expect("matched pattern boundary validated on an exact filter");
+                    let file = match stack.remove(filter_index).0 {
+                        CompiledFunction::FilterWithinDist(file, 0) => file,
+                        _ => unreachable!(),
+                    };
+                    let ambiguity_policy =
+                        take_ambiguity_policy(&mut stack).unwrap_or(AmbiguityPolicy::Accept);
+                    let orientation = take_pattern_orientation(&mut stack);
+                    let projection = take_pattern_projection(&mut stack);
+                    stack.retain(|S(function, _)| {
+                        !matches!(function, CompiledFunction::PatternBoundaryMatched)
+                    });
+                    let file_path = resources.path(&file).to_owned();
+                    let patterns = parse_file_filter_projected(
+                        file_path.clone(),
+                        ambiguity_policy,
+                        orientation,
+                        projection,
+                    )?;
+                    if let Some((_, pattern)) = patterns
+                        .iter_literals()
+                        .find(|(_, pattern)| !(a..=b).contains(&pattern.len()))
+                    {
+                        return Err(ProcessorError::WhitelistLength {
+                            path: file_path,
+                            minimum: a,
+                            maximum: b,
+                            observed: pattern.len(),
+                        });
+                    }
+                    graph.add(
+                        match_node(
+                            patterns,
+                            &init_label,
+                            vec![this_label.as_str(), &next_label],
+                            ExactPrefix,
+                        )
+                        .retain_label_present(&this_label),
+                    );
+                } else {
+                    graph.add(cut_node(
+                        into_transform_expr(&init_label, [this_label.as_str(), &next_label]),
+                        Expr::from(b),
+                    ));
+                    graph.add(valid_label_length(&this_label, a, Some(b)));
+                }
             }
             IntervalShape::UnboundedLen => {
                 graph.add(cut_node(

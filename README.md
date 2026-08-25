@@ -91,8 +91,31 @@ For FASTQ files that alternate complete fragment segments in one stream, use
 `--interleaved-input`. Its arity is derived from the geometry, and ordered file
 shards are opened lazily just like separate read lanes.
 
-The bounded public lane model supports one, two, or three segments, including
-`--read3`, `--out3`, and `--unassigned3` for protocols such as scATAC-seq.
+The bounded public lane model supports one through eight segments. Options
+`--readN`, `--outN`, and `--unassignedN` are available through lane 8; this
+covers multi-index and multi-segment assays without making the hot-path arity
+unbounded.
+
+## Importing seqspec layouts
+
+seqproc can conservatively translate supported seqspec 0.3/0.4 input layouts
+to reviewable EFGDL 2 without guessing an output transformation:
+
+```console
+seqproc import seqspec protocol.yaml --check-only
+seqproc import seqspec protocol.yaml --output-dir imported-protocol \
+  --resources auto
+```
+
+The bundle retains the source and BLAKE3 digest, generated geometry, a
+versioned JSON report, and locally resolved or downloaded onlists with seqspec
+content-MD5, stored-size, and separate stored/content BLAKE3 verification.
+`--resources offline` forbids network access;
+`required` fails unless every onlist is resolved. Variable-length and clipped
+onlists are matched natively—no pre-expanded or truncated whitelist is needed.
+Unsupported or structurally ambiguous constructs remain explicit diagnostics.
+See the [seqspec import guide](https://combine-lab.github.io/seqproc/guides/seqspec-import/)
+for selection, partial-import, and compatibility-report workflows.
 
 Library callers should use `compile_geom_typed` and `run`; both return the
 matchable `SeqprocError` hierarchy rather than stringly typed `anyhow` errors.

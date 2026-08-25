@@ -5,6 +5,16 @@ All notable changes to seqproc are documented here. This project follows
 
 ## [Unreleased]
 
+- Add conservative `seqproc import seqspec` support for seqspec 0.3/0.4 input
+  layouts, with network-free assessment, atomic provenance bundles, exact
+  resource verification, and a pinned official-corpus compatibility report.
+- Support variable-length, clipped, gzip-compressed, and reverse-oriented
+  onlists natively through explicit EFGDL 2 pattern-boundary, projection, and
+  orientation annotations; legacy geometries retain their prior semantics and
+  pay no feature-path overhead.
+- Increase the bounded FASTQ lane model from three to eight across the parser,
+  CLI, streaming topology, outputs, and unassigned-read routing.
+
 ## [0.1.1] - 2026-08-22
 
 - Restore the declared Rust 1.88 compatibility of the x86-64 CPU-floor

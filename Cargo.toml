@@ -26,6 +26,10 @@ include = [
 keywords = ["bioinformatics", "fastq", "sequencing", "preprocessing"]
 categories = ["command-line-utilities", "science"]
 
+[workspace]
+members = ["crates/seqproc-seqspec-import", "xtask"]
+resolver = "2"
+
 [package.metadata.docs.rs]
 # Document the same tuned matcher API used by seqproc binaries. docs.rs does
 # not execute the AVX2 backend.
@@ -43,6 +47,7 @@ path = "src/bin/bin.rs"
 
 [dependencies]
 antisequence = { version = "0.1.0", default-features = false, features = ["accelerated-gzip"] }
+seqproc-seqspec-import = { version = "0.1.0", path = "crates/seqproc-seqspec-import" }
 rustc-hash = "1.1.0"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tracing = "0.1.37"
@@ -57,6 +62,8 @@ serde_json = "1.0"
 blake3 = "1.8.7"
 thiserror = "2.0"
 flate2 = { version = "1.0", features = ["zlib-rs"], default-features = false }
+ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
+md-5 = "0.10.6"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["fs"] }

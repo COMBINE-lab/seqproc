@@ -213,13 +213,13 @@ fn bench_interleaved_input(c: &mut Criterion) {
 
 fn bench_bounded_input_arity(c: &mut Criterion) {
     let n = reads();
-    let lanes = (0..3)
-        .map(|lane| fastq_with_prefix(n, b"ACGTACGT".get(..lane + 4).unwrap()))
+    let lanes = (0..8)
+        .map(|lane| fastq_with_prefix(n, &b"ACGTACGT"[..lane + 1]))
         .collect::<Vec<_>>();
     let mut group = c.benchmark_group("bounded_input_arity");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(5));
-    for arity in 1..=3 {
+    for arity in [1, 3, 4, 8] {
         group.bench_function(format!("lanes_{arity}"), |benchmark| {
             benchmark.iter_batched(
                 || {
@@ -241,6 +241,39 @@ fn bench_bounded_input_arity(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_variable_pattern_boundary(c: &mut Criterion) {
+    use std::io::Write;
+
+    let n = reads();
+    let mut fixed_whitelist = tempfile::NamedTempFile::new().unwrap();
+    writeln!(fixed_whitelist, "AAAAA").unwrap();
+    let mut variable_whitelist = tempfile::NamedTempFile::new().unwrap();
+    writeln!(variable_whitelist, "ACG\nAAAAA").unwrap();
+    let fixed_path = fixed_whitelist.path().display();
+    let variable_path = variable_whitelist.path().display();
+    let fixed = compile_geom(format!(
+        "{V2}resources {{ wl = \"{fixed_path}\" }}\nbc = filter(b[5], $wl)\n1{{<bc>f[ACGTACGT]}}"
+    ))
+    .unwrap();
+    let variable = compile_geom(format!(
+        "{V2}resources {{ wl = \"{variable_path}\" }}\n#[ambig_policy = no_match]\n#[pattern_boundary = matched]\nbc = filter(b[3-5], $wl)\n1{{<bc>f[ACGTACGT]}}"
+    ))
+    .unwrap();
+    let fixed_reads = fastq_with_prefix(n, b"AAAAA");
+    let variable_reads = fastq_with_prefix(n, b"ACG");
+    let mut group = c.benchmark_group("seqspec_pattern_boundary");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(5));
+    bench_compiled(&mut group, "fixed_length_control", &fixed, &fixed_reads);
+    bench_compiled(
+        &mut group,
+        "variable_length_native_cut",
+        &variable,
+        &variable_reads,
+    );
+    group.finish();
+}
+
 criterion_group!(
     feature_benches,
     bench_layout_choice_paths,
@@ -249,5 +282,6 @@ criterion_group!(
     bench_anchor_set_scale,
     bench_interleaved_input,
     bench_bounded_input_arity,
+    bench_variable_pattern_boundary,
 );
 criterion_main!(feature_benches);

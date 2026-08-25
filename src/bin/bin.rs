@@ -42,7 +42,12 @@ use seqproc::{
     execute::{compile_geom_typed, run, OutputCompatibility, RunConfig},
     io_config::{InputLane, InputSource, OutputTarget},
     resources::ResourceBindings,
+    seqspec_import::{
+        diagnostics as seqspec_diagnostics, generated_count, import_seqspec, ResourceMode,
+        SeqspecImportConfig,
+    },
 };
+use seqproc_seqspec_import::{OnlistPolicy, Severity};
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 enum StatisticsLevelArg {
@@ -132,6 +137,76 @@ enum Command {
     Validate { geometry: PathBuf },
     /// Print normalized EFGDL and the compiled geometry representation.
     Explain { geometry: PathBuf },
+    /// Convert an explicitly supported external protocol description to EFGDL 2.
+    Import {
+        #[command(subcommand)]
+        format: ImportFormat,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum ImportFormat {
+    /// Import seqspec 0.3/0.4 input layouts without inventing output transformations.
+    Seqspec(SeqspecImportArgs),
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum OnlistPolicyArg {
+    Exact,
+    Capture,
+}
+
+impl From<OnlistPolicyArg> for OnlistPolicy {
+    fn from(value: OnlistPolicyArg) -> Self {
+        match value {
+            OnlistPolicyArg::Exact => Self::Exact,
+            OnlistPolicyArg::Capture => Self::Capture,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum ResourceModeArg {
+    Auto,
+    Offline,
+    Required,
+}
+
+impl From<ResourceModeArg> for ResourceMode {
+    fn from(value: ResourceModeArg) -> Self {
+        match value {
+            ResourceModeArg::Auto => Self::Auto,
+            ResourceModeArg::Offline => Self::Offline,
+            ResourceModeArg::Required => Self::Required,
+        }
+    }
+}
+
+#[derive(Debug, clap::Args)]
+struct SeqspecImportArgs {
+    /// seqspec YAML document to assess and import.
+    source: PathBuf,
+    /// New directory for generated geometries, source provenance, resources, and report.
+    #[arg(long, required_unless_present = "check_only")]
+    output_dir: Option<PathBuf>,
+    /// Import only these modalities. May be repeated.
+    #[arg(long, action = clap::ArgAction::Append)]
+    modality: Vec<String>,
+    /// Explicit read IDs, in input-lane order. Requires exactly one modality.
+    #[arg(long, action = clap::ArgAction::Append)]
+    read: Vec<String>,
+    /// Exact filters against declared onlists, or capture without filtering.
+    #[arg(long, value_enum, default_value = "exact")]
+    onlist_policy: OnlistPolicyArg,
+    /// Resource resolution/download policy.
+    #[arg(long, value_enum, default_value = "auto")]
+    resources: ResourceModeArg,
+    /// Emit supported modalities even if other requested modalities are blocked.
+    #[arg(long)]
+    allow_partial: bool,
+    /// Assess and print JSON without writing or downloading anything.
+    #[arg(long)]
+    check_only: bool,
 }
 
 #[derive(Debug, Default, clap::Args)]
@@ -160,13 +235,33 @@ pub struct RunArgs {
     #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
     read3: Vec<PathBuf>,
 
+    /// Ordered R4 FASTQ shards.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read4: Vec<PathBuf>,
+
+    /// Ordered R5 FASTQ shards.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read5: Vec<PathBuf>,
+
+    /// Ordered R6 FASTQ shards.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read6: Vec<PathBuf>,
+
+    /// Ordered R7 FASTQ shards.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read7: Vec<PathBuf>,
+
+    /// Ordered R8 FASTQ shards.
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    read8: Vec<PathBuf>,
+
     /// Ordered FASTQ shards containing interleaved complete fragments. The
-    /// geometry determines whether each fragment contains 1, 2, or 3 records.
+    /// geometry determines whether each fragment contains 1 through 8 records.
     #[arg(
         long,
         value_delimiter = ',',
         action = clap::ArgAction::Append,
-        conflicts_with_all = ["file1", "read1", "file2", "read2", "read3"]
+        conflicts_with_all = ["file1", "read1", "file2", "read2", "read3", "read4", "read5", "read6", "read7", "read8"]
     )]
     interleaved_input: Vec<PathBuf>,
 
@@ -181,6 +276,17 @@ pub struct RunArgs {
     /// r3 out fastq file
     #[arg(long)]
     out3: Option<PathBuf>,
+
+    #[arg(long)]
+    out4: Option<PathBuf>,
+    #[arg(long)]
+    out5: Option<PathBuf>,
+    #[arg(long)]
+    out6: Option<PathBuf>,
+    #[arg(long)]
+    out7: Option<PathBuf>,
+    #[arg(long)]
+    out8: Option<PathBuf>,
 
     /// Gzip-compress a FASTQ output lane directed to stdout (`-`).
     #[arg(long)]
@@ -337,9 +443,19 @@ pub struct RunArgs {
     /// R3 output file for reads that failed processing (unassigned)
     #[arg(long = "unassigned3")]
     unassigned3: Option<PathBuf>,
+    #[arg(long = "unassigned4")]
+    unassigned4: Option<PathBuf>,
+    #[arg(long = "unassigned5")]
+    unassigned5: Option<PathBuf>,
+    #[arg(long = "unassigned6")]
+    unassigned6: Option<PathBuf>,
+    #[arg(long = "unassigned7")]
+    unassigned7: Option<PathBuf>,
+    #[arg(long = "unassigned8")]
+    unassigned8: Option<PathBuf>,
 }
 
-fn cli_output_targets(paths: [Option<PathBuf>; 3]) -> Vec<OutputTarget> {
+fn cli_output_targets(paths: Vec<Option<PathBuf>>) -> Vec<OutputTarget> {
     let Some(last) = paths.iter().rposition(Option::is_some) else {
         return Vec::new();
     };
@@ -411,6 +527,51 @@ fn main() {
                 }
             }
         }
+        Some(Command::Import {
+            format: ImportFormat::Seqspec(import_args),
+        }) => {
+            let mut config = SeqspecImportConfig::new(import_args.source);
+            config.output_dir = import_args.output_dir;
+            config.modalities = import_args.modality;
+            config.reads = import_args.read;
+            config.onlist_policy = import_args.onlist_policy.into();
+            config.resource_mode = import_args.resources.into();
+            config.allow_partial = import_args.allow_partial;
+            config.check_only = import_args.check_only;
+            match import_seqspec(&config) {
+                Ok(report) => {
+                    if config.check_only {
+                        serde_json::to_writer_pretty(io::stdout().lock(), &report).unwrap_or_else(
+                            |error| {
+                                eprintln!("error: failed to write seqspec assessment: {error}");
+                                exit(1);
+                            },
+                        );
+                        println!();
+                    } else {
+                        let warnings = seqspec_diagnostics(&report)
+                            .filter(|diagnostic| diagnostic.severity != Severity::Info)
+                            .count();
+                        println!(
+                            "imported {} geometry file(s) to {} ({} warning/error diagnostic(s); see import-report.json)",
+                            generated_count(&report),
+                            config
+                                .output_dir
+                                .as_ref()
+                                .expect("required by clap")
+                                .display(),
+                            warnings
+                        );
+                    }
+                    return;
+                }
+                Err(error) => {
+                    let error = SeqprocError::from(error);
+                    report_seqproc_error(None, &error);
+                    exit(error.exit_code());
+                }
+            }
+        }
         Some(Command::Run(args)) => (args, OutputCompatibility::Strict),
         None => {
             eprintln!(
@@ -439,9 +600,24 @@ fn main() {
     } else {
         args.read2.clone()
     };
-    let read3 = args.read3.clone();
-    if !read3.is_empty() && read2.is_empty() {
-        eprintln!("error: --read3 requires --read2; input lane indices must be contiguous");
+    let mut read_lanes = vec![
+        read1.clone(),
+        read2.clone(),
+        args.read3.clone(),
+        args.read4.clone(),
+        args.read5.clone(),
+        args.read6.clone(),
+        args.read7.clone(),
+        args.read8.clone(),
+    ];
+    while read_lanes.last().is_some_and(Vec::is_empty) {
+        read_lanes.pop();
+    }
+    if let Some(index) = read_lanes.iter().position(Vec::is_empty) {
+        eprintln!(
+            "error: --read{} is missing before a later lane; input lane indices must be contiguous",
+            index + 1
+        );
         exit(2);
     }
     let Some(file1) = interleaved_input.first().or_else(|| read1.first()).cloned() else {
@@ -458,10 +634,9 @@ fn main() {
 
     // Validate input FASTQ paths up front so a missing file surfaces as a clean
     // error instead of a panic from deep inside the read-processing engine.
-    for f in read1
+    for f in read_lanes
         .iter()
-        .chain(&read2)
-        .chain(&read3)
+        .flat_map(|lane| lane.iter())
         .chain(&interleaved_input)
         .filter(|path| *path != std::path::Path::new("-"))
     {
@@ -507,21 +682,14 @@ fn main() {
             report_warnings(&geom.warnings);
             let mut config = RunConfig::new(file1.clone());
             config.output_compatibility = output_compatibility;
-            config.input2 = read2.first().cloned();
+            config.input2 = read_lanes.get(1).and_then(|lane| lane.first()).cloned();
             if interleaved_input.is_empty() {
-                let mut input_lanes = vec![InputLane::new(
-                    read1.iter().cloned().map(InputSource::from_cli_path),
-                )];
-                if !read2.is_empty() {
-                    input_lanes.push(InputLane::new(
-                        read2.iter().cloned().map(InputSource::from_cli_path),
-                    ));
-                }
-                if !read3.is_empty() {
-                    input_lanes.push(InputLane::new(
-                        read3.iter().cloned().map(InputSource::from_cli_path),
-                    ));
-                }
+                let input_lanes = read_lanes
+                    .iter()
+                    .map(|lane| {
+                        InputLane::new(lane.iter().cloned().map(InputSource::from_cli_path))
+                    })
+                    .collect();
                 config.input_lanes = Some(input_lanes);
             } else {
                 config.interleaved_input = Some(
@@ -537,23 +705,43 @@ fn main() {
             config.unassigned1 = args.unassigned1.clone();
             config.unassigned2 = args.unassigned2.clone();
             if args.out3.is_some()
+                || args.out4.is_some()
+                || args.out5.is_some()
+                || args.out6.is_some()
+                || args.out7.is_some()
+                || args.out8.is_some()
                 || args.out1.as_deref() == Some(std::path::Path::new("-"))
                 || args.out2.as_deref() == Some(std::path::Path::new("-"))
             {
-                config.outputs = Some(cli_output_targets([
+                config.outputs = Some(cli_output_targets(vec![
                     args.out1.clone(),
                     args.out2.clone(),
                     args.out3.clone(),
+                    args.out4.clone(),
+                    args.out5.clone(),
+                    args.out6.clone(),
+                    args.out7.clone(),
+                    args.out8.clone(),
                 ]));
             }
             if args.unassigned3.is_some()
+                || args.unassigned4.is_some()
+                || args.unassigned5.is_some()
+                || args.unassigned6.is_some()
+                || args.unassigned7.is_some()
+                || args.unassigned8.is_some()
                 || args.unassigned1.as_deref() == Some(std::path::Path::new("-"))
                 || args.unassigned2.as_deref() == Some(std::path::Path::new("-"))
             {
-                config.unassigned_outputs = Some(cli_output_targets([
+                config.unassigned_outputs = Some(cli_output_targets(vec![
                     args.unassigned1.clone(),
                     args.unassigned2.clone(),
                     args.unassigned3.clone(),
+                    args.unassigned4.clone(),
+                    args.unassigned5.clone(),
+                    args.unassigned6.clone(),
+                    args.unassigned7.clone(),
+                    args.unassigned8.clone(),
                 ]));
             }
             config.stdout_gzip = args.stdout_gzip;

@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::{
     compile::{
-        functions::{compile_fn, CompiledFunction},
+        functions::{compile_fn, CompiledFunction, PatternOrientation, PatternProjection},
         utils::*,
     },
-    parser::{Annotation, AnnotationValueArg, Definition, Expr, ResourceRef},
+    parser::{Annotation, AnnotationValueArg, Definition, Expr, IntervalShape, ResourceRef},
     S,
 };
 use antisequence::{AmbiguityPolicy, PositionAmbiguityPolicy};
@@ -393,11 +393,115 @@ fn annotations_to_compiled_functions(
                 )?),
                 *span,
             )),
+            "pattern_orientation" => {
+                let variant = if let Some(value) = ann.value.as_ref() {
+                    if !value.0.args.is_empty() {
+                        return Err(Error {
+                            span: *span,
+                            msg: "`pattern_orientation` does not accept arguments".to_string(),
+                        });
+                    }
+                    value.0.variant.0.as_str()
+                } else if ann.args.len() == 1 {
+                    ann.args[0].0.as_str()
+                } else {
+                    return Err(Error {
+                        span: *span,
+                        msg: "write #[pattern_orientation = rc] or #[pattern_orientation(rc)]"
+                            .to_string(),
+                    });
+                };
+                let orientation = match variant {
+                    "fw" | "forward" => PatternOrientation::Forward,
+                    "rc" | "reverse_complement" => PatternOrientation::ReverseComplement,
+                    _ => {
+                        return Err(Error {
+                            span: *span,
+                            msg: format!(
+                                "unknown pattern orientation `{variant}`; expected fw or rc"
+                            ),
+                        })
+                    }
+                };
+                result.push(S(CompiledFunction::PatternOrientation(orientation), *span));
+            }
+            "pattern_projection" => {
+                let Some(value) = ann.value.as_ref() else {
+                    return Err(Error {
+                        span: *span,
+                        msg: "write #[pattern_projection = prefix(max_len = N)] or suffix(max_len = N)]"
+                            .to_string(),
+                    });
+                };
+                if value.0.args.len() != 1 {
+                    return Err(Error {
+                        span: *span,
+                        msg: "pattern projection requires exactly one `max_len` argument"
+                            .to_string(),
+                    });
+                }
+                let arg = &value.0.args[0].0;
+                if arg.name.as_ref().map(|name| name.0.as_str()) != Some("max_len") {
+                    return Err(Error {
+                        span: *span,
+                        msg: "pattern projection requires a named `max_len` argument".to_string(),
+                    });
+                }
+                let max_len = arg.value.0.parse::<usize>().map_err(|_| Error {
+                    span: *span,
+                    msg: "pattern projection `max_len` must be a positive integer".to_string(),
+                })?;
+                if max_len == 0 {
+                    return Err(Error {
+                        span: *span,
+                        msg: "pattern projection `max_len` must be greater than zero".to_string(),
+                    });
+                }
+                let projection = match value.0.variant.0.as_str() {
+                    "prefix" => PatternProjection::Prefix { max_len },
+                    "suffix" => PatternProjection::Suffix { max_len },
+                    variant => {
+                        return Err(Error {
+                            span: *span,
+                            msg: format!(
+                                "unknown pattern projection `{variant}`; expected prefix or suffix"
+                            ),
+                        })
+                    }
+                };
+                result.push(S(CompiledFunction::PatternProjection(projection), *span));
+            }
+            "pattern_boundary" => {
+                let variant = if let Some(value) = ann.value.as_ref() {
+                    if !value.0.args.is_empty() {
+                        return Err(Error {
+                            span: *span,
+                            msg: "`pattern_boundary` does not accept arguments".to_string(),
+                        });
+                    }
+                    value.0.variant.0.as_str()
+                } else if ann.args.len() == 1 {
+                    ann.args[0].0.as_str()
+                } else {
+                    return Err(Error {
+                        span: *span,
+                        msg: "write #[pattern_boundary = matched] or #[pattern_boundary(matched)]"
+                            .to_string(),
+                    });
+                };
+                if variant != "matched" {
+                    return Err(Error {
+                        span: *span,
+                        msg: format!("unknown pattern boundary `{variant}`; expected matched"),
+                    });
+                }
+                result.push(S(CompiledFunction::PatternBoundaryMatched, *span));
+            }
             unknown => {
                 return Err(Error {
                     span: *span,
                     msg: format!(
-                        "unknown definition annotation `{unknown}`; expected hamming, edit, search, anchor_set, ambig_policy, or position_policy"
+                        "unknown definition annotation `{unknown}`; expected hamming, edit, search, anchor_set, ambig_policy, position_policy, pattern_orientation, pattern_projection, or pattern_boundary"
                     ),
                 });
             }
@@ -555,6 +659,60 @@ fn validate_position_policy_target(
     Ok(())
 }
 
+fn validate_pattern_modifiers_target(
+    stack: &[S<CompiledFunction>],
+    shape: &IntervalShape,
+    definition: &str,
+    span: crate::Span,
+) -> Result<(), Error> {
+    let orientations = stack
+        .iter()
+        .filter(|S(function, _)| matches!(function, CompiledFunction::PatternOrientation(_)))
+        .count();
+    let projections = stack
+        .iter()
+        .filter(|S(function, _)| matches!(function, CompiledFunction::PatternProjection(_)))
+        .count();
+    let boundaries = stack
+        .iter()
+        .filter(|S(function, _)| matches!(function, CompiledFunction::PatternBoundaryMatched))
+        .count();
+    if orientations > 1 || projections > 1 || boundaries > 1 {
+        return Err(Error {
+            span,
+            msg: format!("definition `{definition}` specifies a pattern modifier more than once"),
+        });
+    }
+    if orientations + projections + boundaries == 0 {
+        return Ok(());
+    }
+    if !stack
+        .iter()
+        .any(|S(function, _)| matches!(function, CompiledFunction::FilterWithinDist(..)))
+    {
+        return Err(Error {
+            span,
+            msg: format!(
+                "pattern modifiers on definition `{definition}` require a filter operation"
+            ),
+        });
+    }
+    if boundaries == 1
+        && (!matches!(shape, IntervalShape::RangedLen(_))
+            || !stack
+                .iter()
+                .any(|S(function, _)| matches!(function, CompiledFunction::FilterWithinDist(_, 0))))
+    {
+        return Err(Error {
+            span,
+            msg: format!(
+                "#[pattern_boundary = matched] on definition `{definition}` requires an exact filter over a ranged interval"
+            ),
+        });
+    }
+    Ok(())
+}
+
 pub fn compile_definitions(
     S(defs, _): S<Vec<S<Definition>>>,
 ) -> Result<(HashMap<String, GeometryMeta>, Vec<String>), Error> {
@@ -666,6 +824,15 @@ pub fn compile_definitions(
                 break;
             }
             if let Err(e) = validate_position_policy_target(&gm.stack, &label_str, label_span) {
+                err = Some(e);
+                break;
+            }
+            if let Err(e) = validate_pattern_modifiers_target(
+                &gm.stack,
+                &gm.expr.0.size,
+                &label_str,
+                label_span,
+            ) {
                 err = Some(e);
                 break;
             }

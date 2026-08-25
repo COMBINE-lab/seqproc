@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 
 /// Publicly supported logical FASTQ arity. The representation is reserved for
 /// a future small increase without promising unbounded dynamic lanes.
-pub const MAX_INPUT_LANES: usize = 3;
+/// Deliberately bounded public lane arity. Eight covers current official
+/// seqspec assay examples while retaining compact fixed-capacity hot-path
+/// storage in ANTISEQUENCE; it is a safety bound, not a dynamic-language ABI.
+pub const MAX_INPUT_LANES: usize = 8;
 
 /// One FASTQ source.
 #[derive(Debug, Clone, PartialEq, Eq)]

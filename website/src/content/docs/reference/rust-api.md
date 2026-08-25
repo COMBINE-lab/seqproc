@@ -61,7 +61,7 @@ records alternate by logical lane. The compiled geometry determines arity;
 callers do not repeat it in the run configuration.
 
 `input_lanes` and `outputs` are bounded collections with a current public arity
-of 1–3 (`MAX_INPUT_LANES`). The CLI has explicit third-lane flags, but the Rust
+of 1–8 (`MAX_INPUT_LANES`). The CLI has explicit flags through lane eight, but the Rust
 API intentionally does not add `input3` fields; use a third `InputLane` and
 `OutputTarget` instead.
 

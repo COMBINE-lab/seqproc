@@ -156,3 +156,29 @@ base-quality assignment.
 Pattern-ambiguity and position-ambiguity counters are reported separately.
 The selected coordinate is deterministic across hash-table iteration order and
 thread schedules.
+
+## Whitelist projection and variable boundaries
+
+seqspec imports may attach three explicit, generally useful properties to an
+exact filter definition:
+
+```text
+#[pattern_orientation = rc]
+#[pattern_projection = suffix(max_len = 8)]
+#[pattern_boundary = matched]
+#[ambig_policy = no_match]
+bc = filter(b[6-8], $barcode_onlist)
+```
+
+`pattern_orientation` reverse-complements each whitelist entry once while the
+matcher is built. `pattern_projection` takes the indicated prefix or suffix
+once; it does not rewrite or expand the user's file. `pattern_boundary =
+matched` lets the length of an exact variable-length match determine the cut
+between this interval and the following interval. It is deliberately explicit:
+legacy ranged filters without the annotation retain their established
+maximum-width cut behavior and add no new runtime work. Projected duplicate
+entries are normalized, and an empty projected whitelist is an error.
+
+For variable-length onlists, use an explicit ambiguity policy. In particular,
+if one permitted barcode is a prefix of another, `no_match` rejects a read for
+which the intended barcode cannot be determined conservatively.

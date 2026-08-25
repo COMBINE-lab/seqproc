@@ -1,12 +1,12 @@
 use std::{
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read as IoRead, Seek, SeekFrom},
     ops::{Not, RangeInclusive, Sub},
     path::PathBuf,
 };
 
 use crate::{
-    geometry::compile::functions::CompiledFunction,
+    geometry::compile::functions::{CompiledFunction, PatternOrientation, PatternProjection},
     interpret::{LabelOrAttr, AMBIG, FILTER, MAPPED, SUB},
 };
 
@@ -41,6 +41,12 @@ pub enum ProcessorError {
     },
     #[error("anchor-set resource `{path}` contains no patterns")]
     EmptyAnchorSet { path: PathBuf },
+    #[error("whitelist resource `{path}` contains no patterns")]
+    EmptyWhitelist { path: PathBuf },
+    #[error(
+        "whitelist resource `{path}` contains an empty pattern after projection at line {line}"
+    )]
+    EmptyProjectedPattern { path: PathBuf, line: usize },
     #[error("could not parse mapping resource `{path}` at row {row}: {source}")]
     InvalidMappingRow {
         path: PathBuf,
@@ -61,6 +67,13 @@ pub enum ProcessorError {
     AnchorLength {
         path: PathBuf,
         expected: usize,
+        observed: usize,
+    },
+    #[error("whitelist pattern length {observed} is outside the declared interval {minimum}..={maximum} in `{path}`")]
+    WhitelistLength {
+        path: PathBuf,
+        minimum: usize,
+        maximum: usize,
         observed: usize,
     },
     #[error("compiled function `{function}` is invalid without a fixed sequence")]
@@ -120,6 +133,9 @@ impl CompiledFunction {
             CompiledFunction::AmbiguityPolicy(_) => unimplemented!(),
             CompiledFunction::AnchorSet(_) => unimplemented!(),
             CompiledFunction::PositionAmbiguityPolicy(_) => unimplemented!(),
+            CompiledFunction::PatternOrientation(_) => unimplemented!(),
+            CompiledFunction::PatternProjection(_) => unimplemented!(),
+            CompiledFunction::PatternBoundaryMatched => unimplemented!(),
             CompiledFunction::Hamming(_) => unimplemented!(),
             CompiledFunction::Edit(_) => unimplemented!(),
             // Anchor is handled in the interpreter, not as an expr
@@ -224,12 +240,61 @@ pub fn parse_file_filter(
     path: PathBuf,
     ambiguity_policy: AmbiguityPolicy,
 ) -> Result<Patterns, ProcessorError> {
-    let file = File::open(&path).map_err(|source| ProcessorError::OpenResource {
+    parse_file_filter_projected(path, ambiguity_policy, PatternOrientation::Forward, None)
+}
+
+fn whitelist_reader(path: &PathBuf) -> Result<Box<dyn BufRead>, ProcessorError> {
+    let mut file = File::open(path).map_err(|source| ProcessorError::OpenResource {
         kind: "whitelist",
         path: path.clone(),
         source,
     })?;
-    let reader = BufReader::new(file);
+    let mut magic = [0_u8; 2];
+    let count = file
+        .read(&mut magic)
+        .map_err(|source| ProcessorError::ReadResource {
+            kind: "whitelist",
+            path: path.clone(),
+            line: 0,
+            source,
+        })?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|source| ProcessorError::ReadResource {
+            kind: "whitelist",
+            path: path.clone(),
+            line: 0,
+            source,
+        })?;
+    if count == 2 && magic == [0x1f, 0x8b] {
+        Ok(Box::new(BufReader::new(flate2::read::MultiGzDecoder::new(
+            file,
+        ))))
+    } else {
+        Ok(Box::new(BufReader::new(file)))
+    }
+}
+
+fn reverse_complement(pattern: &[u8]) -> Vec<u8> {
+    pattern
+        .iter()
+        .rev()
+        .map(|base| match base.to_ascii_uppercase() {
+            b'A' => b'T',
+            b'C' => b'G',
+            b'G' => b'C',
+            b'T' | b'U' => b'A',
+            other => other,
+        })
+        .collect()
+}
+
+pub fn parse_file_filter_projected(
+    path: PathBuf,
+    ambiguity_policy: AmbiguityPolicy,
+    orientation: PatternOrientation,
+    projection: Option<PatternProjection>,
+) -> Result<Patterns, ProcessorError> {
+    let reader = whitelist_reader(&path)?;
     let mut contents = vec![];
     let mut seen = FxHashSet::default();
     let mut duplicate_count = 0usize;
@@ -240,11 +305,38 @@ pub fn parse_file_filter(
             line: i + 1,
             source,
         })?;
-        if seen.insert(line.clone()) {
-            contents.push(line);
+        let pattern = line.trim();
+        if pattern.is_empty() || pattern.starts_with('#') {
+            continue;
+        }
+        let mut pattern = pattern.as_bytes().to_vec();
+        if let Some(projection) = projection {
+            pattern = match projection {
+                PatternProjection::Prefix { max_len } => {
+                    pattern[..pattern.len().min(max_len)].to_vec()
+                }
+                PatternProjection::Suffix { max_len } => {
+                    pattern[pattern.len().saturating_sub(max_len)..].to_vec()
+                }
+            };
+        }
+        if pattern.is_empty() {
+            return Err(ProcessorError::EmptyProjectedPattern {
+                path: path.clone(),
+                line: i + 1,
+            });
+        }
+        if orientation == PatternOrientation::ReverseComplement {
+            pattern = reverse_complement(&pattern);
+        }
+        if seen.insert(pattern.clone()) {
+            contents.push(pattern);
         } else {
             duplicate_count += 1;
         }
+    }
+    if contents.is_empty() {
+        return Err(ProcessorError::EmptyWhitelist { path });
     }
     if duplicate_count > 0 {
         tracing::warn!(

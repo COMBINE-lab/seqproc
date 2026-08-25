@@ -8,6 +8,7 @@ description: The seqproc subcommands and important run options.
 ```console
 seqproc validate <geometry>
 seqproc explain <geometry>
+seqproc import seqspec <protocol.yaml> [OPTIONS]
 seqproc run [OPTIONS]
 ```
 
@@ -15,15 +16,16 @@ seqproc run [OPTIONS]
 | --- | --- |
 | `validate` | Parse, compile, and semantically validate a geometry without reading FASTQ data. |
 | `explain` | Print normalized EFGDL and the compiled geometry representation. |
-| `run` | Process one, two, or three synchronized FASTQ segments. |
+| `import seqspec` | Assess or convert a supported seqspec 0.3/0.4 input layout to EFGDL 2. |
+| `run` | Process one through eight synchronized FASTQ segments. |
 
 The old flag-only form is accepted for one compatibility cycle, but new
 workflows should use `seqproc run`.
 
 ## Required run inputs
 
-`--geom` and `--read1` are required. Supply `--read2` and optionally `--read3`
-for synchronized multi-segment input; lane indices must be contiguous.
+`--geom` and `--read1` are required. Add contiguous `--read2` through
+`--read8` options for synchronized multi-segment input.
 Each read lane accepts repeated options and comma-separated ordered shards.
 Corresponding shards are processed together without temporary concatenation:
 
@@ -66,7 +68,7 @@ seqproc run --geom scatac.geom \
   --out3 clean_R2.fastq.gz
 ```
 
-The current public bound is three input and output segments. Geometries with a
+The current public bound is eight input and output segments. Geometries with a
 larger arity fail during validation rather than after workers start.
 
 Output arguments are optional syntactically, but an omitted primary output is
@@ -175,8 +177,8 @@ seqproc run --geom protocol.geom --additional barcodes.txt \
 
 ## Output and reporting options
 
-- `--unassigned1`, `--unassigned2`, and `--unassigned3` retain records rejected
-  by the main graph. When used, supply exactly one target per input lane (use
+- `--unassigned1` through `--unassigned8` retain records rejected by the main
+  graph. When used, supply exactly one target per input lane (use
   `/dev/null` for a lane you intentionally discard).
 - `--demux-map`, `--demux-label`, and `--demux-out-dir` route accepted reads by
   sample barcode; fixed `--outN` targets cannot be combined with demultiplexing.

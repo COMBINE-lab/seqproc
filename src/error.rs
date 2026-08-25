@@ -7,7 +7,10 @@ use chumsky::prelude::*;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::{demux::DemuxError, processors::ProcessorError, resources::ResourceError};
+use crate::{
+    demux::DemuxError, processors::ProcessorError, resources::ResourceError,
+    seqspec_import::SeqspecImportError,
+};
 
 pub type SeqprocResult<T> = std::result::Result<T, SeqprocError>;
 
@@ -163,6 +166,8 @@ pub enum SeqprocError {
     },
     #[error(transparent)]
     Demultiplex(#[from] DemuxError),
+    #[error(transparent)]
+    SeqspecImport(#[from] SeqspecImportError),
     #[error("{operation} failed for `{target}`: {source}")]
     Io {
         operation: &'static str,
@@ -188,6 +193,7 @@ impl SeqprocError {
             | Self::InvalidExecutionConfiguration(_)
             | Self::ExecutionPlanning { .. }
             | Self::Demultiplex(_)
+            | Self::SeqspecImport(_)
             | Self::Unsupported(_) => 2,
             Self::FastqInput { .. } => 3,
             Self::StdoutBrokenPipe { .. } => 0,

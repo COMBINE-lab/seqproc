@@ -1872,11 +1872,27 @@ fn three_segment_scatac_paths_cover_shards_streams_interleaving_and_reports() {
         fs::read(&separate_outputs[2]).unwrap()
     );
 
-    let four = directory.path().join("four-lane.geom");
-    fs::write(&four, "1{r:}\n2{r:}\n3{r:}\n4{r:}\n").unwrap();
+    let eight = directory.path().join("eight-lane.geom");
+    fs::write(
+        &eight,
+        "1{r:}\n2{r:}\n3{r:}\n4{r:}\n5{r:}\n6{r:}\n7{r:}\n8{r:}\n",
+    )
+    .unwrap();
     Command::cargo_bin("seqproc")
         .unwrap()
-        .args(["validate", four.to_str().unwrap()])
+        .args(["validate", eight.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let nine = directory.path().join("nine-lane.geom");
+    fs::write(
+        &nine,
+        "1{r:}\n2{r:}\n3{r:}\n4{r:}\n5{r:}\n6{r:}\n7{r:}\n8{r:}\n9{r:}\n",
+    )
+    .unwrap();
+    Command::cargo_bin("seqproc")
+        .unwrap()
+        .args(["validate", nine.to_str().unwrap()])
         .assert()
         .failure();
     Command::cargo_bin("seqproc")
@@ -1892,7 +1908,9 @@ fn three_segment_scatac_paths_cover_shards_streams_interleaving_and_reports() {
         ])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("--read3 requires --read2"));
+        .stderr(predicates::str::contains(
+            "--read2 is missing before a later lane",
+        ));
 }
 
 #[test]

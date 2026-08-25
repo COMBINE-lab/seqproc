@@ -428,6 +428,28 @@ pub fn compile(
                         });
                     }
                 }
+                "read_len" => {
+                    if annotation.value.is_some() || annotation.args.len() != 2 {
+                        return Err(Error {
+                            span: *span,
+                            msg: "`read_len` requires exactly #[read_len(MIN, MAX)]".to_string(),
+                        });
+                    }
+                    let min = annotation.args[0].0.parse::<usize>().map_err(|_| Error {
+                        span: *span,
+                        msg: "`read_len` MIN must be a non-negative integer".to_string(),
+                    })?;
+                    let max = annotation.args[1].0.parse::<usize>().map_err(|_| Error {
+                        span: *span,
+                        msg: "`read_len` MAX must be a non-negative integer".to_string(),
+                    })?;
+                    if min > max {
+                        return Err(Error {
+                            span: *span,
+                            msg: format!("`read_len` MIN ({min}) cannot exceed MAX ({max})"),
+                        });
+                    }
+                }
                 "ambig_policy" => {
                     return Err(Error {
                         span: *span,
@@ -438,7 +460,9 @@ pub fn compile(
                 unknown => {
                     return Err(Error {
                         span: *span,
-                        msg: format!("unknown read annotation `{unknown}`; expected match_ori"),
+                        msg: format!(
+                            "unknown read annotation `{unknown}`; expected match_ori or read_len"
+                        ),
                     });
                 }
             }

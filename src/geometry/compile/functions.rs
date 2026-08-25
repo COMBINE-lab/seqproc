@@ -11,6 +11,18 @@ use crate::{
 };
 use antisequence::{AmbiguityPolicy, PositionAmbiguityPolicy};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PatternOrientation {
+    Forward,
+    ReverseComplement,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PatternProjection {
+    Prefix { max_len: usize },
+    Suffix { max_len: usize },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CompiledFunction {
     Reverse,
@@ -36,6 +48,13 @@ pub enum CompiledFunction {
     AnchorSet(ResourceRef),
     /// Equal-best placement policy for search-style anchors.
     PositionAmbiguityPolicy(PositionAmbiguityPolicy),
+    /// Transform whitelist patterns once while constructing a matcher.
+    PatternOrientation(PatternOrientation),
+    /// Project a prefix or suffix of every whitelist pattern once while
+    /// constructing a matcher.
+    PatternProjection(PatternProjection),
+    /// Let an exact variable-length pattern determine the interval boundary.
+    PatternBoundaryMatched,
     Hamming(usize),
     Edit(usize),
     /// `anchor_relative` - search for anchor from position 0 and extract preceding elements with flexible length

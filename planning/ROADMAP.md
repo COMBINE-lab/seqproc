@@ -69,7 +69,7 @@ Every milestone must satisfy these requirements:
 | 9 | Continuous fuzzing and full-language reference interpreter | Partial matcher oracle only | Stable language and I/O contracts |
 | 10 | Dry-run support | Planned | Resources, inputs, errors, and planning |
 | 11 | Protocol registry | Planned | Dry-run and named resources |
-| 12 | seqspec import | Planned | Protocol registry and bounded lane model |
+| 12 | seqspec import | Complete (supported subset) | Named resources and bounded lane model |
 
 ---
 
@@ -862,14 +862,17 @@ seqproc protocol run scatac-example@1 --read1 ... --read2 ... --read3 ...
 
 ### Goal
 
-Import the explicitly supported subset of seqspec into EFGDL 2 and the protocol
-registry without silently approximating unsupported semantics.
+Import the explicitly supported subset of seqspec into reviewable EFGDL 2
+bundles without silently approximating unsupported semantics. A later protocol
+registry can consume these bundles, but import does not depend on that planned
+feature.
 
-### Proposed contract
+### Implemented contract
 
 ```console
-seqproc import seqspec protocol.yaml --output protocol.geom
-seqproc import seqspec protocol.yaml --registry-entry protocol-entry.yaml
+seqproc import seqspec protocol.yaml --check-only
+seqproc import seqspec protocol.yaml --output-dir protocol-import \
+  --resources auto
 ```
 
 - Import is a compile-time conversion, not a runtime dependency.
@@ -886,22 +889,33 @@ seqproc import seqspec protocol.yaml --registry-entry protocol-entry.yaml
 - Map read segments, fixed anchors, barcode/UMI regions, read orientation, and
   declared resources into the bounded lane and named-resource models.
 - Render stable, formatted EFGDL 2 suitable for review and version control.
-- Reuse registry validation, dry-run, and source diagnostics.
-- Preserve unknown extension fields in provenance when possible, but do not
-  claim they affect execution.
+- Compile every generated geometry before atomic publication; `--check-only`
+  provides a network- and write-free assessment independent of the future
+  general-purpose dry-run command.
+- Preserve the byte-identical source (including unknown extension fields) in
+  provenance, but do not claim that ignored fields affect execution.
 
 ### Acceptance criteria
 
 - Fixture imports cover representative single-cell RNA, scATAC/multi-segment,
   and another supported protocol shape.
 - Re-importing identical source produces byte-identical normalized EFGDL and
-  registry digests.
+  bundle-report digests.
 - Supported imports execute identically to manually authored reference
   geometries.
 - Unsupported constructs identify the exact source location and required
   manual decision.
 - Import requires no network access when schemas and referenced resources are
   local.
+
+### Implementation checkpoint (2026-08-25)
+
+The typed 0.3/0.4 importer, atomic CLI bundle workflow, pinned official-corpus
+compatibility harness, eight-lane bound, and native variable/clipped onlist
+matching are implemented on `dev`. The complete gate record and the ranked
+capability-expansion backlog are in `planning/SEQSPEC_IMPORT.md`. Additional
+seqspec coverage is tracked as capability work rather than by silently widening
+the completed initial importer contract.
 
 ---
 

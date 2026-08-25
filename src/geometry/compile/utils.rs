@@ -316,7 +316,10 @@ pub fn validate_composition(
             }),
         },
         CompiledFunction::AmbiguityPolicy(_)
-        | CompiledFunction::PositionAmbiguityPolicy(_) => Ok(S(return_type, fn_span)),
+        | CompiledFunction::PositionAmbiguityPolicy(_)
+        | CompiledFunction::PatternOrientation(_)
+        | CompiledFunction::PatternProjection(_)
+        | CompiledFunction::PatternBoundaryMatched => Ok(S(return_type, fn_span)),
         CompiledFunction::AnchorSet(_) => match return_type {
             ReturnType::FixedSeq => Ok(S(ReturnType::FixedSeq, fn_span)),
             _ => Err(Error {
