@@ -39,11 +39,15 @@ examples. Run:
 cargo run -p xtask -- seqspec-compat --fetch
 ```
 
-The generated JSON, CSV, and Markdown live under
-`planning/generated/seqspec-compat/`. Rows are modality projections; duplicated
-protocol versions across corpora remain separate provenance-bearing rows.
-`SupportedRequiresBinding` is generated support: the assessment layer does not
-claim a locator exists until the CLI resolves it.
+The generated JSON, modality CSV, specification CSV, Markdown, and converted
+EFGDL live under `planning/generated/seqspec-compat/`. The specification table
+has exactly one row per source YAML; the modality table remains the diagnostic
+drill-down. Converted scripts preserve corpus and source paths beneath
+`geometries/`, and every Markdown modality row links to its emitted script.
+This generated tree is intentionally ignored by Git and regenerated on demand.
+Duplicated protocol versions across corpora remain separate provenance-bearing
+rows. `SupportedRequiresBinding` is generated support: the assessment layer
+does not claim a locator exists until the CLI resolves it.
 
 ## Capability-driven order
 
@@ -120,9 +124,10 @@ barcode.
 - Legacy/compiler regression gates: 279 library, 32 CLI workflow, 58 compile,
   and 12 layout-algebra tests passed. The arity assertion now verifies that
   eight lanes are accepted and nine are rejected.
-- The pinned compatibility harness assessed 139 modality projections and
-  regenerated `report.json`, `report.csv`, and `report.md` with manifest digest
-  `blake3:88c2d51d51e1d33ec2de5c58f29fbc17fe16bfc8b8cb8cebeaad03e21647c1e5`.
+- The pinned compatibility harness completed across every manifest-scoped
+  source and regenerated `report.json`, `report.csv`, `specifications.csv`,
+  `report.md`, and all compiling EFGDL scripts. Exact counts and the manifest
+  digest live in the intentionally untracked generated report.
 - With `SEQPROC_FEATURE_BENCH_READS=5000`, Criterion measured the fixed-length
   control at 1.6900 ms and native variable-boundary matching at 2.2196 ms per
   5,000-read run (medians of the reported intervals): approximately 2.96 and

@@ -114,6 +114,9 @@ content-MD5, stored-size, and separate stored/content BLAKE3 verification.
 `required` fails unless every onlist is resolved. Variable-length and clipped
 onlists are matched natively—no pre-expanded or truncated whitelist is needed.
 Unsupported or structurally ambiguous constructs remain explicit diagnostics.
+The repository-wide compatibility scan emits a one-row-per-specification table
+and retains every successfully compiled conversion as a reviewable `.geom`
+file under `planning/generated/seqspec-compat/geometries/`.
 See the [seqspec import guide](https://combine-lab.github.io/seqproc/guides/seqspec-import/)
 for selection, partial-import, and compatibility-report workflows.
 

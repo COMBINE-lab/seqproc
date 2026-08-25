@@ -7,7 +7,8 @@ All notable changes to seqproc are documented here. This project follows
 
 - Add conservative `seqproc import seqspec` support for seqspec 0.3/0.4 input
   layouts, with network-free assessment, atomic provenance bundles, exact
-  resource verification, and a pinned official-corpus compatibility report.
+  resource verification, a pinned official-corpus compatibility report with
+  one row per source specification, and emitted compiling EFGDL conversions.
 - Support variable-length, clipped, gzip-compressed, and reverse-oriented
   onlists natively through explicit EFGDL 2 pattern-boundary, projection, and
   orientation annotations; legacy geometries retain their prior semantics and

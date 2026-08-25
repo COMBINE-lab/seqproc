@@ -80,17 +80,23 @@ construction; geometries that do not request them pay no per-read cost.
 ## Compatibility matrix
 
 The repository pins both the current pachterlab seqspec examples and the IGVF
-0.3 corpus. Regenerate JSON, CSV, and Markdown reports with:
+0.3 corpus. Regenerate JSON, modality-level CSV, specification-level CSV,
+Markdown, and the successfully converted EFGDL scripts with:
 
 ```console
 cargo run -p xtask -- seqspec-compat --fetch
 ```
 
 The fetch uses sparse, commit-pinned checkouts of YAML specifications only—it
-does not download example FASTQs or large onlists. The report ranks missing
-seqproc capabilities by the number of blocked modalities and specifications.
-This ranking is the input to the importer roadmap, not a claim that every
-source document is semantically valid or unambiguous.
+does not download example FASTQs or large onlists. `report.md` contains one
+row per source specification followed by the modality-level drill-down;
+`specifications.csv` provides the same corpus-complete table for analysis.
+Compiling scripts are stored under `geometries/<corpus>/<source>.d/` and linked
+from the report. The generated output tree is intentionally ignored by Git and
+can be recreated on demand. The report ranks missing seqproc capabilities by
+the number of blocked modalities and specifications. This ranking is the input
+to the importer roadmap, not a claim that every source document is semantically
+valid or unambiguous.
 
 Current explicit gaps include read windows that can terminate across multiple
 named regions, unidentified boundaries between consecutive variable regions,

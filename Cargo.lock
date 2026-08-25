@@ -3182,6 +3182,7 @@ dependencies = [
  "seqproc-seqspec-import",
  "serde",
  "serde_json",
+ "tempfile",
  "toml",
  "walkdir",
 ]
